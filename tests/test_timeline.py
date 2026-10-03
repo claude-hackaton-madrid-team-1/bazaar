@@ -238,3 +238,27 @@ def test_compare_lists_what_the_organisers_moved():
         ],
     )
     assert out.exit_code == 0 and "no event added, removed or re-timed" in out.output
+
+
+def test_compare_ignores_what_already_fired(monkeypatch):
+    """At 08:55 /api/schedule lists only upcoming events: the practice duels (h2) are gone, not removed."""
+    clock = tl.frozen(tl.load(tl.CLOCK_FIXTURE), 2.65, NIGHT)
+    schedule = dict(tl.load(tl.SCHEDULE_FIXTURE))
+    schedule["upcoming"] = [e for e in schedule["upcoming"] if e["at_hours"] > 2.65]
+
+    class Public:
+        def clock(self) -> dict:
+            return clock
+
+        def schedule(self) -> dict:
+            return schedule
+
+    monkeypatch.setattr("bazaar_agent.cli.public_client", lambda settings: Public())
+    args = ["timeline", "--from-api", "--at", "2026-10-03T08:55:00+02:00"]
+    out = CliRunner().invoke(app, [*args, "--compare", "docs/night/saturday-schedule.json"])
+    assert out.exit_code == 0, out.output
+    assert "no event added, removed or re-timed" in out.output
+    committed = json.loads(Path("docs/night/saturday-schedule.json").read_text(encoding="utf-8"))
+    fresh = tl.as_dict(tl.timeline(tl.parse_events(schedule), tl.parse_days(clock), []), [], "")
+    assert tl.schedule_changes(committed, fresh, 2.65) == []
+    assert tl.schedule_changes(committed, fresh) == ["removed: duels Practice duels #1 (was h2)"]

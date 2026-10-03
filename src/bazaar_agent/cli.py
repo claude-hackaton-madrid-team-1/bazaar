@@ -161,9 +161,9 @@ def timeline_cmd(
     found = tl.anchors(clock_doc, events, now)
     rows = tl.timeline(events, days, found, teams)
     if compare:
-        changes = tl.schedule_changes(
-            json.loads(Path(compare).read_text(encoding="utf-8")), tl.as_dict(rows, found, "")
-        )
+        committed = json.loads(Path(compare).read_text(encoding="utf-8"))
+        now_hours = float(tl.body(clock_doc).get("t_hours") or 0.0)  # /api/schedule lists only what is upcoming
+        changes = tl.schedule_changes(committed, tl.as_dict(rows, found, ""), now_hours)
         typer.echo("\n".join(changes) if changes else f"no event added, removed or re-timed against {compare}")
         return
     if as_json:

@@ -40,8 +40,10 @@ Under resume, 09:00–10:21 still belongs to Friday's round, and cash at 09:00 i
 floor). Other plans that assume 503 P at 09:03 or h 4 = 09:00 (W3, W4, W7, B2) shift with this. That was posted to
 STATUS.md at 03:32.
 
-**Validation:** anchored at the clock fixture (h 0.5167 at 20:52), the tool puts the practice duels at 22:20:59.
-The feed has them at tick 120 = 22:20:48.
+**Consistency check (not independent: the 20:52 anchor is derived from tick 0 ≈ 20:21):** the tool puts the
+practice duels at 22:20:59; the feed has them at tick 120 = 22:20:48. The admin calendar doc ("days that have
+already opened keep the live hour they opened at") hints that events may follow jump wall times even if
+`t_hours` resumes, so G0 confirms on the feed (round 2 / grant by 09:03, `bazaar clock` `round`).
 
 ## Points per action (W5's model; 1 Saturday round point = 0.40 final)
 | Lever | Round pts | Final | Note |
@@ -57,7 +59,7 @@ The feed has them at tick 120 = 22:20:48.
 | Criterion | Result |
 |---|---|
 | Every Saturday schedule event has a wall time in both columns and a step | **GO**: 17 of 17 events before h 18 have a play attached (tested) |
-| The tool reproduces a real Friday event time | **GO**: 11 s off on the practice duels |
+| The tool is consistent with a real Friday event time | **GO**, but circular (anchor derived from the same tick arithmetic): 11 s off on the practice duels |
 | Every command in the playbook exists, with the PR it needs | **GO**: taken from the PR diffs, not from memory |
 | Points per action from #78 without new formulas | **GO**: `component_points`, `ladder_marginals`, `final_points_per_round_point` |
 | The clock column is known | **NO-GO until 08:55–09:05**: gate G0 (`uv run bazaar clock`, `bazaar timeline --from-api --compare …`, then the feed) |

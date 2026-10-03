@@ -313,16 +313,20 @@ def with_plays(doc: Mapping[str, Any], plays: Mapping[str, Any]) -> dict[str, An
     return out
 
 
-def schedule_changes(committed: Mapping[str, Any], live: Mapping[str, Any]) -> list[str]:
+def schedule_changes(committed: Mapping[str, Any], live: Mapping[str, Any], now_hours: float = 0.0) -> list[str]:
     """What moved between a committed timeline JSON and a fresh one: events added, removed or re-timed.
 
     Keyed by (action, name) in order of appearance, so two Market Tests stay two. Empty = the plan's tables hold.
+    `/api/schedule` lists only `upcoming` events, so both sides drop what is due by `now_hours` (the live clock's
+    game hour) before the diff: an event that already fired is not a change.
     """
 
     def keyed(doc: Mapping[str, Any]) -> dict[tuple[str, str, int], float]:
         seen: dict[tuple[str, str], int] = {}
         out = {}
         for e in doc.get("events") or []:
+            if float(e.get("at_hours", 0.0)) <= now_hours + 1e-6:
+                continue
             base = (str(e.get("action")), str(e.get("name")))
             seen[base] = seen.get(base, 0) + 1
             out[(*base, seen[base])] = float(e.get("at_hours", 0.0))

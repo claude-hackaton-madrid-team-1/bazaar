@@ -1000,7 +1000,7 @@
       "id": "G0",
       "when": "08:55, doors closed",
       "question": "Which clock column?",
-      "check": "uv run bazaar clock (keyless): t_hours ~2.65 = resume, ~4.0 = jump; uv run bazaar timeline --from-api --compare docs/night/saturday-schedule.json (organisers may re-time at_hours instead of jumping the clock); confirm 09:01-09:05: round 2 schedule.fired + 150 P gift.given by 09:03 = jump, neither by 09:05 = resume",
+      "check": "uv run bazaar clock (keyless): t_hours ~2.65 = resume, ~4.0 = jump; uv run bazaar timeline --from-api --compare docs/night/saturday-schedule.json (organisers may re-time at_hours instead of jumping the clock); confirm 09:01-09:05: round 2 schedule.fired + 150 P gift.given by 09:03 and bazaar clock round 2 = jump; neither by 09:05 and round 1 = resume; the feed wins over either column (the admin calendar doc hints events may follow jump wall times even if t_hours resumes)",
       "then": "use that column; if --compare lists changes, only the live bazaar timeline --from-api output counts"
     },
     {
@@ -1016,7 +1016,7 @@
       "when": "all day",
       "question": "Is this a safe moment to merge?",
       "check": "a merge to main touching src/**, GUARDRAILS.md, STRATEGY.md, RUNTIME.md, uv.lock, pyproject.toml, vendor/bazaar-kit/**, questions/** or .railway/** redeploys bazaar-duels, bazaar-taker and bazaar-maker (.railway/railway.py watchPatterns)",
-      "then": "merge before 09:00 or only between duel sessions; never inside Duels I/II or a Market Test with a venue open; #72 (now contains #61 + #68; merge commit, never #61 alone, close #68 by hand) before 09:00: main's taker can break cash_floor and the 150/h cap in one tick (r2 X7); after any redeploy the taker's dealer threads are orphaned (r2 X3, B17): uv run bazaar threads --status open, close orphans (#68: bazaar flatten --live --threads after PAUSE); on by default once merged: #89 (learning taker, BAZAAR_LEARN=0 turns it off), #91 (evals inside duels/taker/maker every 6 ticks), #71's head (venue opens on its own at h 6.5); X15 (r2): expired maker bids are reposted and their spend booked again, filling max_spend_per_game_hour; the stopgap offer_ttl_ticks ~1 game hour is a code change (merge inside a window), the proper fix is B14",
+      "then": "merge before 09:00 or only between duel sessions; never inside Duels I/II or a Market Test with a venue open; #72 (now contains #61 + #68; merge commit, never #61 alone, close #68 by hand) before 09:00: main's taker can break cash_floor and the 150/h cap in one tick (r2 X7); after any redeploy the taker's dealer threads are orphaned (r2 X3, B17): uv run bazaar threads --status open, Marius closes the orphans one by one (SDK close_thread); bazaar flatten --live --threads (#68) is a last resort after PAUSE: it cancels every offer, the maker's too, and walks healthy ladder threads; on by default once merged: #89 (learning taker, BAZAAR_LEARN=0 turns it off), #91 (evals inside duels/taker/maker every 6 ticks), #71's head (venue opens on its own at h 6.5); X15 (r2): expired maker bids are reposted and their spend booked again, filling max_spend_per_game_hour; the stopgap offer_ttl_ticks ~1 game hour is a code change (merge inside a window), the proper fix is B14",
       "owner": "Marius"
     },
     {
