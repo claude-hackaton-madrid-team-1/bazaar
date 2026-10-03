@@ -70,6 +70,15 @@ Scenarios are for the clock jumping to h4 at 09:00; the h2.65 case follows the t
 - **Market Test:** the first one is the h3 session that never fired Friday, about 09:21.
 - **Command:** `bazaar plan pages --now-hours <t_hours from GET /api/clock>` gives the right column.
 
+**PR #71's new head (e82ba8d, pushed 03:14–03:23):** `cash_floor` 100, `venue_bond_reserve` 270 kept until the venue opens, and the maker opens it at h6.5. This contradicts the 02:30 decision (no venue, no `cash_floor` change tonight) and is unmerged. Planned with `--what-if-floor 100 --venue-later 6`:
+
+| clock | until the venue opens | W4's trades | W3's best three | venue | Saturday spend | end cash |
+|---|---|---|---|---|---|---|
+| jumps to h4 | floor 370: 133 P to spend | h4 | 2 at h4, 1 on Sunday (19 P left after the bond) | h6.5 | 391 (270 of it the venue) | 240 |
+| resumes at h2.65 | 353 < 370: **nothing until the grant** (~10:24) | h4 | 2 at h4, 1 on Sunday | h6.5 | 391 | 240 |
+
+Both fit by Sunday: +82 P of trade surplus, the venue in every Market Test from h7, and 240 P at the end. The price is one Abuela deal moved to Sunday and, if the clock resumes, a frozen first hour and a half.
+
 W3's page-card plan and W4's 09:00 plan both buy **LAV-08, SAL-05, SAL-08, MAL-07 and MAL-08**. Five of W3's eight Abuela slots are duplicates. W7's call is that W4 keeps them, because a team buy scores and a fourth Abuela deal does not.
 
 ## 4. What each use of cash buys (round points, W5's score model #78; weights for trades and the bench are assumed)
