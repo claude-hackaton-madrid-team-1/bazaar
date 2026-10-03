@@ -56,8 +56,8 @@ Efficiency is the realised gain divided by the possible gains at the true limits
 ## What it means
 
 1. **W1b's edge policy on this bench** (its message at 02:40, PR #84, 1,000 books): under `quote` it wins 7–9 % of sessions, with points 0.53–0.54 and the same mean as the stall. Under `limit` its probe scores 0.61–0.92 points depending on the cell. With every trader at tick 0, 2× shades and all firm, it reaches +0.13 p50.
-2. **The W1b bar "p50 ≥ stall + 0.15" cannot be reached in the default cell.** Even the oracle reaches only +0.03 to +0.06 there. It reaches +0.15 only under the `limit` rule with shades about 2× wider or traders mostly firm. W1b found the same thing independently with its own bench model (STATUS 02:17: stall 0.80, ceiling 0.90).
-3. **The win rate over the stall matters more than the margin.** Points are relative to the top-three mean, so beating a stall-level field by any amount earns the full point for that session, and ties earn 0.5. The oracle ties the stall on 23–41 % of books. That is the ceiling on the share of sessions we can win.
+2. **The W1b bar "p50 ≥ stall + 0.15" cannot be reached in the default cell.** Even the oracle reaches only +0.03 to +0.06 there. It reaches +0.15 only under the `limit` rule with shades about 2× wider or traders mostly firm. Under `quote` it gets there only if every trader is in the book at tick 0, shades are 2× wider and every trader is firm (+0.157). W1b found the same thing independently with its own bench model (STATUS 02:17: stall 0.80, ceiling 0.90).
+3. **The win rate over the stall matters more than the margin.** Points are relative to the top-three mean, so beating a stall-level field by any amount earns the full point for that session, and ties earn 0.5. The oracle ties the stall on 23–41 % of books, so no broker can win more than 59–76 % of sessions.
 4. **The default cell is the most pessimistic one for a smart broker.** The kit says crossing by quote earns "half the bench points and no more" and that estimating limits beats the stall. In the default cell the hard test is barely harder than the normal one (stall 0.821 vs 0.827), because 5–30 % shades let firm traders cross anyway. The cells consistent with the designers' text are the `limit` rule and/or shades ≥ 1.5×. If the probe confirms `quote`, as the SDK docstring suggests, the oracle's median edge stays ≤ 0.05 whenever arrivals are spread out. The edge then comes almost entirely from winning ties, never from margin.
 
 ## Go / no-go
@@ -69,6 +69,8 @@ Efficiency is the realised gain divided by the possible gains at the true limits
   - win rate over the stall ≥ 50 % of the oracle's win rate;
   - mean session points ≥ 0.70 against the stall-level field (the stall scores 0.50, the oracle 0.79–0.88);
   - the efficiency margin reported, but not gated.
+
+  On W1b's own numbers, its edge fails this bar under `quote`: it wins 7–9 % of sessions, against the oracle's 59–69 %. It passes the points bar in the stronger `limit` cells (up to 0.92 points).
 
 ## Risks
 
