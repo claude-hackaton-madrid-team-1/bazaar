@@ -321,43 +321,46 @@ def team_flows(events: Iterable[Event]) -> list[TeamFlow]:
         return flows.setdefault(team, TeamFlow(team))
 
     for e in events:
-        kind, p = e.get("type"), e.get("payload") or {}
-        if kind == "thread.opened" and p.get("team"):
-            f = flow(str(p["team"]))
-            f.dealer_threads += 1 if p.get("kind") == "persona" else 0
-            card = ((p.get("topic") or {}).get("buy") or {}).get("card")
-            if s := set_of(card):
-                f.set_interest[s] += 1
-        elif kind == "thread.message" and p.get("sender") == p.get("team") and p.get("team"):
-            flow(str(p["team"])).bids += 1
-        elif kind == "offer.listed" and e.get("actor"):
-            f = flow(str(e["actor"]))
-            f.listings += 1
-            offer = p.get("offer") or {}
-            for a in (offer.get("give") or {}).get("assets") or []:
-                if s := a.get("set") or set_of(a.get("ref")):
-                    f.set_interest[s] -= 1  # selling a set's card: likely not their ×1.6 set
-            for ref in (offer.get("want") or {}).get("types") or []:
-                if s := set_of(str(ref).split(":")[-1]):
+        try:
+            kind, p = e.get("type"), e.get("payload") or {}
+            if kind == "thread.opened" and p.get("team"):
+                f = flow(str(p["team"]))
+                f.dealer_threads += 1 if p.get("kind") == "persona" else 0
+                card = ((p.get("topic") or {}).get("buy") or {}).get("card")
+                if s := set_of(card):
                     f.set_interest[s] += 1
-        elif kind == "settlement":
-            for pr in tape([e]):
-                for team, is_buyer in ((pr.buyer, True), (pr.seller, False)):
-                    if not team.startswith("t"):
-                        continue
-                    f = flow(team)
-                    if is_buyer:
-                        f.buys += 1
-                        f.spent += pr.price
-                        if pr.kind == "pack":
-                            f.pack_prices.append(pr.price)
-                        if s := set_of(pr.ref):
-                            f.set_interest[s] += 1
-                    else:
-                        f.sells += 1
-                        f.earned += pr.price
-                        if s := set_of(pr.ref):
-                            f.set_interest[s] -= 1
+            elif kind == "thread.message" and p.get("sender") == p.get("team") and p.get("team"):
+                flow(str(p["team"])).bids += 1
+            elif kind == "offer.listed" and e.get("actor"):
+                f = flow(str(e["actor"]))
+                f.listings += 1
+                offer = p.get("offer") or {}
+                for a in (offer.get("give") or {}).get("assets") or []:
+                    if s := a.get("set") or set_of(a.get("ref")):
+                        f.set_interest[s] -= 1  # selling a set's card: likely not their ×1.6 set
+                for ref in (offer.get("want") or {}).get("types") or []:
+                    if s := set_of(str(ref).split(":")[-1]):
+                        f.set_interest[s] += 1
+            elif kind == "settlement":
+                for pr in tape([e]):
+                    for team, is_buyer in ((pr.buyer, True), (pr.seller, False)):
+                        if not team.startswith("t"):
+                            continue
+                        f = flow(team)
+                        if is_buyer:
+                            f.buys += 1
+                            f.spent += pr.price
+                            if pr.kind == "pack":
+                                f.pack_prices.append(pr.price)
+                            if s := set_of(pr.ref):
+                                f.set_interest[s] += 1
+                        else:
+                            f.sells += 1
+                            f.earned += pr.price
+                            if s := set_of(pr.ref):
+                                f.set_interest[s] -= 1
+        except (AttributeError, TypeError, ValueError, KeyError):
+            continue  # another team's malformed event (e.g. a string topic) never stops a tick
     return sorted(flows.values(), key=lambda f: f.team)
 
 
