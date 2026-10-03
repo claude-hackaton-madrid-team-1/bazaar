@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from rich.table import Table
 from rich.text import Text
 
 from bazaar_agent.conversation import Thread, lines, topic_ref
 from bazaar_agent.ticks import Clock, action_budget_s
+
+if TYPE_CHECKING:
+    from bazaar_agent.pages import Scenario
 
 
 def clock_table(c: Clock) -> Table:
@@ -369,3 +374,103 @@ def offers_table(offers: list, label: str = "offers") -> Table:
             _n(o.get("expires_tick")),
         )
     return t
+
+
+# ---------------------------------------------------------------- page economics (`bazaar plan pages`)
+
+
+def pages_table(pages: list) -> Table:
+    t = Table(title="Pages · what finishing each is worth and costs (private value, primas)")
+    numbers = ("affinity", "have", "bonus", "cost", "value", "surplus")
+    for col in ("page", *numbers, "verdict"):
+        t.add_column(col, justify="right" if col in numbers else "left")
+    t.add_column("why", overflow="fold")
+    for p in pages:
+        cost = p.cost if p.cost is not None else p.cost_if_unblocked
+        t.add_row(
+            p.set_code,
+            f"×{p.affinity:g}",
+            f"{p.have}/{p.of}",
+            f"{p.bonus:.0f}",
+            "-" if cost is None else f"{cost:.0f}",
+            f"{p.value:.0f}",
+            "-" if p.surplus is None else f"{p.surplus:+.0f}",
+            p.verdict,
+            p.why,
+        )
+    return t
+
+
+def page_cards_table(pages: list) -> Table:
+    t = Table(title="Missing page cards · by source (ladder = dealer deal, trade = team on a venue)")
+    numbers = ("value", "+bonus", "minted≥", "price", "max")
+    for col in ("card", *numbers[:3], "source", "channel", *numbers[3:]):
+        t.add_column(col, justify="right" if col in numbers else "left")
+    t.add_column("basis · blocked · who", overflow="fold")
+    for p in pages:
+        for c in p.missing:
+            for i, s in enumerate(c.sources or [None]):
+                head = (f"{c.ref} {c.rarity[:1].upper()}", f"{c.value:.0f}", f"{c.bonus_share:.0f}", str(c.minted))
+                first = head if i == 0 else ("", "", "", "")
+                if s is None:
+                    t.add_row(*first, "-", "-", "-", "-", "no source: none minted beyond the holders' own")
+                    continue
+                why = " · ".join(x for x in (s.basis, s.blocked or "", ", ".join(s.sellers), s.note) if x)
+                t.add_row(*first, s.source, s.channel, f"{s.price:g}", str(s.max_price), why)
+    return t
+
+
+def buy_order_table(wants: list) -> Table:
+    t = Table(title="Buy order · dealer legs first, the card that completes a page from a team last")
+    numbers = ("#", "price", "max", "trade surplus")
+    for col in ("#", "card", "page", "source", "channel", *numbers[1:]):
+        t.add_column(col, justify="right" if col in numbers else "left")
+    t.add_column("sellers", overflow="fold")
+    for i, w in enumerate(wants, start=1):
+        gain = w.trade_surplus
+        t.add_row(
+            str(i),
+            w.card.ref + (" (completes)" if w.completes else ""),
+            w.page,
+            w.source.source,
+            w.source.channel,
+            f"{w.source.price:g}",
+            str(w.source.max_price),
+            "ladder share" if gain is None else f"{gain:+.0f}",
+            ", ".join(w.source.sellers),
+        )
+    return t
+
+
+def scenarios_table(scenarios: list) -> Table:
+    t = Table(title="Cash plan · venue scenarios under GUARDRAILS.md (what-ifs say so)")
+    numbers = ("floor", "venue", "ladder deals", "page cards", "trade surplus", "end cash")
+    for col in ("scenario", *numbers):
+        t.add_column(col, justify="right" if col == "floor" or col in numbers else "left")
+    t.add_column("held", overflow="fold")
+    for s in scenarios:
+        venue = "-" if s.venue_hour is None else (f"h{s.venue_opened}" if s.venue_opened is not None else "refused")
+        cards = list(s.bought)
+        held = [x for x in s.held if not x.startswith("ladder")]
+        ladder_held = s.ladder_held
+        t.add_row(
+            s.name,
+            str(s.floor),
+            venue,
+            str(s.ladder_deals) + (f" ({ladder_held} held)" if ladder_held else ""),
+            str(len(cards)),
+            f"{s.trade_surplus:.0f}",
+            f"{s.end_cash:.0f}",
+            ", ".join(held) or "-",
+        )
+    return t
+
+
+def scenario_steps(scenario: Scenario) -> list[str]:
+    """One plain line per step of a scenario: hour, what, from whom, cash out, max price, cash after, why."""
+    out = [f"{scenario.name} (floor {scenario.floor}):"]
+    for s in scenario.steps:
+        cap = f" max {s.max_price}" if s.max_price is not None else ""
+        what = f"h{s.hour:<2} {s.kind:<6} {s.item:<20} {s.source:<10}"
+        out.append(f"  {what} {s.amount:>7.1f}{cap:>8} → {s.cash_after:>6.1f}  {s.note}")
+    return out
