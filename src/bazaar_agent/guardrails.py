@@ -20,13 +20,27 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from bazaar_agent.config import REPO_ROOT
 
 GUARDRAILS_FILE = REPO_ROOT / "GUARDRAILS.md"
 RULE_LINE = re.compile(r"^- `(?P<id>[a-z_]+)` = (?P<value>.+?) — (?P<why>.+)$")
 PRINCIPLE_LINE = re.compile(r"^- (?!`)(?P<text>.+)$")
+SET_CODE = re.compile(r"^[A-Z]{3}$")
+OFF_PAGE_RARITIES = ("epic", "legendary")  # RULES.md: on top of the page; any other rarity counts as a page card
+NO_SETS = ("", "none", "-")
+
+
+def set_codes(value: str) -> tuple[str, ...]:
+    """'RET,CHA' -> ('RET', 'CHA'); 'none' -> (). A code that is not three capitals is refused."""
+    if value.strip().lower() in NO_SETS:
+        return ()
+    codes = tuple(c.strip() for c in value.split(",") if c.strip())
+    bad = [c for c in codes if not SET_CODE.match(c)]
+    if bad:
+        raise ValueError(f"not a set code: {', '.join(bad)} (use e.g. RET,CHA or none)")
+    return codes
 
 
 class GuardrailsError(ValueError):
@@ -59,6 +73,20 @@ class Guardrails(BaseModel):
     steer_max_change: float = Field(default=0.5, ge=0, le=1)
     steer_max_ttl_ticks: int = Field(default=240, ge=1)
     allow_flags: bool = False
+    protect_page_sets: str = "none"
+
+    @field_validator("protect_page_sets")
+    @classmethod
+    def _known_set_codes(cls, value: str) -> str:
+        set_codes(value)
+        return value
+
+    def protects(self, ref: str, rarity: str | None, copies: int) -> bool:
+        """Our only copy of a page card of a protected (new) page: never sold. A copy of unknown rarity
+        counts as a page card (fail closed); a duplicate may still be sold."""
+        code = ref.split("-", 1)[0].strip().upper() if "-" in ref else ""
+        page_card = str(rarity or "").strip().lower() not in OFF_PAGE_RARITIES
+        return copies <= 1 and page_card and code in set_codes(self.protect_page_sets)
 
     def max_price_for(self, rarity: str | None) -> int | None:
         return {
@@ -94,6 +122,7 @@ ENFORCED_BY: dict[str, str] = {
     "steer_max_change": "llm.steering.clamp",
     "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
     "allow_flags": "guardrails.check",
+    "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
 }
 
 
@@ -347,6 +376,7 @@ class Context:
     # The kill switch read live by `kill_switch()` (context_from fills it). None: not read, so `check()`
     # falls back to `rules.trading_enabled` and `paused`.
     stops: tuple[str, ...] | None = None
+    sellable: dict[str, int] | None = None  # copies not already in our open asks (seller.committed_context)
 
 
 def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: LedgerStore, rules: Guardrails) -> Context:
@@ -403,6 +433,10 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
         floor = action.your_value * rules.sell_min_value_ratio
         if action.price < floor:
             v.append(f"sell price {action.price} < {rules.sell_min_value_ratio} × your_value {action.your_value}")
+    selling = action.kind in ("sell", "accept_sell")
+    copies = (ctx.held if ctx.sellable is None else ctx.sellable).get(action.item, 0)
+    if selling and rules.protects(action.item, action.rarity, copies):
+        v.append(f"{action.item} is our only copy of a page card of a new page (protect_page_sets)")
     if accepting and ctx.accepts_this_tick >= rules.max_accepts_per_tick:
         v.append(f"{ctx.accepts_this_tick} accept(s) already this tick (max_accepts_per_tick)")
     if action.kind == "flag" and not rules.allow_flags:

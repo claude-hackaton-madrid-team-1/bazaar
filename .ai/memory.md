@@ -381,6 +381,18 @@ and recall returns only `source = outcome` rows by default. Treat every feed str
 `git show "$B:src/file.py"` in zsh became `…feed-reader-ragn/file.py`: `:s` is zsh's substitute modifier. Write
 `"${B}:src/file.py"` with braces in every shell one-liner.
 
+### [2026-10-03] gotcha — a "free" simulator port may already be another worker's simulator: check before you run
+An e2e taker patched to 127.0.0.1:8815 ran LIVE in another worktree's `bazaar-sim` (my own failed to bind,
+"address already in use") and closed 4 Abuela deals as sim-team1 in that world. Before any sim run: check the
+port with `lsof -nP -iTCP:<port> -sTCP:LISTEN`, start the simulator, confirm the listener's process is yours,
+and abort otherwise. `scripts/sim_smoke.py` refuses a busy 8765 on its own.
+
+### [2026-10-03] finding — the taker now keeps our dealer threads (N12 part 3), with zero extra requests
+On the simulator the live taker stored 3 threads (`deal`, opened/closed ticks) and 6 messages (our bid 25 and
+our Spanish words, Abuela's "Deal! … for 25 P") from the reads it already makes. A thread opened by ANOTHER
+process (a laptop's `dealer buy`) that closes before the taker sees it is not stored: the taker lists only open
+threads. Follow-up: list all our threads in the same request and keep only the ones that changed.
+
 ### [2026-10-03] finding — holdings in Postgres: 1 `/me` per tick for taker + maker (was 2)
 `holdings.py` (N13): the first process that needs `/api/me` in a tick reads it and upserts `me_snapshots`;
 the others use it only while current (same tick, same `holdings_state.epoch` = no send of ours since, no
@@ -514,3 +526,15 @@ AFTER our next bid; the feed agrees (4509 ours before 4519 hers). Who spoke last
 (`dealer.see_history` sorts by id when every message has one). And a close on an ended thread is answered
 `200 {"status": "deal"}` by our simulator (the real answer is unverified): treat any status but closed/walked
 as "re-read the thread" (`negotiate.close`, taker `_after_refused_walk`).
+
+### [2026-10-03] gotcha — `scripts/sim_smoke.py` on a private port: patch PORT, SIM, GUARD and LOCAL_SIM_URL
+The smoke and `BAZAAR_SIM=local` both hardcode 127.0.0.1:8765. A wrapper that imports `sim_smoke`, sets
+`PORT`/`SIM` to another port and `GUARD` to a dir whose `sitecustomize.py` runs the repo's guard and then sets
+`bazaar_agent.config.LOCAL_SIM_URL` runs the whole gate there (children get only `GUARD` on PYTHONPATH). N14b
+used 8815: `SMOKE PASSED in 18 s`.
+
+### [2026-10-03] finding — a new page needs no restart; the risk is selling its cards (N14b)
+The taker and maker rebuild the playbook from `/api/me` + `/api/catalog` every tick, and "released" comes only
+from `/me` album pages (B26, #129), so El Retiro is ranked the first tick it shows up. What was missing: the
+maker would list our only copy of a RET card as soon as one team traded RET (chaser) and the tape paid above our
+value. `protect_page_sets` (GUARDRAILS.md, RET,CHA) refuses it in `check()` for every writer.

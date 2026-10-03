@@ -47,11 +47,13 @@ from bazaar_agent.agents.runtime import (
     JevAdvice,
     JevFn,
     MarketFeed,
+    PageWatch,
     Recorder,
     Snapshot,
     TickWindow,
     accept_limit,
     guard_context,
+    new_page_line,
     no_jev,
     read_snapshot,
     window_for,
@@ -64,6 +66,7 @@ from bazaar_agent.holdings import Holdings
 from bazaar_agent.learn.blockers import Blocks
 from bazaar_agent.learn.live import LiveLearner
 from bazaar_agent.learn.outcomes import OutcomeLearner
+from bazaar_agent.learn.threads import ThreadStore
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.pack_gate import PackJudge, gate_packs
 from bazaar_agent.sdk import BazaarError
@@ -301,6 +304,7 @@ class Taker:
         holdings: Holdings | None = None,
         learner: LiveLearner | None = None,
         outcome_learner: OutcomeLearner | None = None,
+        thread_store: ThreadStore | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.ledger, self.feed, self.live, self.log = ledger, feed, live, log
@@ -310,6 +314,7 @@ class Taker:
         self.holdings = holdings  # /me from the shared Postgres snapshot while provably current, else live
         self.learner = learner  # the live-feed reader: blockers recalled before a dealer thread opens
         self.outcome_learner = outcome_learner  # lessons from settled outcomes, on its own worker (N3)
+        self.thread_store = thread_store  # our dealer threads as read each tick, written after the sends
         self.rec = Recorder("taker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
@@ -318,6 +323,7 @@ class Taker:
         # (once); after the lower one held too, (dealer, item) -> the game hour until which we leave it.
         self.reopen_at: dict[tuple[str, str], int] = {}
         self.cooling: dict[tuple[str, str], float] = {}
+        self.pages = PageWatch()  # album pages seen: a new page is logged once (it is ranked at once anyway)
         self._dry_accepts: dict[int, int] = {}
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
@@ -334,24 +340,36 @@ class Taker:
         except LedgerUnavailable as e:
             self.log(f"tick {clock.tick} taker: {e}; no write this tick (fail closed)")
         except Exception:
-            self._after_sends()
+            self._after_sends(clock.tick)
             raise
-        self._after_sends()
+        self._after_sends(clock.tick)
 
-    def _after_sends(self) -> None:
-        """After every send of the tick (an error included, never Ctrl-C): the learner's writes and the feed
-        archive. No database write ever runs before a send."""
+    def _after_sends(self, tick: int) -> None:
+        """After every send of the tick (an error included, never Ctrl-C): the learner's writes, our dealer
+        threads and the feed archive. No database write ever runs before a send."""
         if self.learner is not None:
             self.learner.flush()
+        if self.thread_store is not None:
+            self.thread_store.flush(tick)
         self.feed.archive_pending()
+
+    def _keep(self, thread: dict[str, Any], snap: Snapshot, conv: Conversation | None = None) -> None:
+        """Buffer a thread answer we already read (no request, no I/O): `threads` + `messages` after the sends."""
+        if self.thread_store is not None:
+            tactics = getattr(conv, "tactics", None)  # N16: message id -> tactic, when the desk records one
+            self.thread_store.saw(thread, snap.us, snap.clock.tick, tactics if isinstance(tactics, dict) else None)
 
     def _tick(self, snap: Snapshot, threads: list[dict[str, Any]], window: TickWindow) -> None:
         clock = snap.clock
         if self.hub is not None:
             self.hub.tick(clock.tick, clock.t_hours, snap.us)
+        for listed in threads:  # GET /api/me/threads, already read: our open dealer threads
+            self._keep(listed, snap)
         offers = offers_in(snap.offers)
         mine, _ = our_open_offers(snap.offers, snap.us)
         run = _TickRun(snap, window, self.params(clock.tick), offers, mine, window.deadline - action_budget_s(clock))
+        if fresh := self.pages.new(snap.me):
+            self.log(new_page_line(clock.tick, "taker", fresh, snap.me))
         stops = kill_switch(self.rules)
         if stops:
             self._desk_moves(run, held=True)  # reads go on: a deal that settles during the hold is still booked
@@ -552,6 +570,7 @@ class Taker:
         out = []
         for dealer, conv in list(self.convs.items()):
             thread = self.team.thread(conv.thread_id)
+            self._keep(thread, run.snap, conv)
             if held and str(thread.get("status") or "open") == "open":
                 continue
             conv.ticks += 1
@@ -660,6 +679,9 @@ class Taker:
                 # "Deal!" may have landed first, and a deal is never dropped unbooked.
                 self._after_refused_walk(run, conv, move)
                 return
+            # we never read this thread again: keep how it ended (no extra request)
+            ended = {**thread, "status": ended_as or "walked", "closed_reason": thread.get("closed_reason") or "walked"}
+            self._keep(ended, run.snap, conv)
             self.convs.pop(conv.dealer, None)
             if move.reopen:
                 self._held_opening(run, conv)
@@ -706,6 +728,7 @@ class Taker:
             return
         try:
             after = self.team.thread(conv.thread_id)
+            self._keep(after, run.snap, conv)  # the read we just made: how the thread really ended
         except BazaarError as e:
             self.log(
                 f"tick {run.snap.clock.tick} taker: thread {conv.thread_id} unreadable after a refused walk ({e.code})"
