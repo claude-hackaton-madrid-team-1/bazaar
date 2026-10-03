@@ -212,14 +212,14 @@
     },
     "db_cards": {
       "title": "DB · cards",
-      "status": "todo",
+      "status": "wip",
       "lines": [
         {
-          "text": "table empty (catalog read live)",
+          "text": "holdings snapshot N13 in progress",
           "note": true
         }
       ],
-      "mark": "○"
+      "mark": "◑"
     },
     "db_traders_behaviors": {
       "title": "DB · traders_behaviors",
@@ -239,14 +239,14 @@
     },
     "db_learnings": {
       "title": "DB · learnings",
-      "status": "todo",
+      "status": "wip",
       "lines": [
         {
-          "text": "empty: the learner is not built",
+          "text": "learner N3 in progress (P0)",
           "note": true
         }
       ],
-      "mark": "○"
+      "mark": "◑"
     },
     "also_stored": {
       "title": "Also stored",
@@ -334,26 +334,26 @@
       "label": "worker",
       "title": "Marius's live PRs taken over",
       "body": "Jev: fix then merge #72, #62, #61; #60 through the gate; #68 closes into #72; #43 closed. Merged one by one after /pr-review."
+    },
+    {
+      "status": "wip",
+      "label": "worker",
+      "title": "Learner / auto-evolve (P0)",
+      "body": "Outcomes become lessons; hybrid RAG (BM25 + pgvector + a local reranker) feeds Jev and the words; per-dealer concession parameters evolve inside the guardrails. Postgres only (Jev: no graph DB)."
+    },
+    {
+      "status": "wip",
+      "label": "worker",
+      "title": "Our cards in the DB, real time",
+      "body": "Per-tick `/api/me` snapshot and the card catalog in Postgres; agents and bazaar-mcp read the latest holdings, refreshed after every deal."
     }
   ],
   "not_started": [
     {
       "status": "part",
       "label": "gap",
-      "title": "The learner",
-      "body": "Fills `traders_behaviors`, `learnings` and embeddings: the \"then learn\" loop of the original design."
-    },
-    {
-      "status": "part",
-      "label": "gap",
       "title": "Prompt-injection cap",
       "body": "The original rule caps counterparty text per decision (200k)."
-    },
-    {
-      "status": "part",
-      "label": "gap",
-      "title": "10 s per offer, then learn",
-      "body": "Tick budgets and a 3 s Jev timeout exist; a per-offer timeout feeding the learner does not."
     },
     {
       "status": "todo",
@@ -567,6 +567,14 @@
             "status": "todo",
             "priority": "P1",
             "owner": "worker"
+          },
+          {
+            "title": "Our cards in the DB, real time (N13)",
+            "start": "2026-10-03T03:45",
+            "end": "2026-10-03T08:30",
+            "status": "wip",
+            "priority": "P0",
+            "owner": "worker"
           }
         ]
       },
@@ -676,11 +684,20 @@
             "priority": "P2"
           },
           {
-            "title": "Learner + 10 s per offer (N3)",
-            "start": "2026-10-03T20:00",
-            "end": "2026-10-04T06:00",
+            "title": "Learner v1: lessons + hybrid RAG (N3)",
+            "start": "2026-10-03T03:40",
+            "end": "2026-10-03T12:00",
+            "status": "wip",
+            "priority": "P0",
+            "owner": "worker"
+          },
+          {
+            "title": "Auto-evolve: learned dealer curves (N3)",
+            "start": "2026-10-03T12:00",
+            "end": "2026-10-03T20:00",
             "status": "todo",
-            "priority": "P2"
+            "priority": "P0",
+            "owner": "worker"
           }
         ]
       },
