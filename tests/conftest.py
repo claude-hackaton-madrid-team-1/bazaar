@@ -50,3 +50,10 @@ def no_shared_holdings_db():
     yield
     holdings._PROCESS.clear()
     holdings._PROCESS.update(saved)
+
+
+@pytest.fixture(autouse=True)
+def no_real_models(monkeypatch):
+    """No test loads the real fastembed models: that would download ~150 MB from Hugging Face on a background
+    thread (a live network call) that can still be running native code when the interpreter exits."""
+    monkeypatch.setenv("BAZAAR_MODELS", "off")

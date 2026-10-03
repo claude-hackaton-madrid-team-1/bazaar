@@ -39,7 +39,7 @@ def full_team(**kw):
 
 
 def test_every_tool_has_one_self_contained_schema_and_a_unique_name():
-    assert len({s.name for s in tl.TOOLS}) == len(tl.TOOLS) == 20
+    assert len({s.name for s in tl.TOOLS}) == len(tl.TOOLS) == 21
     assert set(tl.WRITE_TOOLS) == set(WRITES)
     for spec in tl.TOOLS:
         schema = spec.schema()
@@ -108,6 +108,24 @@ def test_the_guardrails_refuse_inside_the_tool_without_any_hook(tmp_path, monkey
     assert team.sent == []
     switch.trading(True)
     assert run(b, "sell_cancel", {"offer_id": 77})[0]["guardrail"] == "allowed"
+
+
+def test_a_duel_move_is_checked_on_its_terms_and_never_outside_our_limit(tmp_path, monkeypatch):
+    from bazaar_agent.agents import duelist
+    from bazaar_agent.runtime import hooks
+
+    live = backend(tmp_path, live=True, team=(team := full_team()))
+    accepted, _ = run(live, "duel_move", {"duel_id": 7})  # the rival's 90 against our cost 50
+    assert accepted["status"] == "done" and accepted["guardrail"] == "allowed" and ("duel_accept", 7) in team.sent
+    two_issue = {**DUEL, "your_limit": 104, "rival_offer": None, "issues": ["price", "days"], "your_days_weight": 2.0}
+    team = Team(duels=[two_issue])
+    outside = duelist.DuelMove("offer", 110, 5, "a policy bug")  # 110 - 2 × 5 = 100 < cost 104
+    monkeypatch.setattr(duelist, "duel_move", lambda *a, **kw: outside)
+    refused, _ = run(backend(tmp_path, live=True, team=team), "duel_move", {"duel_id": 7})
+    assert refused["status"] == "rejected" and "duel_inside_limit" in refused["guardrail"] and team.sent == []
+    guard = hooks.Guard(backend(tmp_path, team=team), {}, tl.secrets_of(backend(tmp_path).settings), log=print)
+    allowed, why, _ = guard._check(tl.BY_NAME["duel_move"], {"duel_id": 7})  # the PreToolUse path, same plan
+    assert not allowed and "duel_inside_limit" in why
 
 
 def test_bad_arguments_are_refused_at_the_boundary(tmp_path):
@@ -378,6 +396,41 @@ def test_an_oversized_answer_is_cut_before_serialising_and_stays_json():
     huge = {"blob": "y" * (tl.MAX_ANSWER_CHARS + 10)}
     text, failed = tl.fitted(huge)
     assert failed and json.loads(text)["error"] == "answer too large"
+
+
+def test_a_v2_duel_move_holds_in_silence_and_plans_one_accept_across_every_live_duel(tmp_path):
+    team = Team(duels=[DUEL, {**DUEL, "duel": 8, "rival_offer": {"price": 95}}])
+    v2 = Guardrails(duel_policy="v2")
+    early, _ = run(backend(tmp_path, live=True, team=team, rules=v2), "duel_move", {"duel_id": 7})
+    assert early["status"] == "hold" and "silence is free" in early["reason"] and team.sent == []
+    late = backend(tmp_path, live=True, team=team, rules=v2, public=Public(now=clock(tick=107)))
+    first, _ = run(late, "duel_move", {"duel_id": 7})  # two duels end at 110: the planner takes 8 (95) now
+    second, _ = run(late, "duel_move", {"duel_id": 8})
+    assert first["status"] == "hold" and "accept queued" in first["reason"]
+    assert second["request"]["kind"] == "accept" and team.sent == [("duel_accept", 8)]
+
+
+def test_a_v2_duel_move_ages_a_duel_whose_payload_has_no_start(tmp_path):
+    silent = {k: v for k, v in DUEL.items() if k != "started_tick"} | {"rival_offer": None, "messages": []}
+    team, v2 = Team(duels=[silent]), Guardrails(duel_policy="v2")
+    b = backend(tmp_path, live=True, team=team, rules=v2, public=Public(now=clock(tick=100)))
+    first, _ = run(b, "duel_move", {"duel_id": 7})
+    assert first["status"] == "hold"  # the rival may still open
+    b._public = Public(now=clock(tick=104))  # same runtime, four ticks later: the duel is 4 ticks old, not 0
+    later, _ = run(b, "duel_move", {"duel_id": 7})
+    assert later["request"]["kind"] == "offer" and "not priced" in later["request"]["reason"]
+
+
+def test_v1_default_runtime_duel_move_price_unchanged_when_payload_has_no_start(tmp_path):
+    """r1 review of #86: under v1 (the default) the runtime keeps #60's behaviour; only v2 ages duels."""
+    silent = {k: v for k, v in DUEL.items() if k not in ("started_tick", "created_tick")} | {"rival_offer": None}
+    team, rules = Team(duels=[silent]), Guardrails()
+    assert rules.duel_policy == "v1"
+    b = backend(tmp_path, live=True, team=team, rules=rules, public=Public(now=clock(tick=100)))
+    first, _ = run(b, "duel_move", {"duel_id": 7})
+    b._public = Public(now=clock(tick=106))
+    later, _ = run(b, "duel_move", {"duel_id": 7})
+    assert later["request"]["price"] == first["request"]["price"]
 
 
 def test_cancelling_a_dealer_thread_bid_books_no_refund(tmp_path):

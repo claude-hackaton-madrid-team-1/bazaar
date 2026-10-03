@@ -37,7 +37,7 @@ guardrail cap.
 6. `learn/outcomes.py`: the pass. It runs in the taker every 5 ticks on a worker, after the sends.
 7. `bazaar learnings --lessons [--save]` and `--query "..."`.
 
-## PR B — auto-evolve (next)
+## PR B — auto-evolve
 Learned ladder parameters per dealer × price class (start, step, walk point): bounded updates, logged with
 their evidence, inside the GUARDRAILS caps. A class priced above our cap is skipped instead of opened.
 Lessons go into Jev's state and the words context as quoted data. An MCP read tool. Proof: a replay of
@@ -52,3 +52,21 @@ the real threads with old vs learned parameters, a simulator end-to-end run, and
 4. Recall answers inside its budget, or returns nothing (timeout, models loading, error).
 5. The taker starts a pass after its tick and never waits for it.
 6. Gate green: black, ruff, mypy, pytest (≥ 80 % on the new modules).
+
+## Acceptance criteria (PR B)
+1. Per dealer × buy class, a learned ladder (start, step, walk). It is searched by replay on every
+   team's real threads, inside the GUARDRAILS cap, and moves at most 3 P per pass. Each change is
+   logged with its previous values, evidence and history.
+2. A class that cannot close under our cap is skipped, from fills above the cap or from walks at the
+   cap. The taker records a `dealer_skip` and opens the next buy. A learned ladder never raises the
+   strategy's top.
+3. Lessons reach Jev's `offer_is_worth_accepting`, `duel_move` and `list_price_choice` states and the
+   dealer bid words as quoted data. No lessons leaves the state unchanged.
+4. `bazaar learnings --policy` and the MCP tool `learnings` show the ladders and the replay.
+5. Proof: a replay on Friday's real threads (today vs learned), and an end-to-end simulator run.
+6. Gate green.
+
+## Plan (steps, in order)
+A1 curves + lessons + behaviours → A2 embeddings + hybrid recall → A3 learner pass in the taker → A4 CLI,
+docs → review fixes (#96) → B1 replay + evolve (grid search, bounded moves, skip) → B2 taker applies
+ladders → B3 lessons into Jev + words → B4 MCP tool + `--policy` → B5 simulator e2e → B6 docs, review.

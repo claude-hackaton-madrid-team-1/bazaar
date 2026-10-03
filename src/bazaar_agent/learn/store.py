@@ -366,6 +366,7 @@ class LearningStore:
         params = _filters(kinds, subjects, sources, subject_kind, team, tick, where) | {
             "v": vector_literal(vector),
             "limit": limit,
+            "where": json.dumps(dict(where)) if where else None,
         }
         try:
             if not self._vectors_on(conn):

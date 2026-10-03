@@ -494,10 +494,13 @@ def duel_run(
     from rich.markup import escape
 
     from bazaar_agent import guardrails as gr
-    from bazaar_agent.agents.duel_jev import DuelPick
+    from bazaar_agent.agents.duel_days import effective_rules, latch, reads_done, real_game
+    from bazaar_agent.agents.duel_jev import DuelPick, forced_pick
+    from bazaar_agent.agents.duel_v2 import V2Params, payload_start, plan_moves
     from bazaar_agent.agents.duelist import (
         DuelMove,
         append_jsonl,
+        duel_action,
         duel_deadline,
         duel_id,
         duel_move,
@@ -525,10 +528,21 @@ def duel_run(
         _db_connect("bazaar-duels") if ledger.where.startswith("postgres") else None,
         lambda m: console.print(f"[dim]{escape(m)}[/dim]"),
     )
+    days_switch = latch(settings.data_dir)  # the sign of your_days_weight, from the first real payload (B8)
+    done_every_ticks = 10  # while the sign is open, read the finished duels this often (one extra GET)
+    real = real_game(settings.bazaar_url)  # from the base URL: the simulator's days_meaning is never evidence
     first_seen: dict[int, int] = {}
     sent: dict[int, int] = {}  # messages we sent per duel (the words' `step`)
+    handled: list[int] = []  # the last tick this loop handled (v2 widens its accept margin after a gap)
     duel_traces = traces.DuelTraces()
-    duel_words = llm_cli.words_for(settings, rules, template_duel_words)
+    v2 = rules.duel_policy == "v2"
+    if v2 and rules.duel_endgame_min_share > 0 and rules.duel_endgame_ticks != 1:
+        console.print(
+            f"[yellow]duel_endgame_min_share {rules.duel_endgame_min_share} with duel_endgame_ticks "
+            f"{rules.duel_endgame_ticks}: B11 measured it with 1 (2 lets squeezes through, 0 loses deals)[/yellow]"
+        )
+    # v2 sends few priced messages and none of them is persuasion: the LLM words stay off for duels.
+    duel_words = template_duel_words if v2 else llm_cli.words_for(settings, rules, template_duel_words)
 
     def send(d: dict[str, Any], did: int, move: DuelMove, c: Clock, send_by: float) -> Status:
         said: str | None = None
@@ -578,6 +592,25 @@ def duel_run(
             move={"duel": duel_id(d), "kind": move.kind, "price": move.price, "days": move.days},
         )
 
+    def observe_days(rows: list[dict[str, Any]]) -> None:
+        before = days_switch.verdict
+        days_switch.observe(rows, real)
+        if days_switch.verdict != before:
+            console.print(
+                f"  duel days sign: {days_switch.verdict} (duel {escape(str(days_switch.duel))}: "
+                f"{escape(str(days_switch.text))})"
+            )
+
+    def read_done_days(tick: int) -> None:
+        """Scored evidence for the days sign, after the tick's sends: v2 with duel_days_auto, on the real game,
+        while the verdict is unknown or signed (r1: a text latch keeps its cross-check against the score)."""
+        if tick % done_every_ticks or not reads_done(rules, days_switch, real):
+            return
+        try:
+            observe_days([d for d in client.duels(done=True).get("duels") or [] if isinstance(d, dict)])
+        except BazaarError as e:
+            console.print(f"  /api/duels?done=true refused {e.code}: the days sign waits")
+
     def save_finished(tick: int) -> None:
         """One `?done=true` read on a tick where a duel left the live list: its price, rounds and result."""
         try:
@@ -590,6 +623,7 @@ def duel_run(
             return
         append_jsonl(log_path, {"tick": tick, "response": data, "done": True})
         store.save(tick, [d for d in duel_list(data) if d.get("status") != "live"])
+        observe_days(duel_list(data))  # free scored evidence for the days sign: this read happens anyway
 
     def on_tick(c: Clock) -> None:
         send_by = time.monotonic() + action_budget_s(c)
@@ -604,40 +638,58 @@ def duel_run(
         append_jsonl(log_path, {"tick": c.tick, "response": data})
         duels = duel_list(data)
         console.print(f"tick {c.tick}: {len(duels)} live duel(s) logged")
+        observe_days(duels)
+        rules_t = effective_rules(rules, days_switch)  # one rules object for the policy and the guard
         live_ids = [did for did in map(duel_id, duels) if did is not None]
-        for live_id in live_ids:
-            first_seen.setdefault(live_id, c.tick)
+        for d in duels:  # v2: after a restart, the earliest message is a better start than now (v1 as #60)
+            if (live_id := duel_id(d)) is not None:
+                first_seen.setdefault(live_id, payload_start(d, c.tick) if v2 else c.tick)
         picks: dict[int, DuelPick] = {}
-        if duel_jev is not None:  # every live duel at once, so a duel accept still lands early in the tick
-            endgame = rules.duel_endgame_ticks
-            left = lambda: send_by - time.monotonic()  # noqa: E731
+        limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
+        try:  # another process may have taken it already
+            slots: int | None = max(0, limit - ledger.accepts_in_tick(c.tick))
+        except Exception as e:  # a ledger outage (#62's LedgerUnavailable): fail closed, every duel holds
+            console.print(f"  ledger unreadable ({type(e).__name__}): every duel holds this tick (no accept, no offer)")
+            slots = None
+        params = V2Params.from_rules(rules_t, anchor, floor) if v2 else None
+        gap = c.tick - handled[-1] if handled else 1
+        handled[:] = [c.tick]
+        if params is not None and gap > 1:  # we missed ticks: the next ones may go too, so accept earlier (r2 B4)
+            # capped (r1): ten failed reads must not turn every duel into "accept the first offer inside"
+            params = replace(params, missed=min(gap - 1, MISSED_TICKS_CAP))
+        planned: dict[int, DuelMove] = {}
+        if params is not None and slots is None:
+            planned = {did: DuelMove("hold", reason="ledger unreadable: no accept this tick") for did in live_ids}
+        elif params is not None:
             try:
-                picks = duel_jev.pick(
-                    duels, c.tick, first_seen, anchor=anchor, floor=floor, endgame_ticks=endgame, left=left
-                )
-            except Exception as e:  # a bug in the Jev layer must never cost a duel its move
-                console.print(f"  duel jev failed ({type(e).__name__}): today's moves this tick")
-        for d in duels:
+                planned = plan_moves(duels, c.tick, first_seen, params, slots or 0)
+            except Exception as e:  # a v2 bug holds every duel this tick: never a silent switch back to v1
+                console.print(f"  duel v2 planner failed ({type(e).__name__}): holding every duel this tick")
+                planned = {did: DuelMove("hold", reason="v2 planner failed") for did in live_ids}
+
+        def play_one(d: dict[str, Any]) -> None:
             did = duel_id(d)
             if did is None:
-                continue
+                return
             pick = picks.get(did)
-            move = (
-                pick.move
-                if pick is not None
-                else duel_move(
-                    d, c.tick, first_seen[did], anchor=anchor, floor=floor, endgame_ticks=rules.duel_endgame_ticks
-                )
-            )
+            if did in forced:  # v1: today's accept is the only legal move, played before Jev was asked
+                pick = forced[did] if duel_jev is not None else None  # --no-jev rows carry no Jev context
+                move = forced[did].move
+            elif pick is not None:
+                move = pick.move
+            elif did in planned:
+                move = planned[did]
+            else:
+                endgame = rules.duel_endgame_ticks
+                move = duel_move(d, c.tick, first_seen[did], anchor=anchor, floor=floor, endgame_ticks=endgame)
             duel_traces.seen(d, c.tick, move)
             if pick is not None:
                 duel_traces.jev(did, pick)
             if play and move.kind in ("accept", "offer") and time.monotonic() >= send_by:
                 console.print(f"  duel {did}: no time left in tick {c.tick}, {move.kind} next tick")
                 record(d, move, pick, c.tick, "expired")
-                continue
+                return
             if play and move.kind in ("accept", "offer"):
-                kind: gr.ActionKind = "duel_accept" if move.kind == "accept" else "duel_offer"
                 ctx = gr.Context(
                     cash=0,
                     held={},
@@ -646,26 +698,86 @@ def duel_run(
                     accepts_this_tick=ledger.accepts_in_tick(c.tick),
                     stops=gr.kill_switch(rules),  # read live: a GUARDRAILS.md edit counts without a restart
                 )
-                verdict = gr.check(gr.Action(kind, str(did), None, None), ctx, rules)
+                verdict = gr.check(duel_action(d, move), ctx, rules_t)  # the price and days we would agree to
                 duel_traces.guardrail(did, verdict.allowed, verdict.violations)
                 if not verdict.allowed:
                     console.print(f"  duel {did}: GUARDRAIL {verdict}")
                     record(d, move, pick, c.tick, "rejected", str(verdict))
-                    continue
+                    return
                 limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
                 if move.kind == "accept" and not ledger.reserve_accept(c.tick, c.t_hours, 0, f"duel:{did}", limit):
                     console.print(f"  duel {did}: another process took the team's accept this tick")
                     record(d, move, pick, c.tick, "rejected", "accept slot taken by another process")
-                    continue
-            # The rival's offer may carry text: escaped, so a stray "[/red]" cannot crash the loop.
+                    return
+            # Server fields may carry text: escaped, so a stray "[/red]" cannot crash the loop after the accept
+            # slot was booked.
             console.print(
-                f"  duel {did} {d.get('role')} limit {d.get('your_limit')} rival {escape(str(d.get('rival_offer')))} "
+                f"  duel {did} {escape(str(d.get('role')))} limit {escape(str(d.get('your_limit')))} "
+                f"rival {escape(str(d.get('rival_offer')))} "
                 f"deadline {duel_deadline(d)} -> {move.kind} {move.price or ''} ({escape(move.reason)})"
                 + (f" · {escape(pick.why)}" if pick is not None else "")
             )
             status: Status = send(d, did, move, c, send_by) if play and move.kind != "hold" else "approved"
             record(d, move, pick, c.tick, status)
+
+        def play_safely(d: dict[str, Any]) -> None:
+            try:
+                play_one(d)
+            except Exception as e:  # one malformed row must not cost the other duels their move (r2 bite B2b)
+                console.print(f"  duel {duel_id(d)}: skipped this tick ({type(e).__name__})")
+
+        # v1 (r2 X17): in the endgame an inside-limit offer is the only legal move and Jev is never asked about
+        # it, so it is booked AND sent now, nearest deadline first, before Jev answers about the other duels and
+        # before the taker's duel grace (2 s) ends. v2 sends its planner's accepts in the same early pass.
+        forced: dict[int, DuelPick] = {}
+        for d in duels if play and params is None else ():
+            if (fid := duel_id(d)) is None:
+                continue
+            try:
+                endgame = rules.duel_endgame_ticks
+                if (fp := forced_pick(d, c.tick, first_seen[fid], anchor, floor, endgame)) is not None:
+                    forced[fid] = fp
+            except Exception as e:  # a malformed row goes the usual way below
+                console.print(f"  duel {fid}: forced-accept check failed ({type(e).__name__}): today's path")
+
+        # v2: the planner's accepts are booked AND sent now, before Jev is asked about the other duels (r2 X17, as
+        # B15 does for v1's forced accepts): the taker claims the team's accept 2 s into the tick, and a slow Jev
+        # can no longer strand a booked slot. Jev's only legal move for such a duel is that accept anyway.
+        # One early pass (B7 + B15): v2's planned accepts, or v1's forced endgame accepts, nearest deadline first.
+        early = sorted(
+            (
+                d
+                for d in duels
+                if duel_id(d) in forced or planned.get(duel_id(d) or -1, DuelMove("hold")).kind == "accept"
+            ),
+            key=lambda d: duel_deadline(d) or 0,
+        )
+        for d in early:
+            play_safely(d)
+        done = {duel_id(d) for d in early}
+        if duel_jev is not None:  # every live duel at once, so a duel accept still lands early in the tick
+            endgame = rules.duel_endgame_ticks
+            left = lambda: send_by - time.monotonic()  # noqa: E731
+            try:
+                picks = duel_jev.pick(
+                    duels,
+                    c.tick,
+                    first_seen,
+                    anchor=anchor,
+                    floor=floor,
+                    endgame_ticks=endgame,
+                    left=left,
+                    v2=params,
+                    slots=slots or 0,
+                )
+            except Exception as e:  # a bug in the Jev layer must never cost a duel its move
+                console.print(f"  duel jev failed ({type(e).__name__}): today's moves this tick")
+
+        for d in duels:
+            if duel_id(d) not in done:
+                play_safely(d)
         duel_traces.end_tick(duel_id(d) for d in duels)
+        read_done_days(c.tick)  # after every send of the tick: a slow read never costs a deadline accept
         if duel_jev is not None:
             try:
                 for line in duel_jev.outcomes.settle(live_ids, c.tick):
@@ -688,6 +800,9 @@ def duel_run(
         duel_traces.close("stopped")
         decisions.close()
         store.close()
+
+
+MISSED_TICKS_CAP = 2  # v2 accepts at most this many ticks earlier after a gap in the duel loop
 
 
 def _db_connect(app: str) -> Callable[[], Any]:
@@ -737,12 +852,34 @@ def _jev_fns(settings: Any, rules: Any, journal: Any, pack: str, *questions: str
     return [question_fn(path, q, api_key=key, timeout_s=rules.jev_timeout_s, journal=journal) for q in questions]
 
 
+_LESSONS: Any = None
+
+
+def _lessons(log: Callable[[str], None] | None = None) -> Any:
+    """This process's lessons for Jev and the words (N3): the hybrid recall over the shared `learnings`.
+    The models load in the background; until then (and on any error) every call answers no lessons."""
+    global _LESSONS
+    if _LESSONS is None:
+        from bazaar_agent import db
+        from bazaar_agent.learn.embed import shared_models
+        from bazaar_agent.learn.recall import HybridRecall, Lessons
+        from bazaar_agent.learn.store import LearningStore
+
+        models = shared_models(log or (lambda line: None))
+        models.warm()
+        _LESSONS = Lessons(HybridRecall(LearningStore(lambda: db.connect(app="bazaar-lessons")), models))
+    return _LESSONS
+
+
 def _duel_jev(settings: Any, rules: Any) -> Any:
     """Jev `duel_move` + `rival_cares_about_days` (questions/duels.json) as the duel player's decision model."""
     from bazaar_agent.agents.duel_jev import DAYS_QUESTION, MOVE_QUESTION, DuelJev
 
     journal = _jev_journal(settings)
+    from bazaar_agent.learn.jev_context import duel_situation, with_lessons
+
     move_fn, days_fn = _jev_fns(settings, rules, journal, "duels.json", MOVE_QUESTION, DAYS_QUESTION)
+    move_fn = with_lessons(move_fn, _lessons(), duel_situation)
     return DuelJev(move_fn, days_fn, can_accept_early=rules.jev_can_accept_early, journal=journal)
 
 
@@ -751,7 +888,10 @@ def _maker_jev(settings: Any, rules: Any) -> Any:
     from bazaar_agent.agents.maker_jev import PRICE_QUESTION, REPRICE_QUESTION, MakerJev
 
     journal = _jev_journal(settings)
+    from bazaar_agent.learn.jev_context import listing_situation, with_lessons
+
     price_fn, reprice_fn = _jev_fns(settings, rules, journal, "maker.json", PRICE_QUESTION, REPRICE_QUESTION)
+    price_fn = with_lessons(price_fn, _lessons(), listing_situation)
     return MakerJev(price_fn, reprice_fn, journal=journal)
 
 
@@ -1523,7 +1663,7 @@ def _run_agent(
             models.warm()  # background download/load: lessons start once the models are ready
             outcome_store = LearningStore(connect, log)
             outcome_store.open()  # connect now, never inside a tick
-            extra["outcome_learner"] = OutcomeLearner(connect, outcome_store, models, log)
+            extra["outcome_learner"] = OutcomeLearner(connect, outcome_store, models, log, rules=rules)
         from bazaar_agent.learn.threads import ThreadStore
 
         extra["thread_store"] = ThreadStore(connect_learnings, log)  # our dealer threads: threads + messages
@@ -1598,13 +1738,15 @@ def agent_taker(
     from bazaar_agent.agents.dealer import template_words
     from bazaar_agent.agents.runtime import no_jev
     from bazaar_agent.agents.taker import Taker, TakerConfig
+    from bazaar_agent.learn.jev_context import offer_situation, with_lessons
 
     def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
         rules = kw["rules"]
         return Taker(
             team,
             public,
-            jev=_offer_jev(settings, rules.jev_timeout_s) if jev else no_jev,
+            jev=with_lessons(_offer_jev(settings, rules.jev_timeout_s), _lessons(), offer_situation) if jev else no_jev,
+            lessons=_lessons(),
             pack_judge=_pack_judge(settings, rules.jev_timeout_s) if jev else None,
             words_fn=llm_cli.words_for(settings, rules, template_words),
             config=TakerConfig(max_dealer_threads=threads),

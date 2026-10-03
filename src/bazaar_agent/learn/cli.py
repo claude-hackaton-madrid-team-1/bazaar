@@ -108,6 +108,12 @@ def _connect() -> Any:
     return conn
 
 
+def _rules() -> Any:
+    from bazaar_agent.guardrails import load_guardrails
+
+    return load_guardrails().rules
+
+
 def _newest_tick(conn: Any) -> int:
     if conn is None:
         return 0
@@ -150,6 +156,7 @@ def learnings(
     as_json: bool = typer.Option(False, "--json", help="JSON instead of tables"),
     lessons: bool = typer.Option(False, "--lessons", help="Run the outcome learner: lessons + dealer patterns (N3)"),
     query: str | None = typer.Option(None, "--query", help="What the hybrid recall returns for this situation"),
+    policy: bool = typer.Option(False, "--policy", help="The learned dealer ladders vs today's, with the replay"),
     min_score: float = typer.Option(0.0, help="--query: the cross-encoder floor (agents use 0)"),
 ) -> None:
     """What the live-feed reader learned from the captured feed, and the dealer blockers for us.
@@ -161,7 +168,7 @@ def learnings(
     settings = load_settings()
     us = resolve_team_id(settings.team_id, settings.data_dir, None)
     conn = _connect()
-    if lessons or query:
+    if lessons or query or policy:
         from bazaar_agent.learn import lessons_cli
 
         now_tick = tick if tick is not None else _newest_tick(conn)
@@ -171,6 +178,8 @@ def learnings(
             now_tick,
             lessons=lessons,
             query=query,
+            policy=policy,
+            rules=_rules() if policy else None,
             save=save,
             subject=subject,
             limit=min(limit, 10),  # hits per query (lessons tables print every row)
