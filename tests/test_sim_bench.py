@@ -200,6 +200,9 @@ def test_bench_points_give_half_at_the_stall_and_full_at_the_top_three():
     assert bench.bench_points(0.75, 0.6, 0.9) == 0.75
     assert bench.bench_points(0.3, 0.6, 0.9) == 0.25
     assert bench.bench_points(0.95, 0.6, 0.9) == 1.0
+    assert bench.session_points(0.62, 0.6, [0.6, 0.6]) == 1.0  # a field at the stall: any edge is the top
+    assert bench.session_points(0.6, 0.6, [0.9, 0.9, 0.9]) == 0.5
+    assert simulate(stall_policy, NORMAL, 3).points() == 0.5
 
 
 # ---------------------------------------------------------------- the simulator's venues

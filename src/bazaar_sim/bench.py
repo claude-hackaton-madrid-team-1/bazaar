@@ -83,6 +83,20 @@ class BenchPreset:
     def with_ticks(self, ticks: int) -> BenchPreset:
         return replace(self, ticks=ticks)
 
+    def variant(
+        self, *, spread: int | None = None, shade: float = 1.0, relax: tuple[float, float] | None = None
+    ) -> BenchPreset:
+        """The same preset with other unverified assumptions, for sensitivity runs: arrivals over 0..`spread`,
+        every shade `shade` times as wide (2.0: asks 10–60 % over cost, bids 10–50 % under value), another relax."""
+        widen = lambda lo, hi, side: (side + (lo - side) * shade, side + (hi - side) * shade)  # noqa: E731
+        return replace(
+            self,
+            arrive_spread=self.arrive_spread if spread is None else spread,
+            sell_shade=widen(*self.sell_shade, 1.0),
+            buy_shade=widen(*self.buy_shade, 1.0),
+            relax=self.relax if relax is None else relax,
+        )
+
 
 NORMAL = BenchPreset("normal", traders=10, firm_share=0.2, impatient_share=0.25)
 HARD = BenchPreset("hard", traders=12, firm_share=0.35, impatient_share=0.35)
@@ -396,6 +410,12 @@ class BenchResult:
     def oracle(self) -> float:
         return self._share(self.oracle_realised)
 
+    def points(self, rivals: Sequence[float] | None = None) -> float:
+        """This session's share of the bench points against `rivals`' efficiencies (default: two stall-level
+        venues, what a field running the kit's starter broker or the free stall scores)."""
+        field_ = [self.stall, self.stall] if rivals is None else list(rivals)
+        return session_points(self.efficiency, self.stall, field_)
+
 
 def simulate(
     policy: Policy,
@@ -439,6 +459,12 @@ def simulate(
         posts=posts,
         max_requests_per_tick=peak,
     )
+
+
+def session_points(ours: float, stall: float, rivals: Sequence[float]) -> float:
+    """Our share of one session's bench points, the top three taken over our venue and the rivals' ones."""
+    top = sorted([ours, *rivals], reverse=True)[:3]
+    return bench_points(ours, stall, sum(top) / len(top))
 
 
 def bench_points(efficiency: float, stall: float, top3: float) -> float:
