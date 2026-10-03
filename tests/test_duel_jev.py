@@ -205,11 +205,32 @@ def test_days_question_is_asked_only_in_two_issue_duels_and_moves_days_inside_th
 
 def test_the_rivals_days_are_refused_when_they_would_cross_our_limit():
     d = two_issue(150, 10, weight=9.0)
-    offer = DuelMove("offer", 157, 5, "concede")
+    offer = DuelMove("offer", 157, 0, "concede")
     move, why = with_rival_days(offer, d, JevAdvice("yes", 0.7))
-    assert move.days == 5 and "cross our limit" in why  # 157 - 9 × 10 = 67 < cost 104
-    assert with_rival_days(offer, d, JevAdvice("undecided", 0.5))[0].days == 5
-    assert with_rival_days(offer, d, JevAdvice("no", 0.2))[0].days == 5
+    assert move.days == 0 and "cross our limit" in why  # 157 - 9 × 10 = 67 < cost 104
+    assert with_rival_days(offer, d, JevAdvice("undecided", 0.5))[0].days == 0
+    assert with_rival_days(offer, d, JevAdvice("no", 0.2))[0].days == 0
+
+
+def test_the_rivals_days_must_leave_our_price_strictly_inside_the_limit():
+    offer = DuelMove("offer", 114, 0, "concede")
+    move, why = with_rival_days(offer, two_issue(150, 5), JevAdvice("yes", 0.7))
+    assert move.days == 0 and "cross our limit" in why  # 114 - 2 × 5 = 104: exactly our cost, no surplus
+    assert with_rival_days(offer, two_issue(150, 4), JevAdvice("yes", 0.7))[0].days == 4  # worth 106
+
+
+def test_a_counter_whose_days_cross_our_limit_is_not_a_legal_move():
+    d = two_issue(98, 0)  # the rival's 98 is below our cost 104: accepting is not legal either
+    for counter in (DuelMove("offer", 110, 5), DuelMove("offer", 104, 0)):  # worth 100, then exactly the limit
+        legal = legal_moves(d, 134, counter, counter, endgame_ticks=2)
+        assert set(legal) == {"hold"}, counter
+    worth_105 = DuelMove("offer", 115, 5)
+    assert "counter" in legal_moves(d, 134, worth_105, worth_105, endgame_ticks=2)
+    unvalued = DuelMove("offer", 150, 0)  # no your_days_weight: we cannot value our own days, fail closed
+    assert "counter" not in legal_moves(two_issue(98, 0, weight=None), 134, unvalued, unvalued, endgame_ticks=2)
+    buyer = {**two_issue(130, 0, weight=-2.0), "role": "buyer", "your_limit": 60}
+    costs_64 = DuelMove("offer", 54, 5)
+    assert "counter" not in legal_moves(buyer, 134, costs_64, costs_64, endgame_ticks=2)
 
 
 # ---------------------------------------------------------------- outcomes for calibration

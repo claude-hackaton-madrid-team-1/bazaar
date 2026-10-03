@@ -167,3 +167,24 @@ def test_a_bug_in_the_jev_layer_never_costs_a_duel_its_move(duel_cli, monkeypatc
     assert result.exit_code == 0, result.output
     assert "duel jev failed (RuntimeError): today's moves this tick" in result.output
     assert client.sent[0][:2] == ("say", 95)  # today's counter still went out
+
+
+@pytest.mark.parametrize("jev", [False, True])
+def test_the_guardrail_stops_a_duel_move_outside_our_limit_at_the_send_site(duel_cli, monkeypatch, jev):
+    """Second line of defence: whichever layer chose it, a move worth less than our cost 104 is never sent."""
+    from bazaar_agent.agents import duel_jev, duelist
+
+    cli, client, asked, tmp_path = duel_cli
+    client.payload = [{**LIVE, "issues": ["price", "days"], "your_days_weight": 2.0}]
+    outside = duelist.DuelMove("offer", 110, 5, "a policy bug")  # 110 - 2 × 5 = 100 < cost 104
+    if jev:
+        pick = duel_jev.DuelPick(outside, outside, ("counter",), "jev counter")
+        monkeypatch.setattr(duel_jev.DuelJev, "pick", lambda self, duels, *a, **kw: {95: pick})
+    else:
+        monkeypatch.setattr(duelist, "duel_move", lambda *a, **kw: outside)
+    args = ["duel", "run", "--play", "--max-ticks", "1"] + ([] if jev else ["--no-jev"])
+    result = CliRunner().invoke(cli.app, args)
+    assert result.exit_code == 0, result.output
+    assert client.sent == [] and "duel_inside_limit" in " ".join(result.output.split())
+    (row,) = decision_rows(tmp_path)
+    assert row["status"] == "rejected"

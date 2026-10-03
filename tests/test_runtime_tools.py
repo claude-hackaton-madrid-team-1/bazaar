@@ -105,6 +105,24 @@ def test_the_guardrails_refuse_inside_the_tool_without_any_hook(tmp_path):
     assert team.sent == []
 
 
+def test_a_duel_move_is_checked_on_its_terms_and_never_outside_our_limit(tmp_path, monkeypatch):
+    from bazaar_agent.agents import duelist
+    from bazaar_agent.runtime import hooks
+
+    live = backend(tmp_path, live=True, team=(team := full_team()))
+    accepted, _ = run(live, "duel_move", {"duel_id": 7})  # the rival's 90 against our cost 50
+    assert accepted["status"] == "done" and accepted["guardrail"] == "allowed" and ("duel_accept", 7) in team.sent
+    two_issue = {**DUEL, "your_limit": 104, "rival_offer": None, "issues": ["price", "days"], "your_days_weight": 2.0}
+    team = Team(duels=[two_issue])
+    outside = duelist.DuelMove("offer", 110, 5, "a policy bug")  # 110 - 2 × 5 = 100 < cost 104
+    monkeypatch.setattr(duelist, "duel_move", lambda *a, **kw: outside)
+    refused, _ = run(backend(tmp_path, live=True, team=team), "duel_move", {"duel_id": 7})
+    assert refused["status"] == "rejected" and "duel_inside_limit" in refused["guardrail"] and team.sent == []
+    guard = hooks.Guard(backend(tmp_path, team=team), {}, tl.secrets_of(backend(tmp_path).settings), log=print)
+    allowed, why, _ = guard._check(tl.BY_NAME["duel_move"], {"duel_id": 7})  # the PreToolUse path, same plan
+    assert not allowed and "duel_inside_limit" in why
+
+
 def test_bad_arguments_are_refused_at_the_boundary(tmp_path):
     b = backend(tmp_path)
     for name, args in (
