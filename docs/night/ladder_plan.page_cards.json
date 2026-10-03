@@ -556,8 +556,8 @@
    "why": "floor p50 23 ± 2; reserve 25 P"
   },
   {
-   "tick": 120,
-   "wall": "10:00:00",
+   "tick": 126,
+   "wall": "10:03:00",
    "game_hour": 5,
    "dealer": "abuela",
    "price_class": "card:uncommon",

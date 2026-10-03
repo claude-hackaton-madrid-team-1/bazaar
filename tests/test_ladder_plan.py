@@ -68,8 +68,10 @@ def test_schedule_keeps_quotas_budget_and_the_cash_floor(plans):
     for s in sched.slots:
         per_hour.setdefault(s.game_hour, []).append(s)
     for slots in per_hour.values():
-        assert len(slots) <= 8  # Abuela: 8 deals per team per hour
-        assert sum(s.max_price for s in slots) <= RULES.max_spend_per_game_hour
+        assert len(slots) <= 8  # Abuela: 8 deals per team per hour (clock hour, as the simulator counts)
+    for s in sched.slots:  # GUARDRAILS.md counts spend over the last game hour (ledger.spent_since(t - 1))
+        rolling = [x.max_price for x in sched.slots if s.tick - 120 < x.tick <= s.tick]
+        assert sum(rolling) <= RULES.max_spend_per_game_hour
     assert 503 - sum(s.max_price for s in sched.slots) >= RULES.cash_floor
     ticks = [s.tick for s in sched.slots]
     assert all(b - a >= 4 for a, b in zip(ticks, ticks[1:], strict=False))  # one conversation at a time

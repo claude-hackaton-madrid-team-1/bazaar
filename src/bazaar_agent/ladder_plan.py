@@ -180,8 +180,19 @@ def schedule(
     slots: list[Slot] = []
     next_free: dict[str, int] = {}
     deals: dict[tuple[str, int], int] = {}
-    packs: dict[tuple[str, int], int] = {}
-    spend: dict[int, int] = {int(window.t_start): spent_this_hour}
+    hour_ticks = round(3600 / window.tick_seconds)
+
+    def last_hour(at: int) -> list[Slot]:
+        """Slots opened in the game hour up to tick `at`: GUARDRAILS.md counts spend and packs over the
+        last game hour (`ledger.spent_since(t_hours - 1)`), not per clock hour."""
+        return [s for s in slots if at - hour_ticks < s.tick <= at]
+
+    def spent(at: int) -> int:
+        return sum(s.max_price for s in last_hour(at)) + (spent_this_hour if at < hour_ticks else 0)
+
+    def packs_bought(at: int, pack: str | None = None) -> int:
+        bought = [s for s in last_hour(at) if s.target.price_class.startswith("pack:")]
+        return sum(1 for s in bought if pack is None or s.target.price_class == f"pack:{pack}")
 
     def cash_left(at: int) -> int:
         """Cash at tick `at` once every slot opened by then has spent its whole max price."""
@@ -206,17 +217,19 @@ def schedule(
         placed = False
         while tick + ticks_needed <= window.ticks:
             hour = int(window.t_at(tick))
-            # a slot placed now also spends at every later slot's tick: the floor must hold at each
+            # a slot placed now also counts at every later slot's tick: the floor must hold at each, and
+            # the hourly caps at each later slot inside the next game hour
             checks = [tick, *(s.tick for s in slots if s.tick > tick)]
+            in_hour = [t for t in checks if t < tick + hour_ticks]
             pack = target.price_class.split(":", 1)[1] if target.price_class.startswith("pack:") else None
             reason = None
             if deals.get((target.dealer, hour), 0) >= quota.deals_per_hour:
                 reason = f"{target.dealer} quota {quota.deals_per_hour}/h"
-            elif pack and packs.get((pack, hour), 0) >= quota.packs_per_hour.get(pack, UNLIMITED):
+            elif pack and max(packs_bought(t, pack) for t in in_hour) >= quota.packs_per_hour.get(pack, UNLIMITED):
                 reason = f"{pack} quota"
-            elif pack and sum(n for (_, h), n in packs.items() if h == hour) >= rules.max_packs_per_game_hour:
+            elif pack and max(packs_bought(t) for t in in_hour) >= rules.max_packs_per_game_hour:
                 reason = f"max_packs_per_game_hour {rules.max_packs_per_game_hour}"  # every pack id together
-            elif spend.get(hour, 0) + plan.max_price > rules.max_spend_per_game_hour:
+            elif max(spent(t) for t in in_hour) + plan.max_price > rules.max_spend_per_game_hour:
                 reason = f"max_spend_per_game_hour {rules.max_spend_per_game_hour}"
             elif min(cash_left(t) for t in checks) - plan.max_price < rules.cash_floor:
                 reason = f"cash_floor {rules.cash_floor}"
@@ -239,22 +252,21 @@ def schedule(
                     )
                 )
                 deals[(target.dealer, hour)] = deals.get((target.dealer, hour), 0) + 1
-                if pack:
-                    packs[(pack, hour)] = packs.get((pack, hour), 0) + 1
-                spend[hour] = spend.get(hour, 0) + plan.max_price
                 next_free[target.dealer] = tick + ticks_needed
                 placed = True
                 break
-            if reason.startswith("cash_floor"):
+            if reason.startswith("cash_floor"):  # only a grant brings cash back
                 later = [g.tick for g in grants if g.tick > tick]
                 if not later:
                     break
                 tick = min(later)
-                continue
-            next_hour_tick = math.ceil((hour + 1 - window.t_start) * 3600 / window.tick_seconds)
-            if next_hour_tick <= tick:
-                break
-            tick = next_hour_tick
+            elif reason.startswith(f"{target.dealer} quota"):  # the dealer's allotment is per clock hour
+                next_hour_tick = math.ceil((hour + 1 - window.t_start) * 3600 / window.tick_seconds)
+                if next_hour_tick <= tick:
+                    break
+                tick = next_hour_tick
+            else:  # a rolling-hour cap: try again when the oldest slot in it ages out
+                tick = min(s.tick + hour_ticks for s in slots if s.tick + hour_ticks > tick)
         if not placed:
             unplaced[key] = unplaced.get(key, 0) + 1
     notes += [f"{n} more {d} {c} did not fit the window's budget or quotas" for (d, c), n in unplaced.items()]

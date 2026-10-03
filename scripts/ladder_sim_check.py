@@ -106,7 +106,7 @@ def main() -> None:
         row = rows.get(key)
         if row is None:
             continue
-        cap = rules.max_price_for(rarity_of_class(key[1]))
+        cap = rules.max_price_for(rarity_of_class(key[1]), key[0])
         for label, capped in (("guardrails", cap), ("uncapped", None)):
             choice = plan_for(row, capped)
             entry: dict[str, Any] = {"dealer": key[0], "class": key[1], "caps": label, "cap": capped}
