@@ -30,7 +30,7 @@ def settled(eid, frm, to, ref, price, persona=None):
 
 
 def sell(price, team=ANY_TEAM, kind="sell"):
-    return Action(kind, "LAT-03", "common", price, 1.0, team)  # type: ignore[arg-type]
+    return Action(kind, "LAT-03", "common", price, 1.0, counterparty=team)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------- the rule
@@ -72,7 +72,9 @@ def test_open_offers_count_addressed_to_their_team_and_public_ones_to_every_team
 def test_dealers_and_non_trades_are_never_capped():
     ctx = Context(cash=1000, held={}, tick=1, t_hours=0.1, trades=TradeBook({"t05": 10_000}))
     assert check(Action("accept_buy", "LAV-02", "common", 12), ctx, CAP).allowed  # a dealer: no counterparty
-    assert check(Action("duel_accept", "duel:1", None, 999, counterparty="t05"), ctx, CAP).allowed
+    # a duel inside our limit (#60's duel_inside_limit needs its terms) is never counterparty-capped
+    duel = Action("duel_accept", "duel:1", None, 999, limit=1000, role="buyer", counterparty="t05")
+    assert check(duel, ctx, CAP).allowed
     assert not check(Action("accept_buy", "LAV-02", "common", 12, counterparty="t05"), ctx, CAP).allowed
 
 
@@ -284,3 +286,15 @@ def test_the_runtime_reads_our_volume_only_when_the_cap_is_on(tmp_path):
     on = actions._base(b, clock())
     actions._base(b, clock())  # the same tick: the feed is not read again
     assert on.ctx.trades == TradeBook({}, {}, 0) and reads == [1]
+
+
+def test_a_listing_and_a_planned_trade_carry_their_counterparty_not_a_duel_limit():
+    # Merged with #60, Action's 6th field is the duel `limit`: a positional counterparty landed there and the
+    # cap never saw the team. Action's fields after `your_value` are keyword-only now.
+    from bazaar_agent.agents.seller import Listing
+
+    listing = Listing("sell", "LAT-03", "common", 30, "rastro", {}, {}, your_value=1.0, to="t05")
+    assert (listing.action().counterparty, listing.action().limit) == ("t05", None)
+    assert Listing("bid", "LAT-03", "common", 30, "rastro", {}, {}).action().counterparty == ANY_TEAM
+    with pytest.raises(TypeError):
+        Action("sell", "LAT-03", "common", 30, 1.0, "t05")  # type: ignore[misc]

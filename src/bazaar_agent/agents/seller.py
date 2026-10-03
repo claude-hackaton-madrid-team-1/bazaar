@@ -45,7 +45,7 @@ class Listing:
     to: str | None = None  # addressed to one team (only it may accept); None: anyone on the venue
 
     def action(self) -> Action:
-        return Action(self.kind, self.ref, self.rarity, self.price, self.your_value, self.to or ANY_TEAM)
+        return Action(self.kind, self.ref, self.rarity, self.price, self.your_value, counterparty=self.to or ANY_TEAM)
 
     def describe(self) -> str:
         what = f"asset {self.asset_id} ({self.ref})" if self.asset_id is not None else f"any {self.ref}"

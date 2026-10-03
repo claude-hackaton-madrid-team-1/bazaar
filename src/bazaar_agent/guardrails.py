@@ -18,7 +18,7 @@ import json
 import math
 import re
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, get_args
 
@@ -400,6 +400,9 @@ class Action:
     rarity: str | None = None  # "common" | "uncommon" | "rare" | "pack" | ...
     price: int | None = None
     your_value: float | None = None  # for sells: what we lose by selling that copy
+    # Everything below is keyword-only: several PRs append fields here, and a positional 6th argument
+    # silently landed in the wrong one (W4's counterparty in #60's duel `limit`) when they were merged.
+    _: KW_ONLY
     limit: int | None = None  # duels: our private limit (a seller's cost, a buyer's value)
     role: str | None = None  # duels: "seller" | "buyer"
     days: float | None = None  # two-issue duels: the delivery days of the deal (None in price-only duels)

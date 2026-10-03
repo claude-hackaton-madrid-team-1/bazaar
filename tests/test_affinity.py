@@ -181,7 +181,7 @@ def test_the_cli_prints_the_map_from_files(tmp_path):
     args += ["--catalog", str(tmp_path / "catalog.json")]
     out = CliRunner().invoke(app, ["affinity", *args, "--json"])
     assert out.exit_code == 0, out.output
-    data = json.loads(out.output)
+    data = json.loads(out.stdout)  # the target banner goes to stderr (#55)
     assert set(data) == {"t05", "t07"} and data["t05"]["p_top"]["AAA"] > 0.4
     table = CliRunner().invoke(app, ["affinity", *args], env={"COLUMNS": "200"})
     assert table.exit_code == 0 and "AAA: chased by t05" in table.output
