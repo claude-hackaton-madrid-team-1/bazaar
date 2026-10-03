@@ -27,12 +27,14 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import ValidationError
 
 from bazaar_agent import telemetry as tm
-from bazaar_agent.agents.matcher import BrokerBook, Fee, Match, plan_matches, quotes_from
+from bazaar_agent.agents.bench_edge import BenchEdge, EdgeConfig
+from bazaar_agent.agents.bench_model import PRIORS
+from bazaar_agent.agents.matcher import BrokerBook, Fee, Match, Quote, Quotes, plan_matches, quotes_from
 from bazaar_agent.agents.runtime import Recorder, TickWindow, window_for
 from bazaar_agent.agents.seller import offers_in
 from bazaar_agent.config import REPO_ROOT
@@ -48,6 +50,19 @@ class BrokerConfig:
     # The starter broker sends at most 10 public matches a tick; a bench run has 5 sellers. 15 sends stay
     # inside the key's burst of 20.
     max_matches_per_tick: int = 15
+    # How the Market Test bench is matched. "exact" (today): the maximum quoted-surplus matching with the public
+    # offers. "edge": `agents/bench_edge.py`, the maximum *estimated true* surplus from per-trader limit models
+    # (docs/night/w1b-broker-edge.md has the tournament behind it).
+    bench_policy: Literal["exact", "edge"] = "exact"
+    bench_preset: Literal["normal", "hard"] = "normal"  # the edge's priors (#12: hard = 12 traders, more firm)
+    # "limit" also proposes bench pairs whose quotes do not cross but whose estimated limits do. Only worth it if
+    # the real server checks hidden limits (unverified); after `EdgeConfig.give_up_after` refusals with no
+    # acceptance it stops by itself. Off by default.
+    bench_cross: Literal["quote", "limit"] = "quote"
+    # Book reads per tick while a bench run is in the book (the first included), spread over the tick window: a
+    # later read sees what the earlier matches and refusals changed. 1 = today. Each read is one request on the
+    # broker key; 3 reads + 15 matches a 30 s tick is far inside 5 req/s.
+    bench_reads_per_tick: int = 1
 
 
 def bench_run(value: object) -> str:
@@ -65,6 +80,7 @@ class Session:
     first_tick: int
     last_tick: int
     in_book: bool = False
+    ticks: int | None = None  # the run's length, from its bench.started payload
     pairs: int = 0
     surplus: int = 0
     refused: int = 0
@@ -121,7 +137,10 @@ class BenchSessions:
             if run is None:
                 continue
             if e["type"] == "bench.started":
-                self._start(bench_run(run), int(e.get("tick") or tick))
+                session = self._start(bench_run(run), int(e.get("tick") or tick))
+                ticks = (e.get("payload") or {}).get("ticks")
+                if session is not None and isinstance(ticks, int) and not isinstance(ticks, bool):
+                    session.ticks = ticks
             else:
                 self._finish(bench_run(run), int(e.get("tick") or tick))
 
@@ -160,6 +179,7 @@ class _Run:
     window: TickWindow
     stats: TickStats
     pairs: set[frozenset[str]] = field(default_factory=set)
+    taken: set[str] = field(default_factory=set)  # offer ids matched (or, dry run, that would be) this tick
 
 
 class BrokerAgent:
@@ -177,10 +197,16 @@ class BrokerAgent:
         stats_dir: Path | None = None,
         config: BrokerConfig | None = None,
         now: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] | None = None,
     ) -> None:
         self.broker, self.team, self.us, self.rules = broker, team, us, rules
         self.live, self.log, self.events, self.now = live, log, events, now
+        self.sleep = sleep or time.sleep
         self.config = config or BrokerConfig()
+        prior = PRIORS[self.config.bench_preset]
+        if self.config.bench_cross == "limit":  # a probe prices on wide bands: a narrow wrong prior never probes
+            prior = prior.widened()
+        self.edge = BenchEdge(prior, EdgeConfig(cross=self.config.bench_cross))
         self.stats_dir = stats_dir
         self.rec = Recorder("broker", decisions, live, log)
         self.sessions = BenchSessions(self._session_closed)
@@ -190,26 +216,65 @@ class BrokerAgent:
     def on_tick(self, clock: Clock) -> None:
         window = window_for(clock, self.now(), self.now)
         self.rec.decisions.begin_tick(clock.tick)
-        try:
-            book = BrokerBook.model_validate(self.broker.book())
-        except BazaarError as e:
-            self.log(f"tick {clock.tick} broker: book refused {e.code} ({e.message[:80]}); nothing matched")
-            return
-        except ValidationError as e:
-            self.log(f"tick {clock.tick} broker: book unreadable ({e.error_count()} problem(s)); nothing matched")
+        book = self._read_book(clock.tick)
+        if book is None:
             return
         self._observe_feed(clock.tick)
         ours_ok, our_ids = self._our_offer_ids(clock.tick)
         quotes = quotes_from(book, our_ids, public=ours_ok)
         self.sessions.observe_book({q.item.removeprefix("bench:") for q in quotes.quotes if q.bench}, clock.tick)
-        plan = plan_matches(quotes.quotes, Fee(book.fee_bps, book.fee_per_card), self.config.max_matches_per_tick)
+        fee = Fee(book.fee_bps, book.fee_per_card)
         stats = TickStats(clock.tick, self.live, skipped=quotes.skipped, ours=quotes.ours)
         run = _Run(clock, window, stats)
-        for m in plan:
+        for m in self._plan(quotes, fee, clock.tick, self.config.max_matches_per_tick):
             self._match(run, m)
+        self._reread_bench(run, self.config.bench_reads_per_tick - 1)
         self.pairs_seen |= run.pairs
         stats.distinct_pairs, stats.pairs_so_far = len(run.pairs), len(self.pairs_seen)
         self._tick_done(stats)
+
+    def _read_book(self, tick: int) -> BrokerBook | None:
+        try:
+            return BrokerBook.model_validate(self.broker.book())
+        except BazaarError as e:
+            self.log(f"tick {tick} broker: book refused {e.code} ({e.message[:80]}); nothing matched")
+        except ValidationError as e:
+            self.log(f"tick {tick} broker: book unreadable ({e.error_count()} problem(s)); nothing matched")
+        return None
+
+    def _plan(self, quotes: Quotes, fee: Fee, tick: int, cap: int) -> list[Match]:
+        """Today's exact matching of everything, or, with `bench_policy = "edge"`, the edge's bench plan first and
+        the exact public matching with the slots left."""
+        if self.config.bench_policy != "edge":
+            return plan_matches(quotes.quotes, fee, cap)
+        bench = [q for q in quotes.quotes if q.bench]
+        self.edge.observe(bench, tick)
+        session_ticks = {}
+        for run, session in self.sessions.open.items():
+            self.edge.first_tick[run] = min(self.edge.first_tick.get(run, session.first_tick), session.first_tick)
+            if session.ticks:
+                session_ticks[run] = session.ticks
+        plan = self.edge.plan(bench, fee, tick, limit=cap, session_ticks=session_ticks)
+        public: list[Quote] = [q for q in quotes.quotes if not q.bench]
+        return plan + plan_matches(public, fee, cap - len(plan))
+
+    def _reread_bench(self, run: _Run, extra: int) -> None:
+        """While a bench run is in the book, read it `extra` more times this tick, spread over what is left of the
+        tick window, and send the bench matches each read finds (within the tick's match cap). Public offers are
+        matched once a tick, as before."""
+        for i in range(extra):
+            if not self.sessions.open or run.stats.proposed >= self.config.max_matches_per_tick:
+                return
+            self.sleep(run.window.left() / (extra - i + 1))
+            if not run.window.open():
+                return
+            book = self._read_book(run.clock.tick)
+            if book is None:
+                return
+            fresh = [q for q in quotes_from(book, public=False).quotes if str(q.id) not in run.taken]
+            cap = self.config.max_matches_per_tick - run.stats.proposed
+            for m in self._plan(Quotes(fresh, 0, 0), Fee(book.fee_bps, book.fee_per_card), run.clock.tick, cap):
+                self._match(run, m)
 
     def _observe_feed(self, tick: int) -> None:
         if self.events is None:
@@ -268,6 +333,7 @@ class BrokerAgent:
             status=status,
             move=request,
         )
+        run.taken |= {str(m.sell.id), str(m.buy.id)}  # a later read this tick never proposes them again...
         if status == "rejected":
             stats.denied += 1
             return
@@ -284,7 +350,10 @@ class BrokerAgent:
             refused = self.rec.send(did, tick, "broker_match", request, lambda: self.broker.match(**request)) is None
         if m.sell.bench:
             self.sessions.record(m, tick, refused)
+            if self.live:
+                self.edge.note_sent(m, accepted=not refused)
         if refused:
+            run.taken -= {str(m.sell.id), str(m.buy.id)}  # ...unless the server refused them: still in the book
             stats.refused += 1
             return
         stats.sent += 1

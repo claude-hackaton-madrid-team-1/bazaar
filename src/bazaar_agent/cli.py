@@ -1546,12 +1546,16 @@ def broker_run(
     live: bool = typer.Option(False, help=AGENT_LIVE_HELP + "; also needs allow_venue_open = true"),
     max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
     feed: bool = typer.Option(True, help="Read bench.started / bench.finished from the public feed"),
+    bench_policy: str = typer.Option("exact", help="Market Test matching: exact (quoted surplus) or edge"),
+    bench_preset: str = typer.Option("normal", help="The edge's bench priors: normal or hard"),
+    bench_cross: str = typer.Option("quote", help="limit = also probe non-crossing bench pairs (unverified)"),
+    bench_reads: int = typer.Option(1, min=1, max=3, help="Book reads per tick while a Market Test runs"),
 ) -> None:
     """Every tick: read our venue's book and send the maximum-surplus matches (bench first)."""
     from rich.markup import escape
 
     from bazaar_agent import venue as vn
-    from bazaar_agent.agents.broker import BrokerAgent
+    from bazaar_agent.agents.broker import BrokerAgent, BrokerConfig
     from bazaar_agent.agents.runtime import live_mode, watched_clock
     from bazaar_agent.decisions import DecisionLog
 
@@ -1561,6 +1565,18 @@ def broker_run(
     def log(line: str) -> None:
         console.print(escape(line), soft_wrap=True, highlight=False)
 
+    choices = {"bench-policy": (bench_policy, ("exact", "edge")), "bench-preset": (bench_preset, ("normal", "hard"))}
+    choices["bench-cross"] = (bench_cross, ("quote", "limit"))
+    for name, (value, allowed) in choices.items():
+        if value not in allowed:
+            _fail(f"--{name} must be one of {', '.join(allowed)}")
+            return
+    config = BrokerConfig(
+        bench_policy=bench_policy,  # type: ignore[arg-type]  # checked above
+        bench_preset=bench_preset,  # type: ignore[arg-type]
+        bench_cross=bench_cross,  # type: ignore[arg-type]
+        bench_reads_per_tick=bench_reads,
+    )
     try:
         broker = vn.broker_client(settings)
     except ConfigError as e:
@@ -1585,6 +1601,11 @@ def broker_run(
         log=log,
         events=(lambda: public.feed_window(DEFAULT_WINDOW)) if feed else None,
         stats_dir=settings.data_dir / "agents",
+        config=config,
+    )
+    log(
+        f"broker: bench {config.bench_policy} ({config.bench_preset}, accepts by {config.bench_cross}, "
+        f"{config.bench_reads_per_tick} read(s)/tick)"
     )
     log(f"broker: decisions {decisions.where} · stats {settings.data_dir / 'agents'}/broker_*.jsonl")
     try:
