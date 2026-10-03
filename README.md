@@ -875,6 +875,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | N11 (new) | Evals: online outcomes in Postgres + Phoenix annotations (Jev's design, `questions/evals.json`) | 1 → 2 | 🔵 duels, dealer ladder, team trades scored (CLI `bazaar evals`); next: inside the agents, no Railway service; Market Test stub until we run a venue |
 | N12 (new) | **P1** · AI live-feed reader: dealer blockers (cooloff, quota, locks) and organiser notices into the RAG (`learnings`, `traders_behaviors`, embeddings) for the live taker and maker | 1 | 🔵 worker (first version before Duels I) |
 | N13 (new) | **P0 · Real-time holdings + card catalog in Postgres**: per-tick `/api/me` snapshot (album, cards, duplicates, missing, cash) refreshed after every deal; agents and bazaar-mcp read the DB | 1 | 🔵 worker (before Sat 08:30) |
+| N14 (new) | **P1 · RAG-driven strategies per mechanic** (on top of N3): hard dealers (learned concession curves, blockers, when to walk), packs (EV with supply + 3/hour), supply and scarcity (print runs, who holds what), custom markets (venue choice by fill odds and fees, our venue's fee, not feeding rivals' market-making), duels (rival profiles, delivery days), new pages and grants; each strategy reads lessons via the hybrid recall and writes its outcome back | 1 → 2 | ⬜ after N3 v1 (Sat 12:00) |
 | N10 (new) | NICE TO HAVE · Bazaar Live: buyer + seller animated (Motion) and voiced (ElevenLabs / Gemini TTS, tagged), repo `bazaar-live` | 3 | ⬜ planned (98-nice-to-haves.md) |
 | [#14](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/14) / [#23](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/23) | Strategy engine (scarcity, valuation, buy/sell, 3-pack quota) | 1 | #23 closed (done in #37: `bazaar strategy`); #14 open: `/api/me/value` check on 20 cards, `delta(give, want)`, per-counterparty cap |
 | [#11](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/11) / [#12](https://github.com/claude-hackaton-madrid-team-1/bazaar/issues/12) | Venue + limit-estimating broker | 1 → 2 | ⬜ not started (Market Test, Saturday) |
@@ -947,6 +948,8 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#99](../../pull/99) | chore: pr-reviewer enforces the pipeline artifacts (spec, plan, honest report) | Sat 03:24 | `67df458` |
+| [#95](../../pull/95) | docs: RAG-driven strategies per mechanic (N14) on the plan and roadmap | Sat 03:22 | `86170e8` |
 | [#85](../../pull/85) | feat: declare bazaar-live (the show + TTS proxy) in .railway/railway.py | Sat 03:14 | `02f82ce` |
 | [#73](../../pull/73) | fix: no OFF services on Railway (monitor + evals removed); BAZAAR_LIVE kept; docs say taker/maker are LIVE | Sat 03:07 | `b267bb4` |
 | [#75](../../pull/75) | ci: the simulator smoke is the merge gate, and Test on the simulator in the README | Sat 03:03 | `8c58e76` |
@@ -957,13 +960,18 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#76](../../pull/76) | chore: pr-reviewer sub-agent + /pr-review merge gate (replaces Greptile) | Sat 02:16 | `6d729ce` |
 | [#74](../../pull/74) | docs: status page after #55 and #69 | Sat 02:10 | `7c10b7b` |
 | [#69](../../pull/69) | fix(status): publish an allow-listed public view of decisions (no values, limits, reasons) | Sat 02:08 | `d5e769e` |
-| [#55](../../pull/55) | feat: a simulated Bazaar API (bazaar-sim) to test every agent while the game is closed | Sat 02:06 | `9c8cbda` |
-| [#70](../../pull/70) | docs: taker and maker live; new decisions on the status page | Sat 01:48 | `3e5a4a6` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
+| [#103](../../pull/103) | Night B11: endgame squeeze mitigations for duel v2 (behind params, defaults = today) | `night/b11-endgame` |
+| [#102](../../pull/102) | night(B6): Saturday hour-by-hour playbook + bazaar timeline (clock resume/jump columns) | `night/b6-saturday-playbook` |
+| [#101](../../pull/101) | W8: cross-venue arbitrage and duplicate buys, guarded and off by default (stacked on #72) | `night/w8-arbitrage` |
+| [#100](../../pull/100) | feat(dealer): seeded step jitter for dealer bids, default off (B12, stacked on #81) | `night/b12-dealer-jitter` |
+| [#98](../../pull/98) | feat(rivals): rival behaviour profiles + read-only opportunity scanner (B4) | `night/b4-rival-scanner` |
+| [#97](../../pull/97) | Night B11 (w2a): exploiter rivals that read our limit and squeeze our endgame | `night/b11-exploiters` |
+| [#96](../../pull/96) | feat: lessons from every outcome + hybrid recall (BM25 + pgvector + RRF + cross-encoder) (N3, PR A, stacked on #89) | `ogarciarevett/feat-learner-auto-evolve` |
 | [#94](../../pull/94) | feat(market): organic-market estimate and a win-rate bench policy (B1) | `night/b1-organic-winrate` |
 | [#93](../../pull/93) | feat(personas): L3–L5 prep: Trickster inspector, high-precision flag policy (off), persona plans (B3, stacked on #81) | `night/b3-personas` |
 | [#92](../../pull/92) | feat(market): venue go-live runbook + Saturday bench simulation (B2, stacked on #84) | `night/b2-venue-runbook` |
@@ -977,12 +985,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#79](../../pull/79) | feat(trade-desk): rival affinity map, per-counterparty cap, 09:00 dry-run trade plan (W4) | `night/w4-trade-desk` |
 | [#78](../../pull/78) | night(W5+W6): score simulator, red-team injection tests, request budget, morning summary | `night/w5w6-score-redteam-morning` |
 | [#77](../../pull/77) | feat(sim): realistic Market Test bench (arrivals, firm/impatient traders, relaxing quotes, stall replica, oracle) | `night/w1a-bench-sim` |
-| [#72](../../pull/72) | fix(agents): cash and spend accounting within a tick, open thread bids, dated refunds | `fix/cash-spend-accounting` |
-| [#71](../../pull/71) | feat(market): venue and broker, build only (exact matcher, dry run, allow_venue_open) | `feat/venue-broker-build-only` |
-| [#68](../../pull/68) | fix: the kill switch holds (no cancels, closes or walks), read live; bazaar flatten cancels on purpose | `fix/kill-switch-hold` |
-| [#62](../../pull/62) | fix(ledger): reconnect the shared ledger, keep the duel loop alive, require it for live writes | `fix/shared-ledger-reconnect` |
-| [#61](../../pull/61) | fix(dealer): never close at the dealer's opening ask; busy accept slot waits; desk settle timeout | `fix/dealer-ladder-counter` |
-| [#60](../../pull/60) | fix(duels): keep two-issue duel offers strictly inside our limit (+ duel_inside_limit guardrail) | `fix/duel-offers-inside-limit` |
-| [#46](../../pull/46) | docs(adr): trace agent behavior in Phoenix — turns, typed spans, sessions | `docs/adr-agent-tracing` |
 
 <!-- BAZAAR:ACTIVITY:END -->
