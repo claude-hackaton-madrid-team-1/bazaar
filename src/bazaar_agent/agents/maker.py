@@ -90,7 +90,7 @@ from bazaar_agent.holdings import Holdings
 from bazaar_agent.intel import book_values, settled_volume
 from bazaar_agent.learn.venues import VenueNotices
 from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
-from bazaar_agent.official_values import OfficialValues
+from bazaar_agent.official_values import OfficialValues, over_cap
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import Playbook, StrategyParams, build_playbook
 from bazaar_agent.ticks import Clock
@@ -164,10 +164,16 @@ def cannot_stand(o: OpenOffer, t: Target, rules: Guardrails) -> str | None:
 
 
 def plan_offers(
-    targets: Iterable[Target], mine: Iterable[OpenOffer], tick: int, cfg: MakerConfig, rules: Guardrails
+    targets: Iterable[Target],
+    mine: Iterable[OpenOffer],
+    tick: int,
+    cfg: MakerConfig,
+    rules: Guardrails,
+    above_value: Callable[[OpenOffer], str | None] = lambda o: None,
 ) -> list[MakerAction]:
     """Cancels first (they free open-offer slots), then reprices, then new posts by score. An ask below its
-    floor is repriced however little its target moved."""
+    floor is repriced however little its target moved; a bid above the official value (`above_value`) is
+    cancelled, and its card is not bid again this tick."""
     targets = list(targets)
     asks = {t.asset_id: t for t in targets if t.side == "ask"}
     bids = {t.ref: t for t in targets if t.side == "bid"}
@@ -182,6 +188,9 @@ def plan_offers(
             cancels.append(MakerAction("cancel", why, offer=o))
             continue
         covered.add(key)
+        if o.side == "bid" and (over := above_value(o)) is not None:
+            cancels.append(MakerAction("cancel", over, offer=o))
+            continue
         lapsing = o.expires_tick is not None and o.expires_tick <= tick
         below_floor = o.side == "ask" and cannot_stand(o, t, rules)
         if not lapsing and (moved(o.price, t.price, cfg.reprice_min_change) or below_floor):
@@ -325,7 +334,13 @@ class Maker:
                 self.log(f"tick {clock.tick} maker: {line}")
             self.jev.begin_tick(mine)
             targets = [self.jev.remembered(t, params, self.rules) for t in targets]
-        actions = plan_offers(targets, mine, clock.tick, self.config, self.rules)
+        held = Counter(str(a.get("ref")) for a in snap.me.get("assets") or [] if a.get("kind") == "card")
+        margin = self.rules.official_value_margin
+
+        def above_value(o: OpenOffer) -> str | None:  # our bids, re-capped every tick (review #177 P2)
+            return over_cap(o.price, o.ref, self.values, clock.tick, held.get(o.ref, 0), margin)
+
+        actions = plan_offers(targets, mine, clock.tick, self.config, self.rules, above_value)
         for action in actions:
             self._do(run, action)
         if self.hub is not None:
