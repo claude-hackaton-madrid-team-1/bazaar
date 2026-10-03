@@ -523,6 +523,34 @@ def test_the_kill_switch_stops_a_runtime_duel_accept(tmp_path, monkeypatch, poli
     assert accepted["status"] == "done" and team.sent == [("duel_accept", 7)]
 
 
+@pytest.mark.parametrize(
+    "code,status,kept",
+    [
+        ("rate_limited", 429, 0),
+        ("duel_closed", 409, 0),
+        ("wait_for_tick", 429, 1),
+        ("network", 0, 1),
+        ("http_503", 503, 1),
+    ],
+)
+def test_a_refused_runtime_duel_accept_gives_the_slot_back(tmp_path, monkeypatch, code, status, kept):
+    """As `duel run` does (test_accept_release): a 4xx cost nothing, so the taker may still use the team's accept."""
+    from bazaar_agent.sdk import BazaarError
+
+    b, team, switch = endgame_duel_backend(tmp_path, monkeypatch, "v2")
+    switch.trading(True)
+    switch.paused(False)
+
+    def refused(duel_id):
+        team.sent.append(("duel_accept", duel_id))
+        raise BazaarError(code, "refused", status)
+
+    team.duel_accept = refused
+    failed, _ = run(b, "duel_move", {"duel_id": 7})
+    assert failed["status"] == "failed" and failed["error_code"] == code, failed
+    assert team.sent == [("duel_accept", 7)] and b.ledger.accepts_in_tick(107) == kept
+
+
 @pytest.mark.parametrize("policy", ["v1", "v2"])
 def test_with_the_kill_switch_off_the_runtime_duel_accept_goes_out(tmp_path, monkeypatch, policy):
     b, team, switch = endgame_duel_backend(tmp_path, monkeypatch, policy)

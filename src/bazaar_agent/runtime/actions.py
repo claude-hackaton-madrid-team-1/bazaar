@@ -389,6 +389,7 @@ def _refund(b: Backend, offer: dict[str, Any], clock: Clock) -> dict[str, str]:
 
 def _duel(b: Backend, args: DuelMoveArgs, planned: Planned, clock: Clock | None) -> dict[str, Any]:
     from bazaar_agent.agents.duelist import DUEL_WORDS
+    from bazaar_agent.agents.runtime import release_refused_accept
 
     move = planned.detail["move"]
     request = {"duel": args.duel_id, "kind": move.kind, "price": move.price, "days": move.days, "reason": move.reason}
@@ -421,6 +422,8 @@ def _duel(b: Backend, args: DuelMoveArgs, planned: Planned, clock: Clock | None)
         else:
             response = b.team.duel_say(args.duel_id, DUEL_WORDS, price=move.price, days=move.days)
     except BazaarError as e:
+        if move.kind == "accept":  # a 4xx cost nothing (RULES.md): the slot is the team's again
+            release_refused_accept(b.ledger, clock.tick, f"duel:{args.duel_id}", e.code, e.status)
         return outcome(planned, "failed", method=method, request=request, error_code=e.code)
     return outcome(planned, "done", sent=True, method=method, request=request, response=response)
 

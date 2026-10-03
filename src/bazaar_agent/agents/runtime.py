@@ -45,6 +45,18 @@ def cost_nothing(code: str | None, status: int | None) -> bool:
     return code not in KEEPS_THE_ACCEPT and status is not None and 400 <= status < 500
 
 
+def release_refused_accept(ledger: LedgerStore, tick: int, item: str, code: str | None, status: int | None) -> None:
+    """Give back `item`'s reservation of `tick` when its refused accept cost nothing (`cost_nothing`). An unreachable
+    ledger keeps the slot taken (fail closed). One helper for both duel paths (`duel run` and the runtime)."""
+    from contextlib import suppress
+
+    from bazaar_agent.ledger_pg import LedgerUnavailable
+
+    if cost_nothing(code, status):
+        with suppress(LedgerUnavailable):
+            ledger.release_accept(tick, item)
+
+
 MAX_PARALLEL_READS = 8  # threads for one batch of reads (a snapshot is 6-7 requests, boards one per venue)
 LIVE_ENV = "BAZAAR_LIVE"  # "1" on a Railway service turns its agent live; never read from .env
 
