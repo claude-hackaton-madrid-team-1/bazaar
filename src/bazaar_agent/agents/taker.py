@@ -419,8 +419,8 @@ class Taker:
         moves = sorted([mv for mv in (*book.buys, *book.packs) if mv.source in dealer_ids], key=lambda mv: -mv.score)
         busy = {str(t.get("with")) for t in threads} | set(self.convs)
         moves = self._unblocked(run, moves, busy)
-        room = min(ctx.cash - self.rules.cash_floor, self.rules.max_spend_per_game_hour - ctx.spent_last_hour)
-        moves = self._evolved(run, moves, busy, max(0, room))
+        cash_room = min(ctx.cash - self.rules.cash_floor, self.rules.max_spend_per_game_hour - ctx.spent_last_hour)
+        moves = self._evolved(run, moves, busy, max(0, cash_room))  # primas, never thread slots (`room` above)
         for op in openings(moves, busy, {c.item for c in self.convs.values()}, room):
             self._open_one(run, op, ctx)
 
@@ -510,6 +510,7 @@ class Taker:
         final = f", final ≤ {op.plan.final_max}" if op.plan.final_max is not None else ""
         # Private keys (not on the public /state allow-list): which learning changed the plan, and what was recalled.
         notes = dp.changed_by if dp is not None else []
+        recalled = self._recalled(run, op) if verdict.allowed else []
         inputs = {
             "dealer": op.dealer,
             "item": op.item,
@@ -521,7 +522,7 @@ class Taker:
             "final_max": op.plan.final_max,
             "changed_by": notes,
             "learned": dp.lessons if dp is not None else [],
-            "recalled": self._recalled(run, op),
+            "recalled": recalled,
         }
         what = f"open thread with {op.dealer} for {op.item} (ladder {plan}{final}, worth {op.value:g})"
         status: Status = "approved" if verdict.allowed else "rejected"
@@ -561,6 +562,7 @@ class Taker:
                 int(body["id"]),
                 tick,
                 notes=tuple(notes),
+                recalled=tuple(recalled),
             )
 
     def _recalled(self, run: _TickRun, op: Opening) -> list[str]:
@@ -648,6 +650,7 @@ class Taker:
             "max": conv.neg.plan.max_price,
             "final_max": conv.neg.plan.final_max,
             "changed_by": list(conv.notes),
+            "recalled": list(conv.recalled),
         }
         what = f"{move.kind} {move.price or ''} to {conv.dealer} on thread {conv.thread_id} for {conv.item}"
         status: Status = "approved" if run.window.open() else "expired"

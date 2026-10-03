@@ -175,6 +175,8 @@ def test_bazaar_sim_port_moves_only_the_laptop_simulator_and_stays_on_loopback(t
     assert s.bazaar_url == "http://127.0.0.1:8817" and s.require_team_key() == "sim-team1"
     real = settings_for(tmp_path, monkeypatch, BAZAAR_SIM_PORT="8817", BAZAAR_KEY="tk-real-0042")
     assert real.bazaar_url == "https://bazaar.causaprima.ai"  # the real game ignores it
+    stray = settings_for(tmp_path, monkeypatch, BAZAAR_SIM_PORT="not-a-port", BAZAAR_KEY="tk-real-0042")
+    assert stray.bazaar_url == "https://bazaar.causaprima.ai"  # never even parsed: it cannot stop the real game
     for bad in ("80", "70000", "8817/evil", "host:1"):
         with pytest.raises(ConfigError, match="BAZAAR_SIM_PORT"):
             settings_for(tmp_path, monkeypatch, BAZAAR_SIM="local", BAZAAR_SIM_PORT=bad)

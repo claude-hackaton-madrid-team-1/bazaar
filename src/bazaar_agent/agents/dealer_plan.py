@@ -37,6 +37,7 @@ __all__ = ["DealerPlan", "Note", "final_reach", "patience_ladder", "plan_dealer_
 PATIENCE_MARGIN = 3
 MIN_PLAY_BIDS = 9  # at least this many distinct bids: Chato's slowest Friday final came after 8 (the simulator's: 9)
 MIN_OPEN_SHARE = 0.4  # never open below this share of the dealer's opening ask (t03 opened 13 of 33: answered)
+MIN_TOP_SHARE = 0.5  # with no opening ask known (no curve yet), never open below this share of our own top
 MIN_FINAL_SHARE = 0.2  # a learned skip is lifted only when this share of the fills sits at or under final_max
 Ladder3 = tuple[int, int, int]  # (start, top, step), as `strategy.Move.ladder`
 
@@ -80,12 +81,13 @@ def patience_ladder(
 ) -> Ladder3:
     """A ladder that lasts until the dealer's final: step 1, `patience + PATIENCE_MARGIN` distinct bids up to the
     top (at least `MIN_PLAY_BIDS`, at most `max_bids`: the thread's tick limit), never starting below a bid the
-    dealer ignored or `MIN_OPEN_SHARE` of its opening ask, and never above the start we already had (a plan only
-    lowers a start)."""
+    dealer ignored or `MIN_OPEN_SHARE` of its opening ask (`MIN_TOP_SHARE` of our top when no curve says it), and
+    never above the start we already had (a plan only lowers a start)."""
     start, top, _ = ladder
     need = max(MIN_PLAY_BIDS, math.ceil(patience or DEFAULT_PATIENCE) + PATIENCE_MARGIN)
     need = min(need, max_bids) if max_bids is not None else need
-    floor = max(1, (silent + 1) if silent is not None else 1, math.ceil(opening * MIN_OPEN_SHARE) if opening else 1)
+    anchor = math.ceil(opening * MIN_OPEN_SHARE) if opening else math.ceil(top * MIN_TOP_SHARE)  # never a 1 P insult
+    floor = max(1, (silent + 1) if silent is not None else 1, anchor)
     return (min(start, max(floor, top - (need - 1))), top, 1)
 
 
@@ -146,7 +148,7 @@ def plan_dealer_buy(
     final_max = _reach(mv, ladder[1], rules, min_surplus, room)
     lifted = final_reach(mv.rarity, mv.value, ladder[1], rules, min_surplus) is not None
     if lifted and room is not None and mv.price > max(ladder[1], final_max or 0):
-        return DealerPlan(None, skip=f"cash: we may commit {room} P now, {mv.source} {cls} fills ~{mv.price:g}")
+        return DealerPlan(None, skip=f"cash: what we may still commit is below {mv.source} {cls} fills ~{mv.price:g}")
     if final_max is not None:
         ref, patience = _patience_ref(cls, mv, curve, policy)
         opening, silent = (curve.opening, curve.silent_below) if curve is not None else (None, None)

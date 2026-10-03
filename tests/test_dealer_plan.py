@@ -99,6 +99,7 @@ def test_patience_ladder_never_raises_the_start_nor_drops_under_an_ignored_bid_o
     assert patience_ladder((26, 26, 1), 20.0, 33.0, None) == (14, 26, 1)  # 40 % of the opening 33
     assert patience_ladder((26, 26, 1), 20.0, None, 21) == (22, 26, 1)  # it ignored a first bid of 21
     assert patience_ladder((26, 26, 1), None, None, None) == (18, 26, 1)  # at least 9 bids
+    assert patience_ladder((7, 7, 1), None, None, None) == (4, 7, 1)  # no curve: never below half our top (no 1 P)
     assert patience_ladder((26, 26, 1), 20.0, None, None, max_bids=12) == (15, 26, 1)  # the thread's tick limit
 
 
@@ -155,11 +156,13 @@ def test_openings_never_open_two_threads_for_one_card_in_the_same_tick():
 def test_the_final_is_capped_by_what_we_may_still_commit_and_an_unaffordable_lift_is_skipped():
     rare = replace(chato_move(value=157.0, ladder=(80, 80, 1)), ref="LAV-10", rarity="rare", price=91.0)
     plan = plan_dealer_buy(rare, None, None, LIFT, SURPLUS, room=83)  # cash 353 - floor 270
-    assert plan.move is None and plan.skip == "cash: we may commit 83 P now, chato card:rare fills ~91"
+    assert plan.move is None and plan.skip == "cash: what we may still commit is below chato card:rare fills ~91"
     assert plan_dealer_buy(rare, None, None, LIFT, SURPLUS, room=120).final_max == 92
     uncommon = plan_dealer_buy(chato_move(), skip_policy(), CURVE, LIFT, SURPLUS, room=83)
     assert uncommon.final_max == 29
     tight = plan_dealer_buy(chato_move(), None, CURVE, LIFT, SURPLUS, room=27)  # his fills ~28: out of reach
-    assert tight.move is None and tight.skip == "cash: we may commit 27 P now, chato card:uncommon fills ~28"
+    assert tight.move is None and tight.skip == "cash: what we may still commit is below chato card:uncommon fills ~28"
+    # the reason never carries the room, so the taker's once-per-reason skip row is not repeated every tick
+    assert plan_dealer_buy(chato_move(), None, CURVE, LIFT, SURPLUS, room=20).skip == tight.skip
     assert plan_dealer_buy(chato_move(), skip_policy(), CURVE, LIFT, SURPLUS, room=27).skip.startswith("skip: 0 of 6")
     assert plan_dealer_buy(chato_move(), None, CURVE, OFF, SURPLUS, room=0).move == chato_move()  # lift off: today

@@ -40,6 +40,7 @@ class Conversation:
     accepted_tick: int | None = None
     accepted_price: int | None = None
     notes: tuple[str, ...] = ()  # which learnings changed this plan (N14a `changed_by`), logged on every move
+    recalled: tuple[str, ...] = ()  # the lessons recalled for this dealer when the thread opened (quoted data)
 
     @property
     def topic(self) -> dict[str, dict[str, str]]:

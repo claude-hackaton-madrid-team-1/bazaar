@@ -180,7 +180,9 @@ def load_settings(env_file: Path | None = None) -> Settings:
     simulated = flag != "real"
     data = {
         "simulated": simulated,
-        "bazaar_url": {"real": DEFAULT_URL, "sim": SIM_URL, "local": local_sim_url(pick("BAZAAR_SIM_PORT"))}[flag],
+        "bazaar_url": (
+            local_sim_url(pick("BAZAAR_SIM_PORT")) if flag == "local" else {"real": DEFAULT_URL, "sim": SIM_URL}[flag]
+        ),
         # Against the simulator the real key is never loaded at all, so nothing can send it there.
         "bazaar_key": (pick("BAZAAR_SIM_KEY") or DEFAULT_SIM_KEY) if simulated else pick("BAZAAR_KEY"),
         "typesafe_api_key": pick("TYPESAFE_API_KEY"),

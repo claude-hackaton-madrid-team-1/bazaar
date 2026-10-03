@@ -120,6 +120,7 @@ def test_a_learned_policy_and_the_recalled_lessons_are_logged_on_the_open_and_ev
     assert row["inputs"]["plan"] == "18→26 step 1"  # the policy's patience (6) + 3 bids before the top
     (bid,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_bid"]
     assert bid["inputs"]["changed_by"] == row["inputs"]["changed_by"]
+    assert bid["inputs"]["recalled"] == row["inputs"]["recalled"]  # every bid row carries what was recalled
 
 
 def test_a_learned_skip_still_skips_with_the_lift_off(tmp_path):
@@ -153,3 +154,61 @@ def test_an_abuela_policy_changes_the_ladder_and_names_itself_as_before(tmp_path
     assert row["inputs"]["changed_by"] == [
         "learning policy abuela card:uncommon @t140: ladder 18→22 step 1 → 17→21 step 1"
     ]
+
+
+# ---------------------------------------------------------------- review #158 P1: thread slots are not cash
+
+
+TWO = [
+    {
+        "id": "abuela",
+        "status": "active",
+        "level": 1,
+        "menu": {"sells": [{"rarity": "uncommon", "sets": "released", "list_price": 25}]},
+    },
+    {
+        "id": "otra",
+        "status": "active",
+        "level": 1,
+        "menu": {"sells": [{"rarity": "common", "sets": "released", "list_price": 10}]},
+    },
+]
+
+
+def two_dealer_taker(tmp_path, team, threads=1):
+    kw = {**parts(tmp_path), "feed": MarketFeed(lambda n: [])}
+    return Taker(
+        team,
+        FakePublic(dealers=TWO, events=[]),
+        live=True,
+        log=lambda line: None,
+        now=lambda: 1000.0,
+        sleep=lambda s: None,
+        config=TakerConfig(max_dealer_threads=threads),
+        **kw,
+    )
+
+
+def test_max_dealer_threads_still_caps_the_opens_with_two_free_dealers(tmp_path):
+    team = FakeTeam(me={**ME, "unlocked": ["abuela", "otra"]})
+    two_dealer_taker(tmp_path, team, threads=1).on_tick(clock())
+    assert len([s for s in team.sent if s[0] == "open_thread"]) == 1
+
+
+def test_the_team_thread_cap_still_caps_the_opens(tmp_path):
+    busy = [{"id": 900 + i, "with": f"t{i:02d}", "status": "open"} for i in range(5)]  # 5 of 6 team threads
+    team = FakeTeam(me={**ME, "unlocked": ["abuela", "otra"]}, threads=busy)
+    two_dealer_taker(tmp_path, team, threads=3).on_tick(clock(max_open_threads_per_team=6))
+    assert len([s for s in team.sent if s[0] == "open_thread"]) == 1
+
+
+def test_a_cash_skip_is_recorded_once_while_the_cash_moves(tmp_path):
+    team = FakeTeam(me={**ME, "unlocked": ["chato"], "cash": 300})  # room 30: Chato's fills (~28.5) fit, 30 > 29 cap
+    t, _, _ = taker(tmp_path, team, lift=0.15)
+    team._me["cash"] = 290  # room 20: below his fills
+    t.on_tick(clock())
+    team._me["cash"] = 285  # room 15
+    team.now = clock(tick=TICK + 1)
+    t.on_tick(team.now)
+    skips = [r for r in rows(tmp_path) if r.get("kind") == "dealer_skip"]
+    assert len(skips) == 1 and skips[0]["reason"].startswith("cash: what we may still commit is below chato")
