@@ -1641,8 +1641,9 @@ def broker_watch(
     max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
     ours: bool = typer.Option(False, help="Read our own venue's book (BAZAAR_BROKER_KEY), not the free stall's"),
 ) -> None:
-    """Read-only: log the Market Test's bench offers every tick from the free starter stall's book (its key is in
-    /api/me), to calibrate the bench model. Sends nothing."""
+    """Read-only: log the Market Test's bench offers every tick from the free stall's book (key from /api/me).
+
+    The log calibrates the bench model (`bazaar broker calibrate`). Sends nothing."""
     from rich.markup import escape
 
     from bazaar_agent import venue as vn
