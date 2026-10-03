@@ -129,7 +129,7 @@ class FakeTeam:
         return {"id": tid, "status": "closed"}
 
     def accept(self, offer_id, assets=None):
-        self.sent.append(("accept", offer_id))
+        self.sent.append(("accept", offer_id, list(assets)) if assets else ("accept", offer_id))
         return {"ok": True, "settles_tick": self.now.tick + 1}
 
     def cancel(self, offer_id):

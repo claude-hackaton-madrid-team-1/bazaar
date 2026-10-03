@@ -65,6 +65,7 @@ from bazaar_agent.agents.seller import (
 )
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.guardrails import (
+    ARB_TAG,
     Action,
     Context,
     Guardrails,
@@ -87,6 +88,7 @@ from bazaar_agent.ticks import Clock
 class MakerConfig:
     offer_ttl_ticks: int = 40  # expires_in_ticks of a new offer (the SDK default)
     reprice_min_change: float = 0.05  # reprice when the target moved by at least 5 % (and 1 P)
+    arb_hold_ticks: int = 4  # no new ask for a card bought to resell this recently (the taker's exit window + 1)
 
 
 @dataclass(frozen=True)
@@ -257,6 +259,8 @@ class Maker:
             ),
         )
         targets = targets_from(book)
+        if self.rules.arb_enabled:
+            targets = self._spare_arb_exits(targets, mine, clock)
         if self.jev is not None:
             for line in self.jev.watch.observe(mine, clock.tick):
                 self.log(f"tick {clock.tick} maker: {line}")
@@ -284,6 +288,20 @@ class Maker:
             stops=kill_switch(self.rules),
             trades=trades,
         )
+
+    def _spare_arb_exits(self, targets: list[Target], mine: list[OpenOffer], clock: Clock) -> list[Target]:
+        """No new ask for a card the taker bought to resell in the last `arb_hold_ticks`: its exit hands over
+        a copy into a standing bid, and a copy listed here would make that accept fail. Asks already open
+        stay as they are; once the window passes, the card is the sell flow's like any other."""
+        since = clock.t_hours - self.config.arb_hold_ticks * clock.tick_seconds / 3600
+        held_for_exit = {
+            item.removeprefix(ARB_TAG).rpartition(":")[0] for item, _, _ in self.ledger.spend_rows(ARB_TAG, since)
+        }
+        listed = {o.asset_id for o in mine if o.side == "ask"}
+        spared = [t for t in targets if t.side == "ask" and t.ref in held_for_exit and t.asset_id not in listed]
+        for t in spared:
+            self.log(f"tick {clock.tick} maker: not listing {t.ref} (asset {t.asset_id}): an arbitrage exit is pending")
+        return [t for t in targets if t not in spared]
 
     def _do(self, run: _MakerRun, action: MakerAction) -> None:
         if action.kind == "cancel" and action.offer is not None:

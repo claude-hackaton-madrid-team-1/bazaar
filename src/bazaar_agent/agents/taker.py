@@ -23,7 +23,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, Literal
 
 from bazaar_agent.agents.dealer import Move, Negotiation, WordsFn, apply_advice, bid_words, template_words
 from bazaar_agent.agents.desk import (
@@ -51,8 +51,20 @@ from bazaar_agent.agents.runtime import (
 )
 from bazaar_agent.agents.seller import offers_in, open_commitments, trade_book
 from bazaar_agent.agents.words import WordsRequest
+from bazaar_agent.arb import Crossing, best_per_ask, crossings, dup_buys, leg_proceeds, next_copy_values
 from bazaar_agent.decisions import DecisionLog, Status
-from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check, kill_switch, refund_row
+from bazaar_agent.guardrails import (
+    Action,
+    Context,
+    Guardrails,
+    LedgerStore,
+    arb_item,
+    check,
+    dup_item,
+    kill_switch,
+    refund_row,
+)
+from bazaar_agent.guardrails import held_cards as ctx_held
 from bazaar_agent.intel import book_values, listed_makers, settled_volume
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.pack_gate import PackJudge, gate_packs
@@ -68,6 +80,8 @@ class TakerConfig:
     jev_min_budget_s: float = 4.0  # ask Jev only with this much of the tick left (a call takes ~0.3 s, max 3 s)
     max_jev_calls_per_tick: int = 3
     duel_grace_s: float = 2.0  # duels own the first seconds of a tick (capped at 15 % of the tick)
+    arb_exit_ticks: int = 3  # an arbitrage exit not taken this many ticks after the buy is dropped (maker sells)
+    arb_pair_cooldown_ticks: int = 240  # never arbitrage between the same two makers again within this (ring guard)
 
 
 # ---------------------------------------------------------------- (a) standing asks on the boards
@@ -85,6 +99,8 @@ class AskCandidate:
     score: float
     reason: str
     replaces_bid: OpenOffer | None = None  # our own open bid for the same card, withdrawn after the accept
+    held_buy: Literal["arb", "dup"] | None = None  # an exception to block_buying_held_cards (guardrails)
+    exit: Crossing | None = None  # arbitrage: the standing bid we sell into next tick
 
 
 def ask_candidates(
@@ -119,6 +135,97 @@ def ask_candidates(
         if o.ref not in best or cand.total < best[o.ref].total:
             best[o.ref] = cand
     return sorted(best.values(), key=lambda c: (not c.scarce, -c.score, c.offer.id))
+
+
+# ---------------------------------------------------------------- held cards: duplicates and arbitrage
+
+
+def dup_candidates(
+    m: Market, offers: Iterable[BoardOffer], venues: dict[str, Venue], ours: set[int], rules: Guardrails
+) -> list[AskCandidate]:
+    """Asks for cards we hold whose next copy is worth `dup_min_surplus` more than the ask and its fee."""
+    if not rules.dup_buy_enabled:
+        return []
+    out = []
+    for d in dup_buys(offers, venues, m.held, next_copy_values(m), min_surplus=rules.dup_min_surplus, exclude=ours):
+        card = m.cards[d.ask.ref]
+        reason = f"duplicate #{d.held + 1}: one more copy worth {d.value:g}; ask {d.ask.price} + fee on {d.ask.venue}"
+        out.append(
+            AskCandidate(
+                d.ask,
+                card.rarity,
+                d.cost - d.ask.price,
+                d.cost,
+                d.value,
+                d.surplus,
+                False,
+                d.surplus,
+                reason,
+                None,
+                "dup",
+            )
+        )
+    return out
+
+
+def arb_candidates(
+    m: Market,
+    offers: Iterable[BoardOffer],
+    venues: dict[str, Venue],
+    ours: set[int],
+    rules: Guardrails,
+    busy_refs: set[str],
+    recent_pairs: set[frozenset[str]],
+) -> list[AskCandidate]:
+    """Asks we can resell at once into a standing bid on any venue: net after both fees at least
+    `arb_min_net_spread`, makers known and different, a pair of makers we have not arbitraged between lately
+    (ring guard), no exit already pending for the card, and a resale that clears the sell floor
+    (`sell_min_value_ratio` × our value of the copy, so a page card worth more to us is kept instead)."""
+    if not rules.arb_enabled:
+        return []
+    value = next_copy_values(m)
+    found = crossings(offers, venues, exclude=ours, min_net=rules.arb_min_net_spread, value=value, known_makers=True)
+    out = []
+    for c in best_per_ask(found):
+        card = m.cards.get(c.ref)
+        floor = (c.value or 0.0) * rules.sell_min_value_ratio
+        pair = frozenset((c.ask.maker, c.bid.maker))
+        if card is None or c.value is None or c.ref in busy_refs or pair in recent_pairs or c.proceeds < floor:
+            continue
+        reason = (
+            f"arbitrage: buy {c.ask.price} + fee on {c.ask.venue} ({c.ask.maker}) = {c.cost}, sell into "
+            f"{c.bid.price} − fee on {c.bid.venue} ({c.bid.maker}) = {c.proceeds}: net {c.net:+d}"
+        )
+        out.append(
+            AskCandidate(
+                c.ask,
+                card.rarity,
+                c.cost - c.ask.price,
+                c.cost,
+                c.proceeds,
+                c.net,
+                False,
+                c.net,
+                reason,
+                None,
+                "arb",
+                c,
+            )
+        )
+    return out
+
+
+@dataclass(frozen=True)
+class PendingExit:
+    """An arbitrage buy waiting for its card, then for its exit (the next tick, with priority)."""
+
+    exit: Crossing
+    held_before: int
+    tick: int
+
+    @property
+    def ref(self) -> str:
+        return self.exit.ref
 
 
 # ---------------------------------------------------------------- the accept quota
@@ -174,6 +281,12 @@ def board_proposal(c: AskCandidate) -> AcceptProposal:
         "score": c.score,
         "replaces_bid": c.replaces_bid.id if c.replaces_bid else None,
     }
+    if c.held_buy is not None:
+        inputs["held_buy"] = c.held_buy
+    if c.exit is not None:
+        x = c.exit
+        inputs["exit"] = {"offer_id": x.bid.id, "venue": x.bid.venue, "maker": x.bid.maker, "bid": x.bid.price}
+        inputs |= {"proceeds": x.proceeds, "net": x.net, "legs": x.legs}
     return AcceptProposal("board", o.ref, c.rarity, o.id, c.total, c.value, False, c.reason, inputs, candidate=c)
 
 
@@ -265,6 +378,9 @@ class _TickRun:
     jev_calls: int = 0
     settled: dict[str, int] | None = None  # primas settled with each team; None: max_counterparty_share is off
     accepted: list[AcceptProposal] = field(default_factory=list)
+    venues: dict[str, Venue] = field(default_factory=dict)  # the boards read this tick: venues and offers
+    board: list[BoardOffer] = field(default_factory=list)
+    dup_spent: int = 0  # dry run: this tick's duplicate buys (a live one is a `dup:` row in the ledger)
 
 
 class Taker:
@@ -297,6 +413,8 @@ class Taker:
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
         self.convs: dict[str, Conversation] = {}  # dealer id -> the conversation we own
         self._dry_accepts: dict[int, int] = {}
+        self.exits: dict[str, PendingExit] = {}  # card ref -> the arbitrage exit waiting for it
+        self._arb_pairs: dict[frozenset[str], int] = {}  # the two makers of an arbitrage -> its tick
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
 
@@ -337,6 +455,7 @@ class Taker:
         desk = self._desk_moves(run)
         proposals = [desk_proposal(dm) for dm, _ in desk if dm.move.kind == "accept"]
         proposals += [board_proposal(c) for c in self._board(run, market)]
+        proposals += [board_proposal(c) for c in self._held_buys(run, market)]
         self._accept(run, proposals)
         self._converse(run, desk)
         if self.hub is not None:
@@ -358,7 +477,15 @@ class Taker:
         ctx = guard_context(run.snap, self.ledger, self.rules, open_commitments(kept, run.snap.us))
         book = book_values(run.snap.catalog)
         trades = None if run.settled is None else trade_book(kept, run.snap.us, run.settled, book)
-        return replace(ctx, spent_last_hour=ctx.spent_last_hour + run.spent, trades=trades)
+        held = ctx_held(run.snap.me)
+        unseen = sum(x.exit.cost for x in self.exits.values() if held.get(x.ref, 0) <= x.held_before)
+        return replace(
+            ctx,
+            spent_last_hour=ctx.spent_last_hour + run.spent,
+            trades=trades,
+            arb_inventory=ctx.arb_inventory + unseen,  # bought, not yet in /me: still inventory
+            dup_spent_last_hour=ctx.dup_spent_last_hour + run.dup_spent,
+        )
 
     def _commit(
         self,
@@ -405,11 +532,21 @@ class Taker:
                 offers += board_offers(self.public.board(venue.id), venue.id, run.snap.us)
             except BazaarError as e:
                 self.log(f"tick {run.snap.clock.tick} taker: board {venue.id} refused {e.code}; skipped")
-        if run.settled is not None:  # the board shows pseudonyms; the feed's `offer.listed` names the team
+        if run.settled is not None or self.rules.arb_enabled:  # the board shows pseudonyms; the feed names teams
             makers = listed_makers(run.snap.events)
             offers = [replace(o, maker=makers.get(o.id, o.maker)) for o in offers]
+        run.venues, run.board = venues, offers
         own_bids = {o.ref: o for o in run.mine if o.side == "bid"}
         return ask_candidates(market, offers, venues, run.params, {o.id for o in run.mine}, own_bids)
+
+    def _held_buys(self, run: _TickRun, market: Market) -> list[AskCandidate]:
+        """Duplicate buys and arbitrage buys (both off by default): `guardrails.check` has the last word."""
+        ours = {o.id for o in run.mine}
+        tick = run.snap.clock.tick
+        recent = {pair for pair, t in self._arb_pairs.items() if tick - t < self.config.arb_pair_cooldown_ticks}
+        dups = dup_candidates(market, run.board, run.venues, ours, self.rules)
+        arbs = arb_candidates(market, run.board, run.venues, ours, self.rules, set(self.exits), recent)
+        return dups + arbs
 
     # ------------------------------------------------------------ (b) the dealer desk
 
@@ -617,6 +754,7 @@ class Taker:
         clock = run.snap.clock
         limit = accept_limit(clock, self.rules)
         used = self.ledger.accepts_in_tick(clock.tick) if self.live else self._dry_accepts.get(clock.tick, 0)
+        used += self._exits(run, limit - used)
         for p in rank_accepts(proposals):
             if used >= limit:
                 self._skip(run, p, f"accept quota {limit}/tick used", "rejected")
@@ -652,7 +790,19 @@ class Taker:
         ctx = self._ctx(run, skip_thread=skip_thread, skip_offer=skip_offer)
         maker = p.candidate.offer.maker if p.candidate is not None else None  # a dealer is not a counterparty
         ask = p.candidate.offer.price if p.candidate is not None else None  # the maker's share: without the fee
-        action = Action("accept_buy", p.ref, p.rarity, p.price, counterparty=maker, volume=ask)
+        c = p.candidate
+        held_buy, exit_ = (c.held_buy, c.exit) if c is not None else (None, None)
+        action = Action(
+            "accept_buy",
+            p.ref,
+            p.rarity,
+            p.price,
+            counterparty=maker,
+            volume=ask,
+            held_buy=held_buy,
+            exit_net=exit_.net if exit_ is not None else None,
+            next_copy_value=p.value if held_buy == "dup" else None,
+        )
         verdict = check(action, ctx, self.rules)
         if not verdict.allowed:
             self._skip(run, p, str(verdict), "rejected")
@@ -673,6 +823,9 @@ class Taker:
             run.window = TickWindow(clock.tick, 0.0, self.now)  # every later send this tick is dropped too
             self._skip(run, p, "the tick ended before the send", "expired", jev)
             return False
+        if exit_ is not None and (gone := self._exit_gone(exit_.bid)):
+            self._skip(run, p, f"arbitrage exit re-read: {gone}", "rejected", jev)
+            return False
         if self.live and not self.ledger.reserve_accept(clock.tick, clock.t_hours, p.price, p.ref, limit):
             self._skip(run, p, "another process took the team's accept this tick", "rejected", jev)
             return False
@@ -691,21 +844,117 @@ class Taker:
             thread_id=skip_thread,
             move={"accept": p.offer_id, "price": p.price},
         )
+        held_before = ctx_held(run.snap.me).get(p.ref, 0)
+        if exit_ is not None:  # from now on the exit has priority, and the two makers rest (ring guard)
+            self.exits[p.ref] = PendingExit(exit_, held_before, clock.tick)
+            self._arb_pairs[frozenset((exit_.ask.maker, exit_.bid.maker))] = clock.tick
         if not self.live:
             run.spent += p.price if p.desk is None else 0  # a live board accept is booked in the ledger
+            run.dup_spent += p.price if held_buy == "dup" else 0
             self._commit(run, p.price, p.ref, skip_thread, maker, ask)
             return True
         body = self.rec.send(did, clock.tick, "accept", {"offer": p.offer_id}, lambda: self.team.accept(p.offer_id))
         if body is None and not self.rec.maybe_landed:
+            if exit_ is not None:
+                self.exits.pop(p.ref, None)  # refused: nothing to resell
             return True  # the reserved slot stays spent: an accept that may have landed is never retried
         # Accepted, or lost on the way back (a network error): booked as bought (fail safe for the caps).
         if p.desk is not None:
             p.desk.conv.accepted_tick, p.desk.conv.accepted_price = clock.tick, p.price
         else:
-            self.ledger.record("spend", clock.tick, clock.t_hours, p.price, p.ref)
+            item = {"arb": arb_item(p.ref, held_before), "dup": dup_item(p.ref)}.get(held_buy or "", p.ref)
+            self.ledger.record("spend", clock.tick, clock.t_hours, p.price, item)
             if body is not None and p.candidate is not None and p.candidate.replaces_bid is not None:
                 self._withdraw(run, p.candidate.replaces_bid)
         self._commit(run, p.price, p.ref, skip_thread, maker, ask)
+        return True
+
+    # ------------------------------------------------------------ arbitrage exits (priority, next tick)
+
+    def _exit_gone(self, bid: BoardOffer) -> str | None:
+        """Re-read the exit's venue: why its bid can no longer be hit at its price (None: it still stands)."""
+        try:
+            fresh = board_offers(self.public.board(bid.venue), bid.venue, "")
+        except BazaarError as e:
+            return f"board {bid.venue} refused {e.code}"
+        if any(o.id == bid.id and o.side == "bid" and o.ref == bid.ref and o.price == bid.price for o in fresh):
+            return None
+        return f"bid {bid.id} for {bid.ref} at {bid.price} on {bid.venue} is gone or moved"
+
+    def _exits(self, run: _TickRun, slots: int) -> int:
+        """Pending arbitrage exits first, before any other accept: the card is in /me, the bid still stands.
+        One not taken within `arb_exit_ticks` (or whose bid vanished) is dropped: the card stays ours and the
+        maker's sell-to-need flow lists it, never below `sell_min_value_ratio`. Returns the accepts used."""
+        tick, held = run.snap.clock.tick, ctx_held(run.snap.me)
+        used = 0
+        for ref, x in list(self.exits.items()):
+            if tick - x.tick > self.config.arb_exit_ticks:
+                self.exits.pop(ref)
+                self.log(f"tick {tick} taker: arbitrage exit for {ref} expired: the maker's sell flow takes the card")
+            elif held.get(ref, 0) > x.held_before and used < slots and self._exit_one(run, x):
+                used += 1
+        return used
+
+    def _exit_one(self, run: _TickRun, x: PendingExit) -> bool:
+        clock, bid = run.snap.clock, x.exit.bid
+        venue = run.venues.get(bid.venue)
+        copy = min(
+            (a for a in run.snap.me.get("assets") or [] if a.get("kind") == "card" and str(a.get("ref")) == x.ref),
+            key=lambda a: (float(a.get("your_value") or 0), -int(a.get("id") or 0)),
+            default=None,
+        )
+        if venue is None or copy is None or not isinstance(copy.get("id"), int):
+            return False
+        proceeds = leg_proceeds(venue, bid.price)  # at the venue's fee in force now
+        your_value = copy.get("your_value")
+        action = Action(
+            "accept_sell",
+            x.ref,
+            str(copy.get("rarity") or ""),
+            proceeds,
+            your_value=float(your_value) if isinstance(your_value, int | float) else None,
+            counterparty=bid.maker,
+            volume=bid.price,
+        )
+        verdict = check(action, self._ctx(run), self.rules)
+        inputs = {"offer_id": bid.id, "venue": bid.venue, "maker": bid.maker, "bid": bid.price, "asset": copy["id"]}
+        inputs |= {"proceeds": proceeds, "your_value": your_value, "bought_tick": x.tick, "cost": x.exit.cost}
+        what = f"arbitrage exit: sell {x.ref} (asset {copy['id']}) into bid {bid.id} on {bid.venue} for {proceeds}"
+        if verdict.halted:
+            self.log(f"tick {clock.tick} taker: kill switch on: holding the {what} ({verdict})")
+            return False
+        gone = None if not verdict.allowed else self._exit_gone(bid)
+        bid_gone = gone is not None
+        if action.your_value is None:
+            verdict = replace(verdict, allowed=False, violations=(*verdict.violations, "no your_value: no sell floor"))
+        status: Status = "approved" if verdict.allowed and gone is None else "rejected"
+        if status == "approved" and self.live:
+            self._duel_grace(run)
+            if any(item.startswith("duel:") for item in self.ledger.accept_items(clock.tick)):
+                status, gone = "rejected", "a duel holds the team's accept this tick (duels first)"
+            elif not run.window.open() or not self._fresh_tick(clock):
+                status, gone = "expired", "the tick ended before the send"
+            elif not self.ledger.reserve_accept(clock.tick, clock.t_hours, 0, x.ref, accept_limit(clock, self.rules)):
+                status, gone = "rejected", "another process took the team's accept this tick"
+        did = self.rec.decide(
+            clock.tick,
+            "arb_exit",
+            f"{what} (net {x.exit.net:+d}) · guardrails {verdict}{f' · {gone}' if gone else ''}",
+            inputs=inputs,
+            reason=f"bought at {x.exit.cost} on tick {x.tick}",
+            guardrail=str(verdict),
+            chosen=status == "approved",
+            status=status,
+            move={"accept": bid.id, "assets": [copy["id"]], "price": proceeds},
+        )
+        if status != "approved":  # kept until `arb_exit_ticks`, unless its bid is gone: then the maker sells
+            if bid_gone:
+                self.exits.pop(x.ref, None)
+                self.log(f"tick {clock.tick} taker: {what}: {gone}; the maker's sell flow takes the card")
+            return False
+        self.exits.pop(x.ref, None)
+        if self.live:
+            self.rec.send(did, clock.tick, "accept", {"offer": bid.id}, lambda: self.team.accept(bid.id, [copy["id"]]))
         return True
 
     def _duel_grace(self, run: _TickRun) -> None:

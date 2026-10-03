@@ -422,11 +422,17 @@ class Context:
     dup_spent_last_hour: int = 0  # primas of duplicate buys this game hour (`dup:` spend rows)
 
 
-def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: LedgerStore, rules: Guardrails) -> Context:
+def held_cards(me: dict[str, Any]) -> dict[str, int]:
+    """Card ref -> copies we hold, from `/api/me`."""
     held: dict[str, int] = {}
     for a in me.get("assets") or []:
         if a.get("kind") == "card":
             held[str(a.get("ref"))] = held.get(str(a.get("ref")), 0) + 1
+    return held
+
+
+def context_from(me: dict[str, Any], tick: int, t_hours: float, ledger: LedgerStore, rules: Guardrails) -> Context:
+    held = held_cards(me)
     return Context(
         cash=int(me.get("cash") or 0),
         held=held,
