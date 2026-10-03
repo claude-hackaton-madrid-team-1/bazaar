@@ -49,3 +49,16 @@ def test_the_report_script_renders_every_section(tmp_path):
     for heading in ("practice duels, labelled", "Realism", "classifier", "Tournament", "Replay", "Go/no-go"):
         assert heading in text
     assert "| endgame_accept | 185 | 185 |" in text
+
+
+def test_a_baseline_that_earns_nothing_cannot_be_beaten_by_another_that_earns_nothing():
+    never = lambda duel, tick, started: duel_zoo.HOLD  # noqa: E731
+    gate = duel_gate.go_no_go(never, never, n=3)
+    lift = next(c for c in gate.checks if c.name == "mean_result")
+    assert not lift.passed and "baseline ≤ 0" in lift.detail
+
+
+def test_a_check_with_no_duels_of_its_styles_does_not_pass():
+    gate = duel_gate.go_no_go(duel_zoo.endgame_accept, duel_zoo.accept_first_inside, n=3, styles=("linear",))
+    one_shot = next(c for c in gate.checks if c.name == "deals_one_shot")
+    assert not one_shot.passed and one_shot.detail.startswith("not run") and not gate.go

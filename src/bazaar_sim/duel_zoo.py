@@ -264,6 +264,18 @@ class RivalView:
     def our_priced(self) -> list[Mapping[str, Any]]:
         return [m for m in self.messages if m["from"] == US and m.get("price") is not None]
 
+    def fresh(self) -> bool:
+        """Our latest priced message came after the rival's latest one: it has not answered it yet. By message
+        order, not tick, so a rival that moves after us in the same tick does not answer the same offer twice."""
+        last_ours = last_theirs = -1
+        for i, m in enumerate(self.messages):
+            if m.get("price") is not None:
+                if m["from"] == US:
+                    last_ours = i
+                else:
+                    last_theirs = i
+        return last_ours > last_theirs
+
 
 Rival = Callable[[RivalView], Act]
 
@@ -272,7 +284,7 @@ def _accepts(view: RivalView, next_price: int | None, floor: float = 0.0) -> boo
     """The common rule: take our standing offer when it is newer than the rival's own, inside the rival's
     limit, and at least as good for it as its next price, or in the endgame when it beats `floor`."""
     ours = view.our_offer
-    if ours is None or (view.its_offer is not None and ours.tick < view.its_offer.tick):
+    if ours is None or not view.fresh():
         return False
     mine = view.utility(ours.price, ours.days)
     if mine <= 0:
@@ -301,8 +313,12 @@ def _one_shot(view: RivalView) -> Act:
     p = view.params
     days = view.days()
     ours = view.our_offer
-    fresh = ours is not None and (view.its_offer is None or ours.tick >= view.its_offer.tick)
-    if p["listens"] and ours is not None and fresh and view.utility(ours.price, ours.days) >= p["accept"] * view.limit:
+    if (
+        p["listens"]
+        and ours is not None
+        and view.fresh()
+        and view.utility(ours.price, ours.days) >= p["accept"] * view.limit
+    ):
         return Act("accept", ours.price)
     shots = [view.started_tick, view.started_tick + int(p["gap"])][: int(p["shots"])]
     if view.tick in shots:
@@ -320,10 +336,9 @@ def _tit_for_tat(view: RivalView) -> Act:
         return Act("offer", view.price_for(p["open"], days), days)
     current = view.its_offer.price
     ours = view.our_priced()
-    fresh = [m for m in ours if m["tick"] >= view.its_offer.tick]
     if _accepts(view, current, p["end"]):
         return Act("accept", view.our_offer.price if view.our_offer else None)
-    if not fresh:
+    if not view.fresh():
         return HOLD
     moved = 0
     if len(ours) >= 2:  # our last concession toward it: a seller comes down, a buyer goes up
@@ -346,15 +361,9 @@ def _holdout(view: RivalView) -> Act:
     price = view.price_for(margin, days)
     if _accepts(view, view.price_for(p["hold"], days), p["hold"]):
         return Act("accept", view.our_offer.price if view.our_offer else None)
-    if view.its_offer is None or view.its_offer.price != price or fresh_since(view):
+    if view.its_offer is None or view.its_offer.price != price or view.fresh():
         return Act("offer", price, days)  # it restates its price to every new offer of ours (duel 274)
     return HOLD
-
-
-def fresh_since(view: RivalView) -> bool:
-    """We posted a priced offer at or after the rival's last one (a holdout restates its price to it)."""
-    ours = view.our_priced()
-    return bool(ours) and view.its_offer is not None and ours[-1]["tick"] >= view.its_offer.tick
 
 
 def _no_show(view: RivalView) -> Act:
@@ -463,7 +472,7 @@ def our_gain(sc: Scenario, price: int, days: int) -> float:
     return base + (weight * days if sc.days_truth == "signed" else -abs(weight) * days)
 
 
-def payload(d: _Duel, tick: int) -> dict[str, Any]:
+def payload(d: _Duel) -> dict[str, Any]:
     """The duel as the real `GET /api/duels` row, the fixture's key set exactly."""
     sc = d.sc
     closed = d.status != "live"
@@ -528,7 +537,7 @@ def _rival_turn(d: _Duel, rival: Rival, tick: int, rng: random.Random) -> None:
 
 def _team_turn(d: _Duel, policy: Policy, tick: int) -> None:
     sc = d.sc
-    move = policy(payload(d, tick), tick, sc.started_tick)
+    move = policy(payload(d), tick, sc.started_tick)
     kind = getattr(move, "kind", "hold")
     if kind == "accept":
         if d.rival_offer is None:
@@ -581,7 +590,7 @@ def play(policy: Policy, sc: Scenario, rival: Rival | None = None) -> tuple[Reco
             _rival_turn(d, rival, tick, rng)
             if d.accepted is None:
                 _team_turn(d, policy, tick)
-    return _record(d), payload(d, d.closed_tick or sc.deadline_tick)
+    return _record(d), payload(d)
 
 
 def _record(d: _Duel) -> Record:
@@ -734,7 +743,9 @@ def _rival_price(duel: Mapping[str, Any]) -> tuple[int, int] | None:
 
 
 def worst_case_gain(duel: Mapping[str, Any], price: int, days: int) -> float | None:
-    """Our surplus on the rival's terms with every day costing |weight| (None: a two-issue duel without a weight)."""
+    """Our surplus on the rival's terms with every day costing |weight| (None: a two-issue duel without a weight).
+    The same rule as `bazaar_agent.agents.duelist.worth` / `effective_price` (bazaar_sim does not import the
+    agent): keep the two in step if the sign of `your_days_weight` is ever confirmed."""
     limit, role = duel["your_limit"], duel["role"]
     base = price - limit if role == "seller" else limit - price
     if "days" not in (duel.get("issues") or []):

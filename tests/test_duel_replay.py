@@ -128,3 +128,16 @@ def test_a_mix_weights_styles_not_duel_counts():
     assert zoo.mix_mean(records, {"linear": 1, "one_shot": 3}) == 5.0  # 1/4 × 20 + 3/4 × 0
     assert zoo.mix_mean(records, {"linear": 1, "sim": 9}) == 20.0  # styles without records drop out
     assert zoo.mix_mean(records, {"linear": 1, "one_shot": 1}, "deal") == 1.0
+
+
+def test_the_replayed_rival_keeps_the_days_it_offered():
+    two = dict(by_id()[6], issues=["price", "days"], your_days_weight=-3.0)
+    two["messages"] = [dict(m, days=10) for m in two["messages"]]
+    seen: list[dict] = []
+
+    def look(duel: dict, tick: int, started: int) -> zoo.Act:
+        seen.append(duel["rival_offer"])
+        return zoo.HOLD
+
+    replay.replay(look, two)
+    assert seen[0]["days"] == 10 and seen[0]["price"] == 141

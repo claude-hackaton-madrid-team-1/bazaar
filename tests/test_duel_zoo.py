@@ -358,3 +358,15 @@ def test_moving_first_in_the_tick_hides_the_rivals_message_of_that_tick():
     seen.clear()
     record, _ = zoo.play(watch, scenario(style="linear", params=LINEAR, team_first=True))
     assert seen[0] is None and record.errors[0] == "no_offer" and record.close_tick == 102  # accepted at 101
+
+
+@pytest.mark.parametrize("team_first", [False, True])
+def test_a_responsive_rival_answers_each_offer_of_ours_once_in_either_tick_order(team_first):
+    tft = {"open": 0.5, "end": 0.05, "ratio": 1.0, "drift": 0.0}
+    sc = scenario(style="tit_for_tat", params=tft, rival_limit=200, team_first=team_first)
+    record, final = zoo.play(Script(zoo.Act("offer", 300), zoo.Act("offer", 290)), sc)
+    # It opens (after our 300 when we move first), answers 290 with +10 once, then waits: no repeat while we hold.
+    assert rival_prices(final) == ([100, 110] if team_first else [100, 100, 110])
+    hold = scenario(style="holdout", params={"open": 0.6, "hold": 0.2, "steps": 1}, rival_limit=200)
+    _, final = zoo.play(Script(zoo.Act("offer", 400)), zoo.Scenario(**{**hold.__dict__, "team_first": team_first}))
+    assert rival_prices(final).count(160) == 1  # it restated its hold price to our one offer once, not every tick

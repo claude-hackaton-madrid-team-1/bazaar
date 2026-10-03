@@ -87,7 +87,9 @@ def _style_rng(w: World, duel: Duel) -> random.Random:
 
 
 def rival_style(w: World, duel: Duel) -> tuple[str, dict[str, float]]:
-    """The duel's rival style and its parameters, drawn once per duel id from `SIM_DUEL_STYLES`."""
+    """The duel's rival style and its parameters, drawn per duel id from `SIM_DUEL_STYLES`. The draw is a pure
+    function of (seed, duel id, pool), recomputed each tick (no model field): change the pool between sessions,
+    not during one, or live duels switch rivals."""
     pool = styles()
     if pool == ("sim",):
         return "sim", {}
@@ -281,7 +283,7 @@ def _zoo_turn(w: World, duel: Duel, style: str, params: dict[str, float]) -> Non
         two_issues="days" in duel.issues,
         decay=duel.decay_per_round,
         params=params,
-        messages=tuple({**m, "from": duel_zoo.US if m["from"] == "you" else m["from"]} for m in duel.messages),
+        messages=tuple(duel.messages),  # our messages are "from": "you" here too (duel_zoo.US)
         our_offer=_offer(duel.your_offer),
         its_offer=_offer(duel.rival_offer),
         rng=rng,

@@ -64,21 +64,21 @@ def started_tick(duel: Mapping[str, Any], duel_ticks: int = PRACTICE_TICKS) -> i
 
 def scripted_rival(duel: Mapping[str, Any], counterfactual: Counterfactual = "conservative") -> zoo.Rival:
     """The rival's recorded path as a zoo rival: at each recorded tick it posts its recorded price."""
-    path: dict[int, int] = {}
+    path: dict[int, tuple[int, int]] = {}
     for m in _theirs(duel):
-        path[int(m["tick"])] = int(m["price"])  # several in one tick: the last one stands
+        path[int(m["tick"])] = (int(m["price"]), int(m.get("days") or 0))  # several in one tick: the last stands
     rival_sells = duel["role"] == "buyer"
 
     def rival(view: zoo.RivalView) -> zoo.Act:
         if counterfactual == "consistent" and view.our_offer is not None and view.its_offer is not None:
-            fresh = view.our_offer.tick >= view.its_offer.tick
-            later = [p for t, p in sorted(path.items()) if t >= view.tick]
+            later = [p for t, (p, _) in sorted(path.items()) if t >= view.tick]
             bar = later[0] if later else view.its_offer.price
             good = view.our_offer.price >= bar if rival_sells else view.our_offer.price <= bar
-            if fresh and good:
+            if view.fresh() and good:
                 return zoo.Act("accept", view.our_offer.price)
         if view.tick in path:
-            return zoo.Act("offer", path[view.tick], 0)
+            price, days = path[view.tick]
+            return zoo.Act("offer", price, days)
         return zoo.HOLD
 
     return rival

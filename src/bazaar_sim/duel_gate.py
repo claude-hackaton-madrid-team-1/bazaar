@@ -45,9 +45,26 @@ class Gate:
         return all(c.passed for c in self.checks)
 
 
-def _rate(records: Sequence[Record], styles: Sequence[str]) -> float:
+def _rate(records: Sequence[Record], styles: Sequence[str]) -> float | None:
+    """The deal rate against `styles`, or None when the grid has none of them (the check did not run)."""
     picked = [r for r in records if r.style in styles]
-    return sum(r.deal for r in picked) / len(picked) if picked else 0.0
+    return duel_zoo.summarize(picked).deal_rate if picked else None
+
+
+def _rate_check(name: str, cand: float | None, base: float | None, factor: float) -> Check:
+    if cand is None or base is None:
+        return Check(name, float("nan"), float("nan"), False, "not run: no duels of these styles in the grid")
+    return Check(name, round(cand, 3), round(factor * base, 3), cand >= factor * base, f"baseline {base:.3f}")
+
+
+def _lift_check(cand: float, base: float) -> Check:
+    """`cand ≥ 1.4 × base` only means something when the baseline earns: at or below 0 it fails unless the
+    candidate earns more and something at all."""
+    detail = f"{cand:.2f} P vs {base:.2f} P per duel"
+    if base <= 0:
+        return Check("mean_result", float("nan"), RESULT_LIFT, cand > max(base, 0.0), detail + " (baseline ≤ 0)")
+    lift = cand / base
+    return Check("mean_result", round(lift, 3), RESULT_LIFT, lift >= RESULT_LIFT, detail)
 
 
 def go_no_go(
@@ -62,9 +79,6 @@ def go_no_go(
     grid = duel_zoo.scenarios(styles, n=n, decays=decays, seed=seed)
     cand, base = duel_zoo.run(candidate, grid), duel_zoo.run(baseline, grid)
     c_all, b_all = duel_zoo.summarize(cand), duel_zoo.summarize(base)
-    lift = c_all.mean_result / b_all.mean_result if b_all.mean_result else float("inf")
-    c_con, b_con = _rate(cand, CONCEDERS), _rate(base, CONCEDERS)
-    c_one, b_one = _rate(cand, ONE_SHOT), _rate(base, ONE_SHOT)
     outside = sum(r.outside_limit for r in cand)
     duels = len(cand)
     for truth in ("signed", "worst"):
@@ -75,21 +89,9 @@ def go_no_go(
     c_rep = sum(r.result for r in duel_replay.replay_all(candidate))
     b_rep = sum(r.result for r in duel_replay.replay_all(baseline))
     checks = (
-        Check(
-            "mean_result",
-            round(lift, 3),
-            RESULT_LIFT,
-            lift >= RESULT_LIFT,
-            f"{c_all.mean_result:.2f} P vs {b_all.mean_result:.2f} P per duel",
-        ),
-        Check("deals_conceders", round(c_con, 3), round(b_con, 3), c_con >= b_con, "deal rate vs the baseline's"),
-        Check(
-            "deals_one_shot",
-            round(c_one, 3),
-            round(ONE_SHOT_DEALS * b_one, 3),
-            c_one >= ONE_SHOT_DEALS * b_one,
-            f"baseline {b_one:.3f}",
-        ),
+        _lift_check(c_all.mean_result, b_all.mean_result),
+        _rate_check("deals_conceders", _rate(cand, CONCEDERS), _rate(base, CONCEDERS), 1.0),
+        _rate_check("deals_one_shot", _rate(cand, ONE_SHOT), _rate(base, ONE_SHOT), ONE_SHOT_DEALS),
         Check("outside_limit", float(outside), 0.0, outside == 0, f"over {duels} duels (price only + two-issue)"),
         Check("replay", round(c_rep, 2), round(b_rep, 2), c_rep > b_rep, "P on the 12 unanswered practice duels"),
     )
