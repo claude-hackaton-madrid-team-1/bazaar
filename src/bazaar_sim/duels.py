@@ -9,8 +9,10 @@ its value, as in the real practice payloads. Even-numbered sessions negotiate pr
 (`your_days_weight`, P per day); a priced message there without `days` is `missing_days`. Session 1 is
 practice and does not score.
 
-`SIM_DUEL_STYLES` (comma list of `duel_zoo.STYLES`, default `sim`) gives each duel a rival drawn from the zoo,
-fixed per duel; `sim` is the bot below. `SIM_DUEL_DECAY` sets the decay per round (default 0.06).
+`SIM_DUEL_STYLES` (comma list of `duel_zoo.STYLES` and the exploiters `squeezer`, `oracle_squeezer`; default `sim`)
+gives each duel a rival drawn from the zoo, fixed per duel; `sim` is the bot below. `SIM_DUEL_DECAY` sets the decay
+per round (default 0.06). `SIM_DUEL_PAIRS` (1-6, default 1) gives each team that many seller/buyer pairs per
+session, all on one deadline (6 concurrent duels at 3).
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ import os
 import random
 from typing import Any
 
-from bazaar_sim import catalog, duel_zoo, validate
+from bazaar_sim import catalog, duel_exploit, duel_zoo, validate
 from bazaar_sim.errors import SimError, invalid, not_found, wait_for_tick
 from bazaar_sim.models import Duel, DuelOffer
 from bazaar_sim.world import World
@@ -44,7 +46,10 @@ COUNTERS = (
     "I appreciate it. Let us try to close quickly: {p} P.",
 )
 ACCEPTS = ("Deal at {p} P. Pleasure doing business.",)
-STYLES_ENV, DECAY_ENV = "SIM_DUEL_STYLES", "SIM_DUEL_DECAY"
+STYLES_ENV, DECAY_ENV, PAIRS_ENV = "SIM_DUEL_STYLES", "SIM_DUEL_DECAY", "SIM_DUEL_PAIRS"
+EXPLOITERS = ("squeezer", "oracle_squeezer")  # duel_exploit's live-playable rivals (the mirror needs a pair memory)
+LIVE_STYLES = (*duel_zoo.STYLES, *EXPLOITERS)
+LIVE_RIVALS = {**duel_zoo.RIVALS, **{s: duel_exploit.RIVALS[s] for s in EXPLOITERS}}
 log = logging.getLogger(__name__)
 _warned: set[str] = set()
 
@@ -60,11 +65,24 @@ def styles() -> tuple[str, ...]:
     """The rival styles duels draw from (`SIM_DUEL_STYLES`). Unset means `sim`; a bad value also means `sim`, with
     a warning: this runs inside the tick, and an exception there would leave the tick half done."""
     raw = [s.strip() for s in os.environ.get(STYLES_ENV, "").split(",") if s.strip()]
-    unknown = [s for s in raw if s not in duel_zoo.STYLES]
+    unknown = [s for s in raw if s not in LIVE_STYLES]
     if unknown:
-        _warn_once(f"{STYLES_ENV}: unknown rival style {unknown} (one of {duel_zoo.STYLES}): using sim")
+        _warn_once(f"{STYLES_ENV}: unknown rival style {unknown} (one of {LIVE_STYLES}): using sim")
         return ("sim",)
     return tuple(raw) or ("sim",)
+
+
+def pairs() -> int:
+    """Seller/buyer duel pairs per team per session (`SIM_DUEL_PAIRS`, 1-6, default 1: two duels as before)."""
+    raw = os.environ.get(PAIRS_ENV)
+    try:
+        value = int(raw) if raw not in (None, "") else 1
+    except ValueError:
+        value = 0
+    if not 1 <= value <= 6:
+        _warn_once(f"{PAIRS_ENV}={raw!r} is not 1-6: using 1")
+        return 1
+    return value
 
 
 def decay() -> float:
@@ -95,6 +113,8 @@ def rival_style(w: World, duel: Duel) -> tuple[str, dict[str, float]]:
         return "sim", {}
     rng = _style_rng(w, duel)
     style = rng.choice(pool)
+    if style in EXPLOITERS:
+        return style, duel_exploit.exploit_params(style, rng)
     return style, duel_zoo.style_params(style, rng)
 
 
@@ -119,7 +139,7 @@ def start_session(w: World) -> int:
     rng = w.rng("duels", session)
     players = [t for t in w.state.teams.values() if not t.bot]
     created = 0
-    for team in players:
+    for team, _ in ((t, i) for t in players for i in range(pairs())):  # each pair: one scenario, both roles
         item = rng.choice([c.name for c in catalog.cards().values()])
         cost = rng.randint(30, 110)
         value = cost + rng.randint(20, 80)
@@ -289,7 +309,7 @@ def _zoo_turn(w: World, duel: Duel, style: str, params: dict[str, float]) -> Non
         rng=rng,
         other_limit=duel.your_limit,
     )
-    act = duel_zoo.RIVALS[style](view)
+    act = LIVE_RIVALS[style](view)
     ours = duel.your_offer
     if act.kind == "accept" and ours is not None:
         duel.accepted, duel.accepted_tick = "rival", w.tick

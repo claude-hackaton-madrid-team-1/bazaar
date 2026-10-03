@@ -451,3 +451,17 @@ def test_a_days_blind_rival_always_sends_its_fixed_day_but_values_days_by_its_we
     assert {m["days"] for m in final["messages"]} == {5}
     keen = scenario(style="linear", params=LINEAR, two_issues=True, days_weight=1.0, rival_days_weight=3.0)
     assert {m["days"] for m in zoo.play(Script(), keen)[1]["messages"]} == {10}
+
+
+def test_more_pairs_per_session_and_exploiters_in_the_live_simulator(monkeypatch):
+    monkeypatch.setenv(duels.PAIRS_ENV, "3")
+    monkeypatch.setenv(duels.STYLES_ENV, "squeezer,oracle_squeezer")
+    m = manual_world(duel_first_tick=1, duel_ticks=12)
+    m.step()
+    mine = [d for d in m.world.state.duels.values() if d.team == US]
+    assert len(mine) == 6 and len({d.deadline_tick for d in mine}) == 1
+    assert {duels.rival_style(m.world, d)[0] for d in mine} <= {"squeezer", "oracle_squeezer"}
+    drive(m, countering)
+    assert all(d.status in ("deal", "no_deal") for d in mine)
+    monkeypatch.setenv(duels.PAIRS_ENV, "9")
+    assert duels.pairs() == 1
