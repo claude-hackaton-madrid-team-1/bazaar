@@ -333,6 +333,26 @@ def test_a_send_never_waits_for_a_hung_database():
     assert calls == ["holdings-writes"]  # opened on the worker, never in the caller's thread
 
 
+def test_a_stuck_writer_costs_a_send_nothing_and_queues_nothing(monkeypatch):
+    import time
+
+    monkeypatch.setattr(hd, "STUCK_AFTER_S", 0.1)
+    shared, release, _ = hung_db("holdings-writes")
+    tracker = hd.WriteTracker(shared, "maker")
+    try:
+        tracker("POST", "/api/offers", "before")  # the first bump hangs: the worker is stuck from now on
+        time.sleep(0.15)
+        started = time.monotonic()
+        for _ in range(12):  # a tick's worth of listings, before and after each
+            tracker("POST", "/api/offers", "before")
+            tracker("POST", "/api/offers", "after")
+        waited = time.monotonic() - started
+        queued = shared._jobs.qsize()
+    finally:
+        release.set()
+    assert waited < 0.05 and queued == 0 and tracker.missed and tracker.failures == 25
+
+
 def test_a_read_never_waits_longer_than_its_deadline_for_a_hung_database(monkeypatch):
     import time
 

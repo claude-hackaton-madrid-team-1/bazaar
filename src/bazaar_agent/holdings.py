@@ -367,10 +367,17 @@ class SharedDb:
             self.lock.release()
 
     def call(
-        self, fn: Callable[[psycopg.Connection | None], Any], timeout_s: float, *, queue_if_stuck: bool = False
+        self,
+        fn: Callable[[psycopg.Connection | None], Any],
+        timeout_s: float,
+        *,
+        queue_if_stuck: bool = False,
+        extend: threading.Event | None = None,
     ) -> tuple[bool, Any]:
         """(True, fn's answer) when the worker finished in time; (False, None) when it did not. An exception
-        `fn` raised (a refused `/me`) is raised here. Without a database, `fn(None)` runs in the caller."""
+        `fn` raised (a refused `/me`) is raised here. Without a database, `fn(None)` runs in the caller.
+        `extend`: once the job sets it (it has started the game's `/me`), the caller waits for that read
+        instead of giving up and asking the game again; `/me` has its own timeout."""
         if self._connect is None:
             return True, fn(None)
         if self.stuck() and not queue_if_stuck:
@@ -379,7 +386,7 @@ class SharedDb:
         done = threading.Event()
         self._start()
         self._jobs.put((fn, box, done))
-        if not done.wait(timeout_s):
+        if not done.wait(timeout_s) and not (extend is not None and extend.is_set() and done.wait()):
             return False, None
         if "error" in box:
             raise box["error"]
@@ -433,7 +440,7 @@ class SharedDb:
                 self.on_connect(conn)
             except Exception as e:  # e.g. a catch-up bump that failed: the next send retries it
                 log.warning("holdings: on-connect step failed (%s)", type(e).__name__)
-        return conn
+        return self._conn  # None when the on-connect step found the connection broken
 
     def failed(self, error: BaseException) -> None:
         log.warning("holdings: Postgres error (%s); reconnecting later", type(error).__name__)
@@ -461,6 +468,9 @@ class WriteTracker:
         if kind is None:
             return
         what = f"{method.upper()} {path} ({phase})"
+        if self.shared.stuck():  # known lost: no wait, no queue growth; the reconnect catches up
+            self.failures, self.missed = self.failures + 1, True
+            return
         ok, landed = self.shared.call(lambda conn: self._bump(conn, kind, what), HOOK_TIMEOUT_S, queue_if_stuck=True)
         if not (ok and landed):
             self.failures, self.missed = self.failures + 1, True
@@ -619,7 +629,10 @@ class Holdings:
         reason = live_because or self._skip_reason(clock, self._now() - read_at)
         if reason is not None or clock is None:
             return self._live(clock, reason or "no clock")
-        ok, got = self.shared.call(lambda c: None if c is None else self._from_db(c, clock, read_at), READ_DEADLINE_S)
+        asked = threading.Event()  # set by the job when it asks the game: the caller then waits for it
+        ok, got = self.shared.call(
+            lambda c: None if c is None else self._from_db(c, clock, read_at, asked), READ_DEADLINE_S, extend=asked
+        )
         if ok and got is not None:
             return got  # type: ignore[no-any-return]
         return self._plain(clock, "postgres busy or not connected" if ok else "postgres too slow")
@@ -661,7 +674,9 @@ class Holdings:
             return "a send of ours was not recorded"
         return None
 
-    def _from_db(self, conn: psycopg.Connection, clock: Clock, read_at: float) -> MeRead:
+    def _from_db(
+        self, conn: psycopg.Connection, clock: Clock, read_at: float, asked: threading.Event | None = None
+    ) -> MeRead:
         assert self.team is not None
         got: MeRead | None = None
         try:
@@ -677,10 +692,10 @@ class Holdings:
                 found, why = self._fresh(conn, clock, read_at)  # after the wait: the tick may be ending
                 if found is not None:
                     return found
-                got = self._read_and_store(conn, clock, current_epoch(conn, self.scope.world), why)
+                got = self._read_and_store(conn, clock, current_epoch(conn, self.scope.world), why, asked)
                 return got
         except psycopg.errors.LockNotAvailable:
-            return self._live_unlocked(conn, clock, "waited too long for another reader")
+            return self._live_unlocked(conn, clock, "waited too long for another reader", asked)
         except psycopg.Error as e:
             self.shared.failed(e)
             return got if got is not None else self._plain(clock, "postgres error")
@@ -700,9 +715,13 @@ class Holdings:
         me = without_secrets(row.me)
         return MeRead(me, "db", row.tick, row.age_s, row.epoch, row.digest, row.read_by, why), why
 
-    def _read_and_store(self, conn: psycopg.Connection, clock: Clock | None, epoch: int, why: str) -> MeRead:
+    def _read_and_store(
+        self, conn: psycopg.Connection, clock: Clock | None, epoch: int, why: str, asked: threading.Event | None = None
+    ) -> MeRead:
         """/me from the game, then the upsert in a savepoint: a failed write never loses the read."""
         started = self._now()
+        if asked is not None:
+            asked.set()
         raw = without_secrets(self._read_me())
         latency = self._now() - started
         self.counts["live"] += 1
@@ -717,19 +736,24 @@ class Holdings:
         return read
 
     def _live(self, clock: Clock | None, why: str) -> MeRead:
-        ok, got = self.shared.call(lambda c: None if c is None else self._live_unlocked(c, clock, why), READ_DEADLINE_S)
+        asked = threading.Event()
+        ok, got = self.shared.call(
+            lambda c: None if c is None else self._live_unlocked(c, clock, why, asked), READ_DEADLINE_S, extend=asked
+        )
         if ok and got is not None:
             return got  # type: ignore[no-any-return]
         return self._plain(clock, why if ok else f"{why}; postgres too slow")
 
-    def _live_unlocked(self, conn: psycopg.Connection, clock: Clock | None, why: str) -> MeRead:
+    def _live_unlocked(
+        self, conn: psycopg.Connection, clock: Clock | None, why: str, asked: threading.Event | None = None
+    ) -> MeRead:
         """A live read stored under the epoch read BEFORE it (a send in between makes it stale at once)."""
         try:
             epoch = current_epoch(conn, self.scope.world)
         except psycopg.Error as e:
             self.shared.failed(e)
             return self._plain(clock, why)
-        return self._read_and_store(conn, clock, epoch, why)
+        return self._read_and_store(conn, clock, epoch, why, asked)
 
     def _plain(self, clock: Clock | None, why: str) -> MeRead:
         raw = without_secrets(self._read_me())

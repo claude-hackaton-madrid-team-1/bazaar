@@ -248,6 +248,15 @@ def test_a_pre_release_snapshot_table_is_replaced(database_url, schema):  # noqa
     assert columns == [("world",)]
 
 
+def test_a_slow_game_read_is_awaited_not_asked_twice(opener, monkeypatch):
+    monkeypatch.setattr(hd, "READ_DEADLINE_S", 0.3)
+    game = Game(delay=0.8)  # /me is slower than the database deadline
+    started = time.monotonic()
+    read = reader(opener, game).me(clock(tick=TICK))
+    took = time.monotonic() - started
+    assert (read.source, game.calls) == ("live", 1) and 0.7 < took < 1.5
+
+
 def test_two_writers_in_one_tick_never_move_the_row_backwards(opener):
     from bazaar_agent.holdings import parse_me, save
 

@@ -340,16 +340,18 @@ def cards(b: Backend, set_code: str | None = None, rarity: str | None = None, re
     from bazaar_agent import catalog_db
     from bazaar_agent.holdings import READ_DEADLINE_S
 
+    shared = b.holdings.shared  # taken here: the job runs on the worker and must not wait for Backend._build
+
     def from_db(conn: Any) -> list[dict[str, Any]]:
         if conn is None:
             return []
         try:
             return catalog_db.read_cards(conn, set_code, rarity, ref)
         except psycopg.Error as e:  # the catalog is public: the live read below still answers
-            b.holdings.shared.failed(e)
+            shared.failed(e)
             return []
 
-    ok, rows = b.holdings.shared.call(from_db, READ_DEADLINE_S)
+    ok, rows = shared.call(from_db, READ_DEADLINE_S)
     if ok and rows:
         return {"source": "db", **_cut(rows, 80)}
     now = b.clock().tick
