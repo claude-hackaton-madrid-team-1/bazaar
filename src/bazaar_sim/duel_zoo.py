@@ -143,7 +143,7 @@ def style_params(style: str, rng: random.Random) -> dict[str, float]:
         }
     if style == "one_shot":
         return {
-            "open": rng.uniform(0.05, 0.5),
+            "open": rng.uniform(0.2, 0.7),
             "shots": float(rng.choice((1, 2))),
             "gap": float(rng.randint(1, 3)),  # ticks between its two shots
             "listens": float(rng.random() < 0.5),  # it still accepts our offers after going silent

@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""Score duel policies on the rival zoo and the practice replay; print the tables as Markdown. Offline only.
+
+    uv run python scripts/duel_zoo.py                                   # v1 and the reference policies
+    uv run python scripts/duel_zoo.py --policy v1 --policy pkg.mod:fn --gate pkg.mod:fn --out report.md
+
+A policy is `v1` (bazaar_agent.agents.duelist.duel_move at today's GUARDRAILS.md values), a reference policy
+of `bazaar_sim.duel_zoo.REFERENCE_POLICIES` by name, or `module:attribute` for any callable with the
+`duel_move(duel, tick, started_tick)` signature. `--gate X` adds the night plan's go/no-go of X against v1.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib
+import statistics
+import sys
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
+
+from bazaar_sim import duel_gate, duel_replay, duel_zoo
+from bazaar_sim.duel_zoo import Policy, Record
+
+
+def resolve(name: str) -> Policy:
+    if name == "v1":
+        from bazaar_agent.agents.duelist import duel_move
+
+        return duel_move
+    if name in duel_zoo.REFERENCE_POLICIES:
+        return duel_zoo.REFERENCE_POLICIES[name]
+    module, _, attr = name.partition(":")
+    if not attr:
+        raise SystemExit(f"unknown policy {name!r}: v1, {', '.join(duel_zoo.REFERENCE_POLICIES)} or module:attr")
+    policy: Policy = getattr(importlib.import_module(module), attr)
+    return policy
+
+
+def table(header: Sequence[str], rows: Sequence[Sequence[Any]]) -> str:
+    def cell(v: Any) -> str:
+        if v is None:
+            return "–"
+        return f"{v:.3f}".rstrip("0").rstrip(".") if isinstance(v, float) else str(v)
+
+    lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
+    lines += ["| " + " | ".join(cell(v) for v in row) + " |" for row in rows]
+    return "\n".join(lines)
+
+
+def fit_section() -> str:
+    rows = [
+        (f.duel, f.status, f.role, f.label, f.n, "yes" if f.played else "no", f.open_gap, f.final_gap, f.pace,
+         f.cadence, f.shape, f.hold_share)
+        for f in duel_replay.fit()
+    ]  # fmt: skip
+    head = ("duel", "status", "role", "label", "msgs", "we played", "open gap", "final gap", "pace/tick", "cadence",
+            "shape k", "hold share")  # fmt: skip
+    return (
+        "## The 26 practice duels, labelled\n\nGaps and pace are fractions of OUR limit, positive inside our zone.\n\n"
+        + table(head, rows)
+    )
+
+
+def _q(xs: Sequence[float | int | None]) -> str:
+    vals = sorted(float(x) for x in xs if x is not None)
+    if not vals:
+        return "–"
+    return f"{vals[0]:.2f} / {statistics.median(vals):.2f} / {vals[-1]:.2f}"
+
+
+def realism_section(n: int) -> str:
+    v1 = resolve("v1")
+    silent: Policy = lambda duel, tick, started: duel_zoo.HOLD  # noqa: E731
+    rows = []
+    real = [f for f in duel_replay.fit() if f.status != "live"]
+    for style in ("linear", "convex", "one_shot", "tit_for_tat", "holdout"):
+        fs = [f for f in real if f.label == style]
+        rows.append((f"real {style}", len(fs), _q([f.n for f in fs]), _q([f.open_gap for f in fs]),
+                     _q([f.final_gap for f in fs]), _q([f.pace for f in fs])))  # fmt: skip
+        policy, against = (v1, "v1") if style in ("tit_for_tat", "holdout") else (silent, "silent")
+        grid = duel_zoo.scenarios((style,), n=n, decays=(0.06,))
+        zs = [duel_replay.features(duel_zoo.play(policy, sc)[1]) for sc in grid]
+        rows.append((f"zoo {style} vs {against}", len(zs), _q([f.n for f in zs]), _q([f.open_gap for f in zs]),
+                     _q([f.final_gap for f in zs]), _q([f.pace for f in zs])))  # fmt: skip
+    head = ("paths", "count", "msgs min/med/max", "open gap", "final gap", "pace/tick")
+    return "## Realism: real paths vs zoo paths (min / median / max)\n\n" + table(head, rows)
+
+
+def confusion_section(n: int) -> str:
+    silent: Policy = lambda duel, tick, started: duel_zoo.HOLD  # noqa: E731
+    labels = (*duel_zoo.STYLES, "undetermined")
+    rows = []
+    for name, policy in (("silent", silent), ("v1", resolve("v1"))):
+        for style in duel_zoo.STYLES:
+            grid = duel_zoo.scenarios((style,), n=n, decays=(0.06,))
+            got = [duel_replay.classify(duel_zoo.play(policy, sc)[1]) for sc in grid]
+            rows.append((f"{style} vs {name}", *(got.count(lab) for lab in labels)))
+    return "## The classifier on zoo paths (counts)\n\n" + table(("zoo rival", *labels), rows)
+
+
+def _summary_rows(records: Sequence[Record], keys: Sequence[str]) -> list[tuple[Any, ...]]:
+    out = []
+    for key, s in duel_zoo.by(records, *keys).items():
+        out.append((*key, s.n, s.deal_rate, s.mean_result, s.mean_score, s.mean_rounds, s.mean_messages,
+                    s.outside_limit))  # fmt: skip
+    return out
+
+
+METRICS = ("n", "deal rate", "mean P", "mean share×kept", "rounds/deal", "our msgs", "outside")
+
+
+def tournament_section(policies: dict[str, Policy], n: int) -> str:
+    parts = ["## Tournament on the zoo"]
+    price = duel_zoo.scenarios(duel_zoo.STYLES, n=n, decays=duel_zoo.DECAYS, duel_ticks=duel_zoo.DUEL_TICKS)
+    days = [
+        sc
+        for truth in ("signed", "worst")
+        for sc in duel_zoo.scenarios(duel_zoo.STYLES, n=n // 2, decays=(0.08,), two_issues=True, days_truth=truth)
+    ]
+    records = {name: duel_zoo.run(p, price) for name, p in policies.items()}
+    overall = []
+    for name, rs in records.items():
+        s = duel_zoo.summarize(rs)
+        overall.append((name, s.n, s.deal_rate, s.mean_result, s.mean_score, s.mean_rounds, s.mean_messages,
+                        s.outside_limit))  # fmt: skip
+    parts.append(
+        f"Price only: 7 styles × {n} × 2 roles × 3 decays × 2 lengths = {len(price)} duels per policy.\n\n"
+        + table(("policy", *METRICS), overall)
+    )
+    by_style = [(name, *row) for name, rs in records.items() for row in _summary_rows(rs, ("style",))]
+    parts.append("### By rival style\n\n" + table(("policy", "style", *METRICS), by_style))
+    by_decay = [(name, *row) for name, rs in records.items() for row in _summary_rows(rs, ("decay", "duel_ticks"))]
+    parts.append("### By decay and duel length\n\n" + table(("policy", "decay", "ticks", *METRICS), by_decay))
+    by_role = [(name, *row) for name, rs in records.items() for row in _summary_rows(rs, ("role",))]
+    parts.append("### By role\n\n" + table(("policy", "role", *METRICS), by_role))
+    day_rows = []
+    for name, p in policies.items():
+        for truth in ("signed", "worst"):
+            rs = duel_zoo.run(p, [sc for sc in days if sc.days_truth == truth])
+            s = duel_zoo.summarize(rs)
+            day_rows.append((name, truth, s.n, s.deal_rate, s.mean_result, s.mean_score, s.mean_rounds,
+                             s.mean_messages, s.outside_limit, s.errors))  # fmt: skip
+    parts.append(
+        f"### Two-issue sessions (decay 0.08, {len(days) // 2} duels per truth)\n\n"
+        "Our days valued `signed` (weight × days, the simulator) or `worst` (−|weight| × days, PR #60).\n\n"
+        + table(("policy", "days truth", *METRICS, "errors"), day_rows)
+    )
+    return "\n\n".join(parts)
+
+
+def replay_section(policies: dict[str, Policy]) -> str:
+    rows: dict[int, list[Any]] = {}
+    totals = []
+    for name, p in policies.items():
+        tot = {}
+        for cf in ("conservative", "consistent"):
+            out = duel_replay.replay_all(p, counterfactual=cf)
+            tot[cf] = sum(r.result for r in out)
+            if cf == "conservative":
+                for r in out:
+                    rows.setdefault(r.duel, [r.duel, r.role, r.oracle]).append(
+                        f"{r.result:g} ({r.record.rounds}r)" if r.record.deal else "0"
+                    )
+        totals.append((name, round(tot["conservative"], 2), round(tot["consistent"], 2)))
+    head = ("duel", "role", "oracle P", *policies)
+    oracle = sum(r[2] for r in rows.values())
+    return (
+        "## Replay on the 12 unanswered practice duels\n\n"
+        f"Per duel, conservative counterfactual: P after decay (rounds). The oracle (best rival offer, accepted at "
+        f"once) totals {oracle:g} P; the real result was 0 P on all twelve.\n\n"
+        + table(head, list(rows.values()))
+        + "\n\n"
+        + table(("policy", "conservative P", "consistent P"), totals)
+    )
+
+
+def gate_section(name: str, candidate: Policy, n: int) -> str:
+    gate = duel_gate.go_no_go(candidate, resolve("v1"), n=n)
+    rows = [(c.name, c.value, c.threshold, "pass" if c.passed else "FAIL", c.detail) for c in gate.checks]
+    verdict = "GO" if gate.go else "NO-GO"
+    return f"## Go/no-go: {name} vs v1 → {verdict}\n\n" + table(("check", "value", "threshold", "", "detail"), rows)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--policy", action="append", help="v1, a reference policy, or module:attr (repeatable)")
+    ap.add_argument("--gate", action="append", default=[], help="a policy to put through the go/no-go vs v1")
+    ap.add_argument("--n", type=int, default=200, help="scenarios per style × role × decay × length")
+    ap.add_argument("--out", type=Path, help="write the Markdown here instead of stdout")
+    args = ap.parse_args(argv)
+    names = args.policy or ["v1", *duel_zoo.REFERENCE_POLICIES]
+    policies = {name: resolve(name) for name in names}
+    sections = [
+        fit_section(),
+        realism_section(args.n),
+        confusion_section(min(args.n, 100)),
+        tournament_section(policies, args.n),
+        replay_section(policies),
+        *(gate_section(g, resolve(g), args.n) for g in args.gate),
+    ]
+    text = "\n\n".join(sections) + "\n"
+    if args.out:
+        args.out.write_text(text)
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
