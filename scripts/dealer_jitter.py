@@ -108,6 +108,7 @@ def main() -> None:
     ap.add_argument("--replays", type=int, default=10, help="jitter draws per real thread replayed")
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--json", type=Path)
+    ap.add_argument("--cells", action="store_true", help="also write every cell to --json (~10 MB)")
     ap.add_argument("--md", type=Path)
     args = ap.parse_args()
 
@@ -153,7 +154,8 @@ def main() -> None:
         for src, c in cells
     ]  # fmt: skip
     if args.json:
-        args.json.write_text(json.dumps({"frontier": frontier, "cells": detail}, indent=1) + "\n")
+        doc = {"frontier": frontier, **({"cells": detail} if args.cells else {})}
+        args.json.write_text(json.dumps(doc, indent=1) + "\n")
     lines = render(frontier)
     if args.md:
         args.md.write_text("\n".join(lines) + "\n")
