@@ -101,27 +101,23 @@ def test_a_buy_with_no_price_cap_for_its_rarity_is_refused():
 VENUE_KINDS = ("venue_open", "venue_close", "venue_fee", "venue_announce", "broker_match")
 
 
-def test_the_committed_file_keeps_our_venue_off_and_holds_no_bond_reserve():
-    """Team decision Sat 06:08: #71 ships with allow_venue_open = false. While it is false NO reserve is held:
-    the floor every writer sees is `cash_floor` alone (guardrails.effective_cash_floor zeroes the reserve)."""
+def test_the_committed_file_opens_our_venue_now_and_holds_the_bond_reserve_until_it_is_open():
+    """Team decision Sat 3 Oct, game hour 3.1: allow_venue_open = true, opening from game hour 3.0. Until our venue
+    is open (the starter stall does not count) every purchase keeps `cash_floor` + `venue_bond_reserve` in cash
+    (Omar's 270 for a market, on top of the 100 floor); once it is open the floor is `cash_floor` alone."""
     rules = REAL.rules
-    assert rules.allow_venue_open is False
-    assert (rules.cash_floor, rules.venue_bond_reserve, rules.venue_open_after_game_hours) == (
-        270,
-        270,
-        6.5,
-    )  # Omar: keep 270 for a venue
-    for has_venue in (False, True):
-        c = ctx(cash=400, has_venue=has_venue)
-        assert gr.effective_cash_floor(rules, c) == rules.cash_floor
-        assert gr.floor_text(rules, c) == f"cash_floor {rules.cash_floor}"
-    # a buy that leaves cash_floor + 1 is allowed: it would be refused if the 270 reserve were applied on top
-    leaves_271 = gr.check(gr.Action("buy", "LAV-09", "rare", 60), ctx(cash=331), rules)
-    assert leaves_271.allowed, leaves_271
-    # Omar's rule (Sat 3 Oct): a buy that would leave less than the 270 needed to open a venue is refused
-    leaves_269 = gr.check(gr.Action("buy", "LAV-09", "rare", 60), ctx(cash=329), rules)
-    assert not leaves_269.allowed and "cash_floor 270" in str(leaves_269), leaves_269
-    assert gr.Guardrails().allow_venue_open is False  # the model's default stays off too
+    assert rules.allow_venue_open is True
+    assert (rules.cash_floor, rules.venue_bond_reserve, rules.venue_open_after_game_hours) == (100, 270, 3.0)
+    assert gr.effective_cash_floor(rules, ctx(cash=400)) == 370
+    assert gr.floor_text(rules, ctx(cash=400)) == "cash_floor 100 + venue_bond_reserve 270"
+    assert gr.effective_cash_floor(rules, ctx(cash=400, has_venue=True)) == rules.cash_floor
+    # a buy that leaves 369 is refused before the venue opens and allowed after
+    buy = gr.Action("buy", "LAV-09", "rare", 31)
+    assert not gr.check(buy, ctx(cash=400), rules).allowed
+    assert gr.check(buy, ctx(cash=400, has_venue=True), rules).allowed
+    # live cash at the decision was 389: the opening (bond 250 + fee 20) fits above the 100 floor
+    assert gr.check(gr.Action("venue_open"), ctx(cash=389, t_hours=3.0), rules).allowed
+    assert gr.Guardrails().allow_venue_open is False  # the model's default stays off: only the file turns it on
 
 
 def test_allow_venue_open_false_refuses_every_venue_write_but_close():
