@@ -1279,6 +1279,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#168](../../pull/168) | docs: transcript of the 2026-10-03 morning voice memo (+ knowledge) | `docs/transcript-2026-10-03-morning` |
 | [#167](../../pull/167) | docs(night): night-shift summary, index of every workstream, sanitised logs | `docs/night-summary` |
 | [#166](../../pull/166) | chore: dealer_final_lift = 0.15 (Omar's call at 08:20, DO NOT MERGE without it; stacked on #158) | `ogarciarevett/n14a-lift-015` |
 | [#165](../../pull/165) | fix(duels): D1 follow-up: days-latch pre-flip hardening and duel-loop resilience (after 23:00) | `ogarciarevett/d1-duel-followups` |
@@ -1298,6 +1299,5 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | [#140](../../pull/140) | fix(taker): adopt or close dealer threads orphaned by a restart, book their deals (take over #114, B17) | `takeover/b17-restart-orphans` |
 | [#138](../../pull/138) | feat(rivals): B4 rival profiles + read-only opportunity scanner, accept_bids off — takeover of #98 | `ogarciarevett/takeover-98-rival-scanner` |
 | [#137](../../pull/137) | feat(trade-desk): W4 rival affinity map, per-counterparty cap (off), dry-run trade plan — takeover of #79 | `ogarciarevett/takeover-79-trade-desk` |
-| [#135](../../pull/135) | night(B29): pitch kit for Sunday: story, Q&A, demo, charts, decision log (fact-checked) | `night/b29-pitch-kit` |
 
 <!-- BAZAAR:ACTIVITY:END -->
