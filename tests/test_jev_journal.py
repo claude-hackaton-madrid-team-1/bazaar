@@ -268,3 +268,26 @@ def test_one_duel_that_fails_does_not_cost_the_others_their_move(duel_cli, monke
     result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
     assert result.exit_code == 0, result.output
     assert "duel 94: skipped this tick (ValueError)" in result.output and client.sent[0][:2] == ("say", 95)
+
+
+def test_under_v2_a_ledger_outage_holds_every_duel_instead_of_killing_the_tick(duel_cli, monkeypatch):
+    """b5 (rehearsal with #62): the planner's slot read and the pre-booking fail closed."""
+    from dataclasses import replace
+
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent.guardrails import load_guardrails
+
+    cli, client, asked, tmp_path = duel_cli
+    client.payload = [{**LIVE, "deadline_tick": 136, "rival_offer": {"id": 702, "price": 110, "tick": 133, "days": 0}}]
+    loaded = load_guardrails()
+    monkeypatch.setattr(
+        cli, "_rules", lambda: replace(loaded, rules=loaded.rules.model_copy(update={"duel_policy": "v2"}))
+    )
+
+    def down(self, *a):
+        raise ConnectionError("ledger down")
+
+    monkeypatch.setattr(gr.Ledger, "accepts_in_tick", down)
+    result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
+    assert result.exit_code == 0, result.output
+    assert "ledger unreadable (ConnectionError)" in result.output and client.sent == []
