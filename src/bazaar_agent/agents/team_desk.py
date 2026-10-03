@@ -732,7 +732,9 @@ class TeamDesk:
         """Offers of ours whose end we have not seen yet (a closed thread, an unclear cancel): read their thread
         again, give the spend back once one reads dead, keep it if it settled or after `CHECK_TICKS`."""
         for oid, (tid, offer, since) in list(self.to_check.items()):
-            payload = self._payloads.get(tid) or self._payload({"id": tid})
+            if tid not in self._payloads:  # one read per thread per tick, a refused one included (no retry)
+                self._payloads[tid] = self._payload({"id": tid})
+            payload = self._payloads[tid]
             status = offer_status(payload, oid, v.us)
             if status in DEAD:
                 self._refund(v, offer)

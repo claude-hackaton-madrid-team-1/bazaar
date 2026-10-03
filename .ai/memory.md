@@ -555,3 +555,10 @@ symptom: the sim smoke's `bazaar swaps --json` step failed: stdout started with 
 ... Postgres unavailable` → root cause: the CLI's `logging.basicConfig(stream=sys.stdout)` (stdout because
 Railway files stderr as errors) → fix: `cli.log_stream()`: stdout only when RAILWAY_ENVIRONMENT is set, as the
 target banner already does; stderr elsewhere, so every `--json` command stays pure JSON on a laptop.
+
+### [2026-10-03] gotcha — closing a team thread cancels only OPEN offers; an accepted one still settles (N17)
+A rival can accept our swap offer and close the thread in the same tick: the deal settles, the thread reads
+`closed`. So the team desk never refunds a spend because a thread ended or a close answered 200: it books the
+cash we add when the offer is POSTED and gives it back only when a read shows that offer `cancelled`,
+`expired` or `failed` (a cancel's own answer, or the thread re-read for at most 10 ticks); otherwise it stays
+booked (over-count, fail safe). Found by security-auditor rounds 2-5 on #123 against the in-process simulator.

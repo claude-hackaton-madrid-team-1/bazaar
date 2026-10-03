@@ -1048,14 +1048,14 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — closing a team thread cancels only OPEN offers; an accepted one still settles (N17)
+- [2026-10-03] build-error — `--json` stdout began with a WARNING line after #105 (holdings)
+- [2026-10-03] gotcha — in a team thread, a rival's "Deal." is not a reply to concede to
+- [2026-10-03] build-error — a team swap gave away our only rare (found in the simulator, N17)
+- [2026-10-03] gotcha — the trade desk's 25 % plan share rule plans no swaps for a single thread
 - [2026-10-03] build-error — B4 accept_bids (#98): two money bugs its reviews caught before the takeover
 - [2026-10-03] build-error — a ledger outage made the dealer bid her ask instead of holding (#79 review)
 - [2026-10-03] gotcha — CliRunner's `.output` includes stderr: parse `.stdout` in JSON CLI tests
-- [2026-10-03] build-error — W4 trade desk (#79): what its reviews caught before the takeover
-- [2026-10-03] finding — a new page needs no restart; the risk is selling its cards (N14b)
-- [2026-10-03] gotcha — `scripts/sim_smoke.py` on a private port: patch PORT, SIM, GUARD and LOCAL_SIM_URL
-- [2026-10-03] gotcha — `GET /api/threads/{id}` lists messages in arrival order, not by id
-- [2026-10-03] gotcha — BAZAAR_SIM=local talks to WHOEVER holds 127.0.0.1:8765
 
 <!-- BAZAAR:STATUS:END -->
 
