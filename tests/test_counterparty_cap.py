@@ -372,15 +372,16 @@ def test_a_live_swap_posts_its_structured_offer_to_one_team_and_books_its_cash()
     assert client.sent[-1][1] == {"cards": ["LAV-08"], "cash": 3} and ledger.spent_since(0) == 14
 
 
-@pytest.mark.usefixtures("cli_env")
-def test_the_cli_proposes_a_swap_dry_run():
+def test_the_cli_proposes_a_swap_dry_run(cli_env):  # noqa: F811
     from typer.testing import CliRunner
 
     from bazaar_agent import cli
+    from tests.runtime_fakes import with_spare
 
+    with_spare(cli_env)
     out = CliRunner().invoke(cli.app, ["sell", "swap", "LAT-03", "--for", "LAV-08", "--to", "t05", "--give-cash", "5"])
     assert out.exit_code == 0, out.output
-    assert "would swap asset 4 (LAT-03) + 5 P for any LAV-08 on rastro to t05" in out.output.replace("\n", " ")
+    assert "would swap asset 41 (LAT-03) + 5 P for any LAV-08 on rastro to t05" in out.output.replace("\n", " ")
     bad = CliRunner().invoke(cli.app, ["sell", "swap", "LAT-03", "--for", "LAV-08", "--to", "m77"])
     assert bad.exit_code == 1 and "--to takes a team id" in bad.output
 
@@ -422,7 +423,9 @@ def test_a_live_hand_post_is_booked_hands_off(monkeypatch, tmp_path, cli_env):  
 
     from bazaar_agent import cli
     from bazaar_agent.guardrails import Ledger
+    from tests.runtime_fakes import with_spare
 
+    with_spare(cli_env)
     out = CliRunner().invoke(cli.app, ["sell", "list", "LAT-03", "--price", "5", "--live"])
     assert out.exit_code == 0, out.output
     ledger = Ledger(tmp_path / "ledger.jsonl")
