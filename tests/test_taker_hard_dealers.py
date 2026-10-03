@@ -72,11 +72,11 @@ def test_the_lift_opens_chato_on_the_patience_play_and_takes_his_final_above_the
     t, _, ledger = taker(tmp_path, team, lift=0.15)
     t.on_tick(clock())
     assert ("open_thread", "chato", {"buy": {"card": "LAV-08"}}) in team.sent
-    assert [s for s in team.sent if s[0] == "say"] == [("say", 5000, 20)]  # 26 - (5 + 2 - 1): the final comes first
+    assert [s for s in team.sent if s[0] == "say"] == [("say", 5000, 18)]  # 9 distinct bids: the final comes first
     (row,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_open"]
-    assert row["inputs"]["final_max"] == 29 and row["inputs"]["plan"] == "20→26 step 1"
+    assert row["inputs"]["final_max"] == 29 and row["inputs"]["plan"] == "18→26 step 1"
     assert row["inputs"]["changed_by"] == [
-        "default patience for chato (5 bids): ladder 26→26 step 1 → 20→26 step 1",
+        "default patience for chato (5 bids): ladder 26→26 step 1 → 18→26 step 1",
         "dealer_final_lift 0.15: take a final up to 29 (our bids stay at or under 26)",
     ]
     team.thread_payloads[5000] = {"id": 5000, "status": "open", "messages": [], "standing_offers": [final(801, 29)]}
@@ -117,7 +117,7 @@ def test_a_learned_policy_and_the_recalled_lessons_are_logged_on_the_open_and_ev
     assert row["inputs"]["learned"] == [policy.text()]
     assert row["inputs"]["recalled"] == ["every chato uncommon fill is 28-32, above our top bid 24"]
     assert asked == [("open a thread with chato to buy LAV-08 (uncommon)", ("chato",), TICK)]
-    assert row["inputs"]["plan"] == "19→26 step 1"  # the policy's patience (6) + 2 bids before the top
+    assert row["inputs"]["plan"] == "18→26 step 1"  # the policy's patience (6) + 3 bids before the top
     (bid,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_bid"]
     assert bid["inputs"]["changed_by"] == row["inputs"]["changed_by"]
 

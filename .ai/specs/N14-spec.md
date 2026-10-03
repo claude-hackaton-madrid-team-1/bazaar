@@ -25,7 +25,7 @@ Covers criterion 1. This slice sets prices only: the words belong to N16 and the
   rarity cap × (1 + lift). The accepted price never exceeds our value minus `min_buy_surplus`, the lift
   applies to cards only (never packs), and our own bids still never pass the cap. With the lift on, the
   patience play starts low enough that the dealer names its final before our bids run out: step 1, about
-  patience + 2 distinct bids, and never below a bid the dealer ignored or 40 % of its opening ask.
+  patience + 3 distinct bids (at least 9), and never below a bid the dealer ignored or 40 % of its opening ask.
   Evidence: Chato's uncommon finals were 28, 29 and 29 for t03 (start 13, step 1).
 - [ ] c. L3-L5 readiness: every active dealer we have unlocked is planned the same way, with no hard-coded
   dealer. An unknown dealer gets neutral words and the default patience. Trickster bait in a dealer thread

@@ -558,6 +558,23 @@ def buy_move(m: Market, card: Card, params: StrategyParams, rules: Guardrails) -
     return dealer_buy(m, case, quote, params, rules) if quote else team_buy(m, case, params, rules)
 
 
+def ladder_alternates(m: Market, card: Card, primary: Move, params: StrategyParams, rules: Guardrails) -> list[Move]:
+    """level_ladder (N14a): with `dealer_final_lift` on, the other dealers that sell this card too, pricier ones
+    included. The ladder scores each dealer level's best three deals and a missing one is zero, so a pricier,
+    higher-level dealer is worth a thread on another card. Their own fills and the lifted cap decide whether
+    each one is a buy. With the lift off: none, as today."""
+    if rules.dealer_final_lift <= 0 or primary.source not in {q.dealer for q in m.quotes}:
+        return []
+    case = buy_case(m, card, params)
+    fits = [q for q in m.quotes if q.item == card.rarity and (q.sets is None or card.set_code in q.sets)]
+    out = []
+    for q in sorted(fits, key=lambda q: (q.list_price, q.dealer)):
+        alt = dealer_buy(m, case, q, params, rules) if q.dealer != primary.source else None
+        if isinstance(alt, Move):
+            out.append(replace(alt, strategy=_strategies(alt.strategy, "level_ladder")))
+    return out
+
+
 def buy_moves(m: Market, params: StrategyParams, rules: Guardrails) -> tuple[list[Move], list[str]]:
     moves: list[Move] = []
     skipped: list[str] = []
@@ -567,6 +584,7 @@ def buy_moves(m: Market, params: StrategyParams, rules: Guardrails) -> tuple[lis
         result = buy_move(m, card, params, rules)
         if isinstance(result, Move):
             moves.append(result)
+            moves.extend(ladder_alternates(m, card, result, params, rules))
         else:
             skipped.append(result)
     return moves, skipped
