@@ -278,12 +278,13 @@ def test_the_runtime_reads_our_volume_only_when_the_cap_is_on(tmp_path):
     from bazaar_agent.runtime import actions
     from tests.runtime_fakes import backend
 
-    assert actions._base(backend(tmp_path), clock()).ctx.trades is None
+    read_at = 0.0  # when the clock was read (#105): the holdings snapshot's freshness, not used by these fakes
+    assert actions._base(backend(tmp_path), clock(), read_at).ctx.trades is None
     b = backend(tmp_path / "on", rules=CAP)
     reads = []
     b.history = lambda: reads.append(1) or []  # type: ignore[method-assign]  # the whole feed (DB first)
-    on = actions._base(b, clock())
-    actions._base(b, clock())  # the same tick: the feed is not read again
+    on = actions._base(b, clock(), read_at)
+    actions._base(b, clock(), read_at)  # the same tick: the feed is not read again
     assert on.ctx.trades == TradeBook({}, {}, 0) and reads == [1]
 
 
