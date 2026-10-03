@@ -31,7 +31,8 @@ SERVICES = frozenset({"phoenix", "bazaar-duels", "bazaar-taker", "bazaar-maker",
 VOLUMES = frozenset({"phoenix-data", "bazaar-duels-data", "bazaar-taker-data", "bazaar-maker-data", "bazaar-mcp-data"})
 LIVE_AGENTS = frozenset({"bazaar-taker", "bazaar-maker"})
 LIVE_IN_COMMAND = re.compile(r"--live\b|BAZAAR_LIVE")
-PHOENIX_IMAGE = "arizephoenix/phoenix:"
+PHOENIX_IMAGE = "arizephoenix/phoenix:version-20.19.0"  # the exact pin (docker-compose.yml): never a moving tag
+BUILD_COMMAND = "uv sync --locked --no-dev"  # a build runs no game command
 # The exact start commands: a wrapper script could add `--live` behind a clean-looking command, and
 # live is decided by BAZAAR_LIVE alone. Changing one is a reviewed edit of this map.
 START_COMMANDS = {
@@ -85,13 +86,15 @@ def test_no_command_turns_a_service_live(services: dict[str, dict[str, Any]]) ->
         assert ("--play" in " ".join(map(str, commands))) == (name == "bazaar-duels"), (name, commands)
     starts = {name: (s.get("deploy") or {}).get("startCommand") for name, s in services.items()}
     assert starts == START_COMMANDS
+    builds = {name: (s.get("build") or {}).get("buildCommand") for name, s in services.items()}
+    assert builds == {name: None if name == "phoenix" else BUILD_COMMAND for name in services}, builds
 
 
 def test_every_service_builds_our_repo_on_main_or_the_pinned_phoenix(services: dict[str, dict[str, Any]]) -> None:
     for name, s in services.items():
         source = s.get("source") or {}
         if name == "phoenix":
-            assert source.get("type") == "image" and str(source.get("image")).startswith(PHOENIX_IMAGE), source
+            assert source == {"type": "image", "image": PHOENIX_IMAGE}, source
         else:
             assert (source.get("type"), source.get("repo"), source.get("branch")) == ("github", REPO, "main"), (
                 name,
