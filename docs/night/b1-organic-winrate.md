@@ -50,29 +50,30 @@ With 15 points on organic, a single genuine pair between two other teams on our 
 
 It uses the quote rule only, so it never sends a refusable match, and it decides in under 10 ms per read (0.04–0.09 s per 16-tick book).
 
-**Results** (W1a's bench, quote rule, 300 holdout books, seeds 1000–1299, `scripts/b1_bench_tournament.py`). "Cautious" = `loss_curve="zero"` (the default), "aggressive" = `"linear"`.
+**Results** (W1a's bench, quote rule, 300 holdout books, seeds 1000–1299, `scripts/b1_bench_tournament.py`, after the code-review fixes; the policy is told the run's first tick through `begin()`, as `bench.started` gives it). "Cautious" = `loss_curve="zero"` (the default), "aggressive" = `"linear"`.
 
 | cell (books drawn from) | mode | win / tie / loss vs stall | points, loss linear | points, loss = 0 |
 |---|---|---|---|---|
-| normal (prior right) | cautious | 15.0 / 78.3 / 6.7 % | 0.571 | **0.542** |
-| normal (prior right) | aggressive | 33.7 / 21.0 / 45.3 % | 0.637 | 0.442 |
-| hard (prior right) | cautious | 15.7 / 77.0 / 7.3 % | 0.575 | **0.542** |
-| hard (prior right) | aggressive | 35.3 / 14.0 / 50.7 % | 0.643 | 0.423 |
-| normal, shades 1.5× (prior wrong) | cautious | 12.0 / 83.7 / 4.3 % | 0.556 | 0.538 |
-| normal, shades 2× (prior wrong) | cautious | 8.7 / 84.3 / 7.0 % | 0.535 | 0.508 |
-| normal, shades 2× (prior wrong) | aggressive | 17.3 / 55.0 / 27.7 % | 0.558 | 0.448 |
-| normal, relax 0.2–0.5 (prior wrong) | cautious | 13.7 / 79.0 / 7.3 % | 0.562 | 0.532 |
-| normal, relax 0.2–0.5 (prior wrong) | aggressive | 31.0 / 24.3 / 44.7 % | 0.621 | 0.432 |
-| normal, all at tick 0 (prior wrong) | cautious | 31.7 / 59.3 / 9.0 % | 0.657 | 0.613 |
-| hard, shades 2× (prior wrong) | cautious | 8.7 / 85.3 / 6.0 % | 0.540 | 0.513 |
-| hard, shades 2× (prior wrong) | aggressive | 20.7 / 46.3 / 33.0 % | 0.573 | 0.438 |
+| normal (prior right) | cautious | 16.0 / 77.3 / 6.7 % | 0.575 | **0.547** |
+| normal (prior right) | aggressive | 32.0 / 21.3 / 46.7 % | 0.629 | 0.427 |
+| hard (prior right) | cautious | 16.7 / 74.7 / 8.7 % | 0.579 | **0.540** |
+| hard (prior right) | aggressive | 37.0 / 11.3 / 51.7 % | 0.650 | 0.427 |
+| normal, shades 1.5× (prior wrong) | cautious | 17.3 / 73.7 / 9.0 % | 0.578 | 0.542 |
+| normal, shades 2× (prior wrong) | cautious | 14.7 / 72.3 / 13.0 % | 0.558 | 0.508 |
+| normal, shades 2× (prior wrong) | aggressive | 25.7 / 30.0 / 44.3 % | 0.579 | 0.407 |
+| normal, relax 0.2–0.5 (prior wrong) | cautious | 15.7 / 75.7 / 8.7 % | 0.572 | 0.535 |
+| normal, relax 0.2–0.5 (prior wrong) | aggressive | 33.0 / 21.0 / 46.0 % | 0.631 | 0.435 |
+| normal, all at tick 0 (prior wrong) | cautious | 31.7 / 59.0 / 9.3 % | 0.656 | 0.612 |
+| normal, all at tick 0 (prior wrong) | aggressive | 40.0 / 34.3 / 25.7 % | 0.694 | 0.572 |
+| hard, shades 2× (prior wrong) | cautious | 16.3 / 70.7 / 13.0 % | 0.571 | 0.517 |
+| hard, shades 2× (prior wrong) | aggressive | 31.7 / 18.7 / 49.7 % | 0.608 | 0.410 |
 
 The stall scores 0.500 in every row. Points are against two stall-level rivals.
 
 Reading it:
-- **Cautious** gains +0.042 points per session (0.542 vs 0.500 with losses at 0) when its prior is right. Where the prior is wrong it gains +0.008 to +0.038, rising to +0.113 if every trader is in the book at tick 0. It loses to the stall on 4–9 % of sessions.
-- **Aggressive** wins more often (17–40 %) but loses 26–51 % of sessions, so it scores below the stall (0.42–0.45) whenever a loss scores 0, even with the right prior. It only pays if a loss below the stall still scores linearly. That segment of the curve has the least support (RULES.md gives two anchors, both at or above the stall), so **aggressive is never recommended** while the curve is unknown.
-- For comparison, on the same bench the oracle scores 0.79 (normal) and 0.84 (hard) points, the stall 0.50, and W1b's edge policy 0.53–0.54. Cautious captures 12–24 % of the oracle's headroom over the stall.
+- **Cautious** gains +0.040 to +0.047 points per session (loss = 0 reading) when its prior is right. Where the prior is wrong it gains +0.008 to +0.042, rising to +0.112 if every trader is in the book at tick 0. It loses to the stall on 7–13 % of sessions.
+- **Aggressive** wins more often (26–40 %) but loses 26–52 % of sessions. Whenever a loss scores 0 it falls below the stall (0.41–0.44), even with the right prior; only the tick-0 cell escapes. It only pays if a loss below the stall still scores linearly. That segment of the curve has the least support (RULES.md gives two anchors, both at or above the stall), so **aggressive is never recommended** while the curve is unknown.
+- For comparison, on the same bench the oracle scores 0.79 (normal) and 0.84 (hard) points, the stall 0.50, and W1b's edge policy 0.53–0.54. Cautious captures 12–26 % of the oracle's headroom over the stall.
 - This resolves the tension with W1a's proposed "never below the stall" gate. The objective is expected points. "Never below" is the right safety rule only if below-stall scores 0 or the field is strong, and the cautious mode is built for exactly that case.
 
 ## Go / no-go
@@ -85,6 +86,7 @@ Reading it:
 - The policy's prior is a copy of W1a's generator, the same model it is scored on. Where the model is wrong the edge shrinks or vanishes (rows "prior wrong"). The real Market Test may differ in ways no row covers.
 - The organic formula, its weight and the normalisation are unverified readings of one quoted string.
 - A refused match is noticed when either trader reappears, or when the broker calls `policy.refused()`.
+- The broker must call `policy.begin(run, tick)` on `bench.started`. Without it the policy guesses the start from the first offers it sees, which is late in about 38 % of sessions (nobody arrives on tick 0). Traders the prior cannot explain are kept with their quotes replayed and counted in `policy.fallbacks`.
 
 ## What Marius must decide
 
