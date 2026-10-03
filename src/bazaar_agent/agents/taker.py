@@ -696,8 +696,8 @@ class Taker:
         gets the same answer without a call or a slot; a reused answer carries no digest (one call, one outcome)."""
         tick, key = run.snap.clock.tick, state_key(OFFER_QUESTION, state)
         cached = self.jev_cache.get(key, tick)
-        if cached is not None:
-            return replace(cached, digest=None, reason=cached.reason or "cached")
+        if cached is not None:  # marked, so a reused answer never reads as a fresh call in the decision log
+            return replace(cached, digest=None, reason=f"cached ({cached.reason})" if cached.reason else "cached")
         if run.jev_calls >= self.config.max_jev_calls_per_tick or run.window.left() < self.config.jev_min_budget_s:
             return JevAdvice("undecided", 0.0, reason="no tick budget for jev")
         run.jev_calls += 1
@@ -1039,10 +1039,10 @@ class Taker:
         """This tick's move per conversation. `held` (kill switch on): only threads that closed are wrapped
         up; an open one is left as it is, and the tick does not count toward its tick limit."""
         out = []
-        reads = {dealer: partial(self.team.thread, conv.thread_id) for dealer, conv in self.convs.items()}
-        threads = read_together(reads, self.rules.parallel_reads)  # every conversation at once, then in order
         for dealer, conv in list(self.convs.items()):
-            thread = threads[dealer]
+            thread = self._thread_of(run, conv)  # keyed: one at a time, like every keyed read
+            if thread is None:  # refused: this conversation waits a tick, the others go on
+                continue
             self._keep(thread, run.snap, conv)
             if held and str(thread.get("status") or "open") == "open":
                 continue
@@ -1201,6 +1201,18 @@ class Taker:
             c = p.candidate
             return board_gate(c.offer, p.ref, c.total, c.fee, p.rarity)
         return Gate("board", p.offer_id, "block", ("an accept with no offer to inspect",))
+
+    def _thread_of(self, run: _TickRun, conv: Conversation) -> dict[str, Any] | None:
+        """One dealer thread; a refusal skips that conversation for this tick only (no tick counted, no move)."""
+        try:
+            thread: dict[str, Any] = self.team.thread(conv.thread_id)
+            return thread
+        except BazaarError as e:
+            self.log(
+                f"tick {run.snap.clock.tick} taker: thread {conv.thread_id} with {conv.dealer} refused {e.code}; "
+                "it waits a tick"
+            )
+            return None
 
     def _jev_early(self, run: _TickRun, dm: DeskMove) -> DeskMove:
         """Jev may accept a dealer's ask early (still inside our max); it never lifts the limit."""

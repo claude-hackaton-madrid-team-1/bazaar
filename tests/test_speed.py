@@ -238,3 +238,126 @@ def test_parallel_reads_see_the_callers_context():
     current = contextvars.ContextVar("current", default="none")
     current.set("tick 100 span")
     assert read_together({"a": current.get, "b": current.get}, True) == {"a": "tick 100 span", "b": "tick 100 span"}
+
+
+class FakeHoldings:
+    """The shared /me snapshot (#105): answers from 'Postgres', never calls /me itself."""
+
+    def __init__(self, me):
+        self.me_payload, self.calls, self.catalogs = me, 0, []
+
+    def me(self, clock, *, clock_read_at=None):
+        self.calls += 1
+        return SimpleNamespace(me=self.me_payload, source="db")
+
+    def observe_catalog(self, tick, catalog):
+        self.catalogs.append(tick)
+
+
+def test_a_parallel_snapshot_with_holdings_reads_me_once_from_the_snapshot():
+    for parallel in (False, True):
+        team, public = FakeTeam(), FakePublic()
+        holdings = FakeHoldings(team.me())
+        team.reads.clear()
+        snap = read_snapshot(team, public, MarketFeed(public.feed_window), clock(), holdings, parallel=parallel)
+        assert holdings.calls == 1 and "me" not in team.reads  # the snapshot answered: no live /me
+        assert snap.holdings is not None and snap.me == holdings.me_payload and holdings.catalogs == [TICK]
+
+
+def test_a_refused_dealer_thread_skips_only_that_conversation(tmp_path):
+    from bazaar_agent.agents.dealer import BidPlan, Negotiation
+    from bazaar_agent.agents.desk import Conversation
+
+    class OneThreadRefused(FakeTeam):
+        def thread(self, tid):
+            if tid == 51:
+                raise BazaarError("not_found", "no such thread", 404)
+            return super().thread(tid)
+
+    for name, speed in (("off", SPEED_OFF), ("on", SPEED_ON)):
+        team = OneThreadRefused()
+        lines: list[str] = []
+        t = Taker(
+            team,
+            FakePublic(),
+            live=True,
+            log=lines.append,
+            now=lambda: 1000.0,
+            sleep=lambda s: None,
+            config=TakerConfig(max_dealer_threads=0),
+            **parts(tmp_path / name, **speed),
+        )
+        for dealer, tid in (("abuela", 50), ("chato", 51)):
+            t.convs[dealer] = Conversation(
+                dealer, "LAV-08", "uncommon", 52, "r", Negotiation(BidPlan(18, 1, 22)), tid, TICK
+            )
+        t.on_tick(clock(tick=TICK + 1))
+        assert (t.convs["abuela"].ticks, t.convs["chato"].ticks) == (1, 0)  # abuela moved on, chato waits a tick
+        assert ("say", 50, 18) in team.sent and not [s for s in team.sent if s[1] == 51]
+        assert any("thread 51 with chato refused not_found; it waits a tick" in line for line in lines)
+
+
+def test_a_cached_answer_is_served_on_a_tick_with_no_time_to_ask_jev(tmp_path):
+    """The one declared behaviour change: the same state Jev answered a tick ago gets that answer even when this
+    tick has too little time left to ask (without the cache: `undecided`, no budget). On a dealer thread a cached
+    yes may close the deal early; it is still inside our max and the guardrails still run before the send."""
+    from bazaar_agent.agents.runtime import TickWindow
+
+    state = {"offer": {"item": "LAV-08", "total_cost": 12}, "cash": 300, "tick": TICK}
+    answers = {}
+    for name, speed in (("off", SPEED_OFF), ("on", SPEED_ON)):
+        jev = CountingJev()
+        t = run_taker(tmp_path / name, speed, 0, live=False, jev=jev).taker
+        with_time = SimpleNamespace(
+            snap=SimpleNamespace(clock=clock(tick=TICK)), jev_calls=0, window=TickWindow(TICK, 1010.0, lambda: 1000.0)
+        )
+        no_time = SimpleNamespace(
+            snap=SimpleNamespace(clock=clock(tick=TICK + 1)),
+            jev_calls=0,
+            window=TickWindow(TICK + 1, 1002.0, lambda: 1000.0),
+        )  # 2 s < jev_min_budget_s
+        first = t._ask_jev(with_time, state)
+        second = t._ask_jev(no_time, {**state, "tick": TICK + 1})
+        answers[name] = (first.verdict, second.verdict, second.reason, jev.calls)
+    assert answers == {"off": ("yes", "undecided", "no tick budget for jev", 1), "on": ("yes", "yes", "cached", 1)}
+
+
+def test_keyed_reads_go_one_at_a_time_in_order_beside_the_public_ones():
+    import time
+
+    lock, state = threading.Lock(), {"now": 0, "peak": 0, "order": []}
+    met = threading.Barrier(2, timeout=5)  # the first keyed read meets the public one: they overlap
+
+    def keyed(name, wait=False):
+        def read():
+            if wait:
+                met.wait()
+            with lock:
+                state["now"] += 1
+                state["peak"] = max(state["peak"], state["now"])
+                state["order"].append(name)
+            time.sleep(0.02)
+            with lock:
+                state["now"] -= 1
+            return name
+
+        return read
+
+    reads = {"me": keyed("me", wait=True), "catalog": lambda: (met.wait(), "catalog")[1]}
+    reads |= {"offers": keyed("offers"), "threads": keyed("threads")}
+    got = read_together(reads, True, keyed=("me", "offers", "threads"))
+    assert got == {"me": "me", "catalog": "catalog", "offers": "offers", "threads": "threads"}
+    assert state["peak"] == 1 and state["order"] == ["me", "offers", "threads"]  # one keyed request in flight
+
+
+def test_a_failed_keyed_read_stops_the_keyed_ones_after_it():
+    ran: list[str] = []
+
+    def refused():
+        raise BazaarError("rate_limited", "slow down", 429)
+
+    reads = {"me": lambda: ran.append("me"), "offers": refused, "threads": lambda: ran.append("threads")}
+    reads |= {"catalog": lambda: ran.append("catalog")}
+    with pytest.raises(BazaarError) as err:
+        read_together(reads, True, keyed=("me", "offers", "threads"))
+    assert err.value.code == "rate_limited" and sorted(ran) == ["catalog", "me"]  # as in order: threads never ran

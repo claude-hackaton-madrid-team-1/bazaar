@@ -10,7 +10,7 @@ from __future__ import annotations
 import contextvars
 import os
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -240,17 +240,48 @@ def new_page_line(tick: int, agent: str, fresh: tuple[str, ...], me: Mapping[str
     )
 
 
-def read_together(reads: Mapping[str, Callable[[], Any]], parallel: bool) -> dict[str, Any]:
+def _in_order(reads: Mapping[str, Callable[[], Any]]) -> dict[str, tuple[bool, Any]]:
+    """Run reads one after another; stop at the first failure. name -> (ok, answer or the error)."""
+    done: dict[str, tuple[bool, Any]] = {}
+    for name, read in reads.items():
+        try:
+            done[name] = (True, read())
+        except Exception as e:  # handed back to read_together, which raises it in the given order
+            done[name] = (False, e)
+            break
+    return done
+
+
+def read_together(
+    reads: Mapping[str, Callable[[], Any]], parallel: bool, keyed: Collection[str] = ()
+) -> dict[str, Any]:
     """Run independent reads and return their answers by name. `parallel` (GUARDRAILS.md `parallel_reads`)
-    sends them at once, so a tick pays the slowest read instead of their sum; otherwise one after the other,
-    in order. Either way every answer is in before anything is decided, and a failure raises the error of
-    the first failing read in the given order (in parallel, after the others have finished)."""
+    sends the keyless ones at once, so a tick pays the slowest read instead of their sum; the `keyed` ones
+    (they spend the team key's 5 req/s) still go one after another, in order, beside them: one keyed request
+    in flight per agent, as before, so a drained key budget never sees a synchronized burst of retries.
+    Without `parallel`, everything in order. Either way every answer is in before anything is decided, and
+    a failure raises the error of the first failing read in the given order (after the others finished)."""
     if not parallel or len(reads) < 2:
         return {name: read() for name, read in reads.items()}
-    with ThreadPoolExecutor(max_workers=min(MAX_PARALLEL_READS, len(reads)), thread_name_prefix="bazaar-read") as pool:
+    lane = {name: read for name, read in reads.items() if name in keyed}
+    free = {name: read for name, read in reads.items() if name not in keyed}
+    with ThreadPoolExecutor(
+        max_workers=min(MAX_PARALLEL_READS, len(free) + 1), thread_name_prefix="bazaar-read"
+    ) as pool:
         # each read runs in a copy of this context, so its trace events land on the tick's span
-        futures = {name: pool.submit(contextvars.copy_context().run, read) for name, read in reads.items()}
-    return {name: future.result() for name, future in futures.items()}
+        futures = {name: pool.submit(contextvars.copy_context().run, read) for name, read in free.items()}
+        in_order = pool.submit(contextvars.copy_context().run, _in_order, lane) if lane else None
+    keyed_done = in_order.result() if in_order is not None else {}
+    got: dict[str, Any] = {}
+    for name in reads:
+        if name in free:
+            got[name] = futures[name].result()
+        else:  # a keyed read after a failed one never ran; the failed one comes first in this order
+            ok, answer = keyed_done[name]
+            if not ok:
+                raise answer
+            got[name] = answer
+    return got
 
 
 @dataclass(frozen=True)
@@ -305,7 +336,9 @@ def read_snapshot(
         "venues": public.venues,
         "events": feed.events,
     }
-    got = read_together({**reads, **{f"extra:{name}": read for name, read in (extra or {}).items()}}, parallel)
+    extra_reads = {f"extra:{name}": read for name, read in (extra or {}).items()}
+    # /me (or its snapshot), our offers and the caller's reads use the key; the rest is public
+    got = read_together({**reads, **extra_reads}, parallel, keyed=("me", "offers", *extra_reads))
     read, me = got["me"]
     personas, catalog = got["personas"], got["catalog"]
     if holdings is not None:
