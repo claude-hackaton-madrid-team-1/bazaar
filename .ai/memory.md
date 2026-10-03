@@ -688,6 +688,14 @@ someone else's server. Use `SIM_DATABASE_URL=memory` for a fresh world each time
 Separately, the strategy offered only the cheapest dealer per rarity (`strategy.quote_for`), so Chato never got
 an uncommon thread while Abuela sold the same rarity for less (fixed behind the lift: `level_ladder`).
 
+### [2026-10-03] finding — organisers' Saturday opening (09:19): 17 teams played Friday, duels now score
+Source: `docs/transcripts/2026-10-03-morning-voice-memo.md` § 2 (organisers' talk before the Saturday market). Friday had
+17 teams, not 18 (one never showed up); four team markets opened. Today: another pack drop, team markets open, duels later
+in the day and now scored, and new dealers may arrive during the day with cards nobody has seen yet; 2 deals per minute.
+Their hints: some teams paid a first offer above the card's value to them (know `your_value` before buying); repeating the
+same "last price" moves nothing (matches the N14a finding above: repeating our top price drew a final in 1 of 11 threads);
+half of Friday's practice duels ended with no deal. The 03:22 memo in the same file reads back the night's docs: no new facts.
+
 ### [2026-10-03] build-error — W4 trade desk (#79): what its reviews caught before the takeover
 From Marius's report (`docs/night/w4-trade-desk.md`): the exact plan search hit `RecursionError` on pools of
 1,100+ candidates (capped at 120: 4 per copy or wanted card); swaps first counted 0 volume toward the
