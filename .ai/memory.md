@@ -1202,3 +1202,9 @@ unreadable)" → root cause: `no_buyback_ticks` refuses every card buy when the 
 the smoke runs with no Postgres by design → fix (#258): a simulator target (`guardrails.simulator_target`, read once
 from `Settings.simulator`) skips the unread case; the real game still fails closed, now also on a tape more than 3
 ticks behind. A new rule that reads Postgres must say what it does on the simulator, and run the smoke before merging.
+
+
+### [2026-10-03] gotcha — the shared ledger table only takes kinds spend, accept and listing
+`sql/schema.sql` has `check (kind in ('spend','accept','listing'))`; the JSONL ledger has no such check, so a new kind
+passes every file-ledger test and fails live with `CheckViolation` (found by the #236 reviews). A Workshop craft is
+booked as `spend` at price 0 with item `taller:<refs>` and counted by prefix (`count_since(kind, t_hours, prefix)`).
