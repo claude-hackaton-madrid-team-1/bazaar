@@ -80,7 +80,7 @@ JSON_MIME = "application/json"
 
 _TRUE = frozenset({"1", "true", "yes", "on"})
 _SECRET_NAME = re.compile(r"(?:KEY|TOKEN|SECRET|PASSWORD)\Z", re.IGNORECASE)
-_TEAM_KEY = re.compile(r"\btk-[A-Za-z0-9_-]{6,}")
+_TEAM_KEY = re.compile(r"\b(?:tk-|bk_|simbk-)[A-Za-z0-9_-]{6,}")  # team keys and broker keys (real and sim)
 # A private number (our limit, cost, value, ceiling) next to its name, in prose, a repr or JSON: cut out by pattern.
 _PRIVATE_NAME = r"\w*(?:limit|max|cost|value|worth|floor|ceil|cap|budget|reserv|ladder|plan)\w*"
 _PRIVATE_NUMBER = re.compile(
@@ -280,6 +280,14 @@ def shutdown_tracing() -> None:
 
 
 # ---------------------------------------------------------------- what a span may carry
+
+
+def add_secret(value: str) -> None:
+    """A secret learnt at run time (our venue's broker key): cut out of every span and stored row by value,
+    like the `*_KEY` variables read at start."""
+    value = value.strip()
+    if len(value) >= MIN_SECRET_LENGTH and value not in _RT.secrets:
+        _RT.secrets = tuple(sorted({*_RT.secrets, value}, key=len, reverse=True))
 
 
 def scrub(text: str) -> str:

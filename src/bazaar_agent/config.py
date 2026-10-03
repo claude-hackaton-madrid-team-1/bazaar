@@ -33,6 +33,7 @@ OFFICIAL_HOST = "bazaar.causaprima.ai"
 SIM_KEY_PREFIX = "sim-"
 REAL_DATABASE = "railway"  # the team's shared Railway database: real-game memory only
 SIM_DATA_DIR = REPO_ROOT / ".local" / "sim-client"  # default data dir against a simulator
+BROKER_ENV_FILE = "broker.env"  # <data_dir>/broker.env (0600): the broker key a live `venue open` saved
 
 
 class ConfigError(RuntimeError):
@@ -66,6 +67,8 @@ class Settings(BaseModel):
     sim_database: bool = False  # BAZAAR_SIM_DATABASE_URL is the database: one of the simulator's own
     team_id: str | None = Field(default=None, pattern=r"^t\d{1,3}$")  # BAZAAR_TEAM_ID; else /api/me (identity.py)
     data_dir: Path = Field(default=REPO_ROOT / ".local")
+    broker_key: SecretStr | None = None  # BAZAAR_BROKER_KEY: our venue's X-Broker-Key (returned once on open)
+    venue_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,40}$")  # BAZAAR_VENUE: our venue id
 
     @property
     def feed_dir(self) -> Path:
@@ -113,6 +116,14 @@ class Settings(BaseModel):
                 "set BAZAAR_SIM_DATABASE_URL to the `bazaar_sim` database (README, Simulator)."
             )
         return url
+
+    def require_broker_key(self) -> str:
+        if self.broker_key is None or not self.broker_key.get_secret_value():
+            raise ConfigError(
+                "BAZAAR_BROKER_KEY is not set: a live `bazaar venue open` saves it to "
+                f"{BROKER_ENV_FILE} in the data dir; on Railway set the variable by hand."
+            )
+        return self.broker_key.get_secret_value()
 
 
 def is_official(url: str) -> bool:
@@ -214,6 +225,13 @@ def load_settings(env_file: Path | None = None) -> Settings:
     if sim_db and simulated:
         data["database_url"] = sim_db
         data["sim_database"] = not same_database(str(sim_db), str(real_db))  # not the real one, respelled
+    # The broker key and venue id: the environment, then `.env`, then what a live `venue open` saved. Against
+    # the simulator BAZAAR_BROKER_KEY / BAZAAR_VENUE are not read (only the data dir's file), and the host
+    # guard (`venue.check_broker_key_for_url`) refuses to send a real key there anyway.
+    saved = read_env_file(Path(str(data.get("data_dir") or REPO_ROOT / ".local")) / BROKER_ENV_FILE)
+    env_key, env_venue = (None, None) if simulated else (pick("BAZAAR_BROKER_KEY"), pick("BAZAAR_VENUE"))
+    data["broker_key"] = env_key or saved.get("BAZAAR_BROKER_KEY") or None
+    data["venue_id"] = env_venue or saved.get("BAZAAR_VENUE") or None
     return Settings.model_validate(data)
 
 
