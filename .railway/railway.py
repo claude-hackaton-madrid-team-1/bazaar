@@ -173,7 +173,7 @@ def live_show() -> object:
     plus a tiny TTS proxy in one Node process (`node server/index.ts`: dist/, GET /health, POST /api/tts).
     The browser reads only the agents' public /health, /state and WS /events; it sends nothing to them.
 
-    The voice keys are set once by hand with `railway variable set ... --stdin` and declared preserve()
+    The voice keys and the show's read-only database URL are set once by hand with `railway variable set ... --stdin` and declared preserve()
     so an apply keeps them (an undeclared hand-set variable is deleted by an apply); with neither key
     the show speaks with the browser's own voice. Any other override (model, voices, TTS_* limits; see
     the bazaar-live README) must be declared here before it is set. Its public domain is generated once
@@ -191,6 +191,11 @@ def live_show() -> object:
             "PORT": LIVE_PORT,
             "ELEVENLABS_API_KEY": preserve(),
             "GEMINI_API_KEY": preserve(),
+            # LIVE-T1 (bazaar-live #5): the read-only role bazaar_live_reader on the private
+            # postgres.railway.internal host (two views in schema show, no table grants), set by hand
+            # with --stdin; SHOW_DUELS stays unset (off) until the last duel session is over.
+            "SHOW_DATABASE_URL": preserve(),
+            "SHOW_DUELS": preserve(),
         },
     )
 
