@@ -90,7 +90,7 @@ def runtime(name: str, command: str, data: object, llm: bool = False) -> object:
     )
 
 
-def agent(name: str, command: str, data: object) -> object:
+def agent(name: str, command: str, data: object, env: dict[str, object] | None = None) -> object:
     """An autonomous agent (`bazaar agent taker|maker`) and its public read-only status on AGENT_PORT.
 
     Live or dry run is decided by hand, never here: this file never sets BAZAAR_LIVE (README "Autonomous
@@ -117,6 +117,7 @@ def agent(name: str, command: str, data: object) -> object:
             "BAZAAR_LEARN": preserve(),
             "BAZAAR_LLM_READ": preserve(),
             "BAZAAR_TEAM_THREADS": preserve(),
+            **(env or {}),
         },
     )
 
@@ -260,7 +261,9 @@ def main(ctx=None):
     # (duels first; the maker never accepts). Both are LIVE since Sat 2026-10-03 01:45 Madrid: BAZAAR_LIVE=1
     # was set by hand on each service, and agent() preserve()s it (delete the variable to go back to dry run).
     taker = agent("bazaar-taker", "agent taker", taker_data)
-    maker = agent("bazaar-maker", "agent maker", maker_data)
+    # BAZAAR_BENCH_POLICY=edge (set by hand; unset or exact: today's matching) has our venue's broker match the
+    # Market Test with the bench edge (agents/bench_edge.py). Declared preserve() so an apply keeps the hand-set value.
+    maker = agent("bazaar-maker", "agent maker", maker_data, {"BAZAAR_BENCH_POLICY": preserve()})
     # The runtime tools for teammates' Claude Code, over MCP: bearer token, rate limits, DRY RUN.
     mcp = mcp_server("bazaar-mcp", mcp_data)
     sim = simulator()

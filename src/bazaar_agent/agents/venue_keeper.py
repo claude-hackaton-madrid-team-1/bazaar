@@ -10,7 +10,8 @@ Every maker tick (`Maker.on_tick`, driven by /api/clock), before the maker's own
      before the request goes out, and the key it returns is saved there (and to the data dir) at once. A
      refused opening costs nothing and is tried again `RETRY_TICKS` later; `venue_exists` stops it for good.
   3. We run a venue and hold its key: the broker (`agents/broker.py`) reads /api/broker/book and sends
-     the maximum-surplus matches (bench first) inside the maker's tick window.
+     the maximum-surplus matches (bench first) inside the maker's tick window; BAZAAR_BENCH_POLICY=edge (unset:
+     exact) has it match the Market Test with the bench edge (`agents/bench_edge.py`).
   4. With `announce_every_game_hours` (the maker passes ANNOUNCE_EVERY_GAME_HOURS): a short neutral notice
      on our venue (`POST /api/broker/announce`: the venue's name, id and fee, the house market's fee on a
      sample sale, and what the broker does) once the
@@ -30,7 +31,7 @@ from typing import Any
 
 from pydantic import SecretStr
 
-from bazaar_agent.agents.broker import BrokerAgent, BrokerConfig
+from bazaar_agent.agents.broker import BrokerAgent, BrokerConfig, bench_config_from_env
 from bazaar_agent.agents.market import Venue, _fee
 from bazaar_agent.agents.runtime import Recorder, Snapshot, TickWindow
 from bazaar_agent.agents.seller import offers_in, open_commitments
@@ -141,7 +142,8 @@ class VenueKeeper:
         self.decisions, self.live, self.log, self.hub, self.plan = decisions, live, log, hub, plan
         self.rec = Recorder("broker", decisions, live, log, hub)
         self.quiet_rec = Recorder("broker", decisions, live, log)  # rows the public status never shows
-        self.broker_config = broker_config or BrokerConfig(pace_s=0.2)
+        # BAZAAR_BENCH_POLICY (Railway, set by hand; default exact) picks how the broker matches the Market Test
+        self.broker_config = bench_config_from_env(broker_config or BrokerConfig(pace_s=0.2), log=log)
         self.make_broker = make_broker or (lambda key: broker_client(settings, key))
         self.stats_dir = stats_dir
         self.opened: Opened | None = None  # the venue this process opened, its key kept in memory too

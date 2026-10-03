@@ -142,3 +142,13 @@ def test_the_show_holds_no_team_key_and_no_database(services: dict[str, dict[str
     # Exactly these variables: no BAZAAR_KEY, no DATABASE_URL, no Phoenix key; the voice keys only preserve().
     assert show.get("variables") == LIVE_SHOW_VARIABLES, show.get("variables")
     assert not show.get("volumeAttachments"), show.get("volumeAttachments")
+
+
+def test_the_bench_policy_is_hand_set_on_the_maker_only_and_never_valued_here(
+    services: dict[str, dict[str, Any]],
+) -> None:
+    """BAZAAR_BENCH_POLICY=edge switches the maker's venue broker to the bench edge without a deploy: declared
+    preserve() on the maker (the venue keeper runs there), never a value in this file, nowhere else."""
+    policy = {name: (s.get("variables") or {}).get("BAZAAR_BENCH_POLICY") for name, s in services.items()}
+    assert {n for n, v in policy.items() if v == {"type": "preserve"}} == {"bazaar-maker"}
+    assert all(v is None for n, v in policy.items() if n != "bazaar-maker"), policy

@@ -8,7 +8,8 @@ Once per game tick (`ticks.run_per_tick`, never wall-clock; on Railway inside th
      them is ever matched; if they cannot be read, only the bench is matched that tick (fail closed);
      an offer we already matched is never proposed again;
   3. the exact maximum-surplus matching (`agents/matcher.py`), bench first, at most
-     `max_matches_per_tick` matches;
+     `max_matches_per_tick` matches; with `bench_policy = "edge"` (BAZAAR_BENCH_POLICY=edge, default exact) the
+     bench pairs come from `agents/bench_edge.py` instead (the exact plan unless the edge beats it by a margin);
   4. `guardrails.check()` on a `broker_match`: the kill switch, the pause file and `allow_venue_open`;
   5. each match logged to `decisions` (and, live, its request to `executions`), the tick window checked
      right before every send: a match that would land late is dropped, never sent late. Sends are paced
@@ -26,15 +27,18 @@ run ("b12"): it opens on `bench.started` or when its offers first show in the bo
 from __future__ import annotations
 
 import json
+import os
 import time
-from collections.abc import Callable, Iterable
-from dataclasses import asdict, dataclass, field
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import ValidationError
 
 from bazaar_agent import telemetry as tm
+from bazaar_agent.agents.bench_edge import BenchEdge, edge_plan, expiries_in
+from bazaar_agent.agents.bench_model import PRIORS
 from bazaar_agent.agents.matcher import BrokerBook, Fee, Match, Quotes, plan_matches, quotes_from
 from bazaar_agent.agents.runtime import Recorder, TickWindow, window_for
 from bazaar_agent.agents.seller import offers_in
@@ -52,6 +56,32 @@ class BrokerConfig:
     # inside the key's burst of 20.
     max_matches_per_tick: int = 15
     pace_s: float = 0.0  # seconds between two sends (0.2 = 5 per second, the key's sustained rate)
+    # How the Market Test bench is matched. "exact" (today): the maximum quoted-surplus matching, which pairs the
+    # same traders as the free stall. "edge": `agents/bench_edge.py` (PR #84), the maximum *estimated true* surplus
+    # from per-trader limit bands, sent only when it beats the exact plan by `EdgeConfig.guard_margin`.
+    bench_policy: BenchPolicy = "exact"
+
+
+BenchPolicy = Literal["exact", "edge"]
+BENCH_POLICIES: dict[str, BenchPolicy] = {"exact": "exact", "edge": "edge"}
+BENCH_POLICY_ENV = "BAZAAR_BENCH_POLICY"
+
+
+def bench_config_from_env(
+    base: BrokerConfig, environ: Mapping[str, str] | None = None, log: Callable[[str], None] | None = None
+) -> BrokerConfig:
+    """The bench policy of a broker with no command line (the maker's venue keeper on Railway): BAZAAR_BENCH_POLICY,
+    `exact` or `edge`, case-insensitive. Unset or empty: `base` unchanged. Any other value is IGNORED, loudly, and
+    `base` stays: a typo must never stop the maker, which also posts our offers."""
+    value = ((os.environ if environ is None else environ).get(BENCH_POLICY_ENV) or "").strip().lower()
+    if not value:
+        return base
+    policy = BENCH_POLICIES.get(value)
+    if policy is None:
+        if log is not None:
+            log(f"broker: IGNORED {BENCH_POLICY_ENV}={value[:20]!r} (exact or edge); it stays {base.bench_policy}")
+        return base
+    return replace(base, bench_policy=policy)
 
 
 def bench_run(value: object) -> str:
@@ -193,6 +223,8 @@ class BrokerAgent:
         self.broker, self.team, self.us, self.rules = broker, team, us, rules
         self.live, self.log, self.events, self.now, self.sleep = live, log, events, now, sleep
         self.config = config or BrokerConfig()
+        self.edge = BenchEdge(PRIORS["normal"])  # used only with bench_policy = "edge"
+        self.edge_pairs: set[tuple[str, str]] = set()  # this tick's bench pairs that come from the edge itself
         self.stats_dir = stats_dir
         self.rec = Recorder("broker", decisions, live, log, hub)
         self.sessions = BenchSessions(self._session_closed)
@@ -227,7 +259,7 @@ class BrokerAgent:
         fresh = [q for q in found.quotes if str(q.id) not in self.done]
         quotes = Quotes(fresh, found.skipped, found.ours)
         self.sessions.observe_book({q.item.removeprefix("bench:") for q in quotes.quotes if q.bench}, clock.tick)
-        plan = plan_matches(quotes.quotes, Fee(book.fee_bps, book.fee_per_card), self.config.max_matches_per_tick)
+        plan = self._plan(quotes, Fee(book.fee_bps, book.fee_per_card), clock.tick, book)
         stats = TickStats(clock.tick, self.live, skipped=quotes.skipped, ours=quotes.ours)
         run = _Run(clock, window, stats)
         for m in plan:
@@ -235,6 +267,24 @@ class BrokerAgent:
         self.pairs_seen |= run.pairs
         stats.distinct_pairs, stats.pairs_so_far = len(run.pairs), len(self.pairs_seen)
         self._tick_done(stats)
+
+    def _plan(self, quotes: Quotes, fee: Fee, tick: int, book: BrokerBook) -> list[Match]:
+        """Today's exact matching of everything or, with `bench_policy = "edge"`, the edge's bench plan (the exact
+        one unless the edge beats it by its guard margin) and the exact public matching with the slots left."""
+        cap = self.config.max_matches_per_tick
+        self.edge_pairs = set()
+        if self.config.bench_policy != "edge":
+            return plan_matches(quotes.quotes, fee, cap)
+        bench = [q for q in quotes.quotes if q.bench]
+        picked = edge_plan(self.edge, bench, fee, tick, cap, expiries_in(book.bench_offers, tick))
+        if picked.edge:
+            self.edge_pairs = {(str(m.sell.id), str(m.buy.id)) for m in picked.matches}
+            self.log(
+                f"tick {tick} broker: bench edge over exact by {picked.gain:.1f} estimated P "
+                f"({len(picked.matches)} pair(s))"
+            )
+        public = [q for q in quotes.quotes if not q.bench]
+        return picked.matches + plan_matches(public, fee, cap - len(picked.matches))
 
     def _observe_feed(self, tick: int, events: list[Event] | None = None) -> None:
         if events is not None:
@@ -290,7 +340,11 @@ class BrokerAgent:
                 "surplus": m.surplus,
                 **request,
             },
-            reason="maximum-surplus matching (exact), midpoint price",
+            reason=(
+                "bench edge: maximum estimated true surplus (limit bands from quotes), midpoint price"
+                if (str(m.sell.id), str(m.buy.id)) in self.edge_pairs
+                else "maximum-surplus matching (exact), midpoint price"
+            ),
             guardrail=str(verdict),
             chosen=chosen,
             status=status,
@@ -342,6 +396,7 @@ class BrokerAgent:
         )
 
     def _session_closed(self, s: Session) -> None:
+        self.edge.forget(s.run)
         row = {"run": s.run, "first_tick": s.first_tick, "last_tick": s.last_tick, "pairs": s.pairs}
         row |= {"surplus": s.surplus, "refused": s.refused, "live": self.live}
         tm.event("broker.bench_session", row)

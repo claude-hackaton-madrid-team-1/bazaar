@@ -1058,3 +1058,12 @@ events are 10-12 while our official value of a missing RET common is 7 (LAT 5), 
 range; the SG1 ladder probe plans nothing until fills drop or a card's official value rises. Strategy gates on the
 same state: ladder_probe undecided (0.32), dealer_sell undecided (0.60). Our own asks on v19 are impossible:
 RULES.md "You cannot trade on your own venue with your team key" (`self_venue`).
+
+### [2026-10-03] finding — real Market Tests: 16 ticks, auto_baseline per session, our exact broker = the stall (BE1)
+Sessions 1-3 (ticks 201-217, 441-457, 681-697): `bench.finished` comes on the TEAM stream only (not the public
+feed) as `{venue, session, efficiency, auto_baseline, matches}`: 0.899/0.899 (v08, the stall), 0.967/0.967 and
+0.769/0.769 (v19, our exact broker, 4 and 5 matches). `bench.started` (public) carries `{name, ticks: 16, venues,
+session, start_tick}` and NO run id, so `BenchSessions` opens sessions from the book only. A match answers
+`{"queued": true, "settles_at_tick": tick + 1}`. Matched ids: buyers b35-4..9, b52-0..5; sellers b35-13..17,
+b52-13..19 (ten a side?). On `bazaar_sim.bench`, exact equals the stall on every book; #84's edge without a guard
+realises less than the stall on 4-26 % of books (mean below it with 20 traders); `scripts/bench_edge_proof.py`.
