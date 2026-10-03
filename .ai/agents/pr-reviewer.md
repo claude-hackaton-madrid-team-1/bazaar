@@ -50,6 +50,11 @@ call a write endpoint of the game, or run `railway` commands that change anythin
    - Infrastructure: a Railway plan must have 0 destroys; secrets only via `railway variable set --stdin`.
    - House rules: Python only in this repo, black + ruff clean, `.ai/memory.md` entries for new gotchas, docs
      and `docs/architecture.status.json` updated when behaviour or services change, no AI attribution.
+   - Pipeline (`.ai/pipeline.md`): the PR names its task id (GitHub issue/PR or the N-id of `.ai/specs/02-plan.md`),
+     cites its spec (the issue, review comments, RULES.md lines, or `.ai/specs/<id>-spec.md`), has its steps under
+     that id in `.ai/specs/02-plan.md`, logs the errors it hit in `.ai/memory.md`, and its body ENDS with an Honest
+     Implementation Report (per-criterion status with pasted evidence, the metric %, Unverified and Could-not-do
+     lists). A missing or evidence-free report is P1 (contract violation); a missing spec citation or plan row is P2.
 5. **Verify every P0 and P1** with a command, a script or a test you ran (paste the output), or mark it
    "read only, not run". Never invent output.
 
