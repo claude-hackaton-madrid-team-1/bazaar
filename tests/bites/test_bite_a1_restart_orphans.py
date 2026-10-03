@@ -51,17 +51,17 @@ def test_a1_dealer_deal_on_a_thread_from_before_a_restart_is_booked_as_spend(tmp
 def test_a1_an_open_thread_from_a_previous_process_is_adopted_or_closed(tmp_path):
     """A fresh process that finds our own open dealer thread must drive it (read it every tick) or close
     it; leaving it alone blocks that dealer and one of the team's thread slots until the dealer idles it
-    out (40 ticks in the sim, ~20 min at 30 s ticks)."""
-    team = FakeTeam(
-        threads=[{"id": 40, "with": "abuela", "team": "t01", "status": "open"}],
-        offers=[thread_bid(77, 40, "LAV-08", 20)],
-    )
+    out (40 ticks in the sim, ~20 min at 30 s ticks). The previous process is a taker that opened it and
+    bid (its decisions say so: a thread no taker decision names belongs to a `dealer buy` and is left alone)."""
+    team = FakeTeam()
+    _old_process_opens_and_bids(tmp_path, team)
     t, lines, _ = make_taker(tmp_path, team, FakePublic())
-    for k in range(3):
+    before = len(team.reads)
+    for k in range(1, 4):
         t.on_tick(at(team, TICK + k))
-    driven = "thread 40" in team.reads
-    closed = ("close_thread", 40) in team.sent
+    driven = "thread 5000" in team.reads[before:]
+    closed = ("close_thread", 5000) in team.sent
     assert driven or closed, (
-        f"orphan thread 40 never read nor closed in 3 ticks; convs={sorted(t.convs)}; "
+        f"orphan thread 5000 never read nor closed in 3 ticks; convs={sorted(t.convs)}; "
         f"writes={team.sent}; last log: {lines[-1]}"
     )

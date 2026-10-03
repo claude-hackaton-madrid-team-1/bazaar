@@ -200,18 +200,15 @@ class DecisionLog:
                 self._failed("thread read", e)
         path = self.dir / "decisions.jsonl"
         lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
-        for line in lines:
-            try:
-                row = json.loads(line)
-            except ValueError:
-                continue
-            if row.get("update") or row.get("agent") != agent or row.get("dry_run"):
-                continue
-            if not isinstance(row.get("thread_id"), int) or int(row.get("tick") or -1) < since_tick:
+        for row in _live_rows(lines, agent):
+            tick = _int(row.get("tick"))
+            if not isinstance(row.get("thread_id"), int) or tick is None or tick < since_tick:
                 continue
             move = row.get("move") if row.get("chosen") else None
             price = move.get("price") if isinstance(move, dict) else None
-            rows.append((row["thread_id"], row["tick"], row.get("kind"), (row.get("inputs") or {}).get("item"), price))
+            inputs = row.get("inputs")
+            item = inputs.get("item") if isinstance(inputs, dict) else None
+            rows.append((row["thread_id"], tick, row.get("kind"), item, price))
         trails: dict[int, ThreadTrail] = {}
         for thread_id, tick, kind, item, price in rows:
             old = trails.get(int(thread_id), ThreadTrail(int(thread_id), "", int(tick)))
@@ -225,12 +222,35 @@ class DecisionLog:
             )
         return trails
 
+    def first_tick(self, agent: str, kind: str) -> int | None:
+        """The earliest tick of a live `kind` row by `agent`, in Postgres or this machine's JSONL (None: no row
+        or an unreadable store)."""
+        ticks: list[int] = []
+        conn = self._db()
+        if conn is not None:
+            try:
+                row = conn.execute(
+                    "select min(tick) from decisions where agent = %s and kind = %s and dry_run is not true",
+                    (agent, kind),
+                ).fetchone()
+                if row is not None and row[0] is not None:
+                    ticks.append(int(row[0]))
+            except psycopg.Error as e:
+                self._failed("first tick read", e)
+        path = self.dir / "decisions.jsonl"
+        lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+        ticks += [
+            t for r in _live_rows(lines, agent) if r.get("kind") == kind and (t := _int(r.get("tick"))) is not None
+        ]
+        return min(ticks) if ticks else None
+
     def close(self) -> None:
         if self._conn is not None:
             self._conn.close()
 
 
 THREAD_CLOSED = "dealer_closed"  # the decision kind that wraps a thread up: its deal (if any) is booked
+PROCESS_STARTED = "process_started"  # a process that writes THREAD_CLOSED started: its threads' deals are known
 
 
 @dataclass(frozen=True)
@@ -244,8 +264,28 @@ class ThreadTrail:
     closed: bool = False  # a THREAD_CLOSED row: the thread was wrapped up and its deal booked
 
 
+MAX_INT = 10_000_000  # RULES.md: prices are whole primas up to 10,000,000; ticks stay far below it
+
+
 def _int(value: object) -> int | None:
-    try:
-        return int(value) if value is not None else None  # type: ignore[call-overload]
-    except (TypeError, ValueError):
+    """A whole number from a log row, else None (bool, text, out of range)."""
+    if isinstance(value, bool):
         return None
+    try:
+        n = int(value)  # type: ignore[call-overload]
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return n if 0 <= n <= MAX_INT else None
+
+
+def _live_rows(lines: list[str], agent: str) -> list[dict[str, Any]]:
+    """The JSONL rows `agent` wrote live: objects only, update and dry-run rows skipped, bad lines ignored."""
+    rows = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and not row.get("update") and row.get("agent") == agent and not row.get("dry_run"):
+            rows.append(row)
+    return rows

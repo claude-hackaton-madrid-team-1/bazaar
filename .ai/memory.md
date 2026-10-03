@@ -474,3 +474,10 @@ symptom: `test_a_bid_in_between_resets_the_quiet_count` failed after B17 was squ
 40 was read, never closed → root cause: #72's `patient()` waits up to `MAX_WAITS` ticks for her answer to a bid that
 is not answered yet, and the adopted `Negotiation` started with `waits = 0` → fix: `_adopt` starts it with
 `waits = MAX_WAITS` (her answer already had `orphan_after_ticks` ≥ `MAX_WAITS` ticks to come in).
+
+### [2026-10-03] gotcha — after a restart, only the old taker's own threads may be touched (B17 review)
+A quiet thread is not an orphan: a laptop `bazaar dealer buy` paused by its own `.local/PAUSE` stops bidding,
+and the Railway taker cannot see that pause. The taker now owns a thread only when its decisions log names it
+(`dealer_opened` rows carry the thread id); it adopts those on sight, because a fresh bid's "Deal!" can land
+a tick after the new process starts. A `process_started` row marks the first process that writes
+`dealer_closed`: earlier threads are never booked again (their process booked them silently).

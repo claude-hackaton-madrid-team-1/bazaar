@@ -73,3 +73,24 @@ dealer idles them out; their deals are still booked. Script: `docs/night/b17_cha
 - Not covered (follow-up): a thread of a crashed `bazaar dealer buy` that dealt before anyone saw it. The public
   `settlement` event (`persona`, `parties`, `price`, `tick`) would let a reconciler book any dealer deal of ours that
   has no spend row.
+
+## Takeover review fixes (#140, 2026-10-03)
+
+pr-reviewer and security-auditor found two ways a deal still went unbooked, and a hijack risk. Fixed:
+
+- **Only the taker's own threads are touched.** A thread is the taker's when its decisions log names it (every
+  open now writes a `dealer_opened` row with the thread id). A thread no taker decision names belongs to a
+  `bazaar dealer buy` or the desk and is never read, adopted or closed, even when it goes quiet (a laptop paused
+  by its own `.local/PAUSE` keeps its thread).
+- **The old taker's open threads are adopted on sight**, whatever the bid's age: a "Deal!" that lands a tick
+  after the new process started is booked by `_finished`. A fresh bid gets the usual `MAX_WAITS` for her answer;
+  a stale one walks on its next move. A thread of ours with no price of ours is closed after 3 quiet ticks.
+- **Every walk and orphan close writes `dealer_closed`**, and the wrap-up reads newest first with no overall
+  cap (each thread is tried at most 5 times; a rate limit ends the tick's reads; an unreadable body is skipped,
+  never stalls the tick).
+- **The first deploy books nothing twice.** Each live taker writes a `process_started` row first. Only threads
+  with a decision at or after the earliest one are read and booked: the process before the first such start
+  booked its deals without a `dealer_closed` row. The old risk row ("the first restart books the last 40 ticks
+  again") is gone.
+- The chaos table above was measured before these fixes, with restarts only at tick boundaries and dealers that
+  answer at the boundary; it cannot show the late-"Deal!" case (`test_a_deal_that_lands_after_the_new_process_first_tick_is_booked`).
