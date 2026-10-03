@@ -314,3 +314,19 @@ def test_under_v2_a_duel_move_outside_our_limit_is_still_denied():
 def test_a_bad_trusted_dealer_list_fails_fast(value):
     with pytest.raises(gr.GuardrailsError, match="flag_trusted_dealers"):
         gr.parse_guardrails(f"- `flag_trusted_dealers` = {value} — x")
+
+
+def test_a_second_venue_needs_max_venues_2():
+    ctx_one = ctx(has_venue=True)
+    one = gr.check(
+        gr.Action("venue_open", "venue", None, 270),
+        ctx_one,
+        gr.Guardrails(allow_venue_open=True, venue_open_after_game_hours=0),
+    )
+    assert not one.allowed and "never open a second one" in str(one)
+    two = gr.check(
+        gr.Action("venue_open", "venue", None, 270),
+        ctx_one,
+        gr.Guardrails(allow_venue_open=True, venue_open_after_game_hours=0, max_venues=2),
+    )
+    assert "never open a second one" not in str(two)
