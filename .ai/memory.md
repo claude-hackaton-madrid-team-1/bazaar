@@ -324,5 +324,6 @@ symptom: `bazaar-monitor` (no source, `enabled=False`) RUNNING since Fri 23:14 U
 key's six SSE slots → root cause: Railway redeploys a service's last image whenever an apply changes its
 config, source or not; the #59 apply added `RUNTIME.md` to the shared `BUILD` watch patterns
 (deployment reason `redeploy`, patchId `iac-change-set/…`) → fix: `railway down --service bazaar-monitor`,
-then Omar removed the monitor (and `bazaar-evals`) from Railway: `.railway/railway.py` declares no service
-we do not run, and tests/test_railway_iac.py fails on any `enabled=False` service.
+then the monitor left `.railway/railway.py` (Omar deletes its service and volume by hand) and so did
+`bazaar-evals` (service deleted): the file declares no service we do not run, and
+tests/test_railway_iac.py fails on a service without a source.

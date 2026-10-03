@@ -204,7 +204,7 @@ the environment first, then `.env`. Unset means the local docker Postgres
   schema still creates every table and skips only the `embedding vector(384)` columns; run
   `db init` again after enabling it and they are added.
 - **One monitor writes per team.** It runs in the CLI on one laptop (`uv run bazaar monitor`);
-  There is no Railway monitor: `bazaar-monitor` was removed on 2026-10-03 (see "Production on Railway").
+  There is no Railway monitor: `bazaar-monitor` leaves Railway on 2026-10-03 (see "Production on Railway").
   Two monitors would not corrupt data: alerts dedupe on (tick, kind, subject, detail), a lagging
   writer cannot roll traders or dealer curves back, and only the monitor holding the oldest feed
   history rebuilds `dealer_curves` and `competitor_profiles` (all in `tests/test_db.py`). But a
@@ -676,7 +676,7 @@ https://railway.com/project/05a9de65-622b-4754-a0f0-be4d7f54ec51?environmentId=9
 | `phoenix` | https://phoenix-production-6aa3.up.railway.app (login `admin@localhost`, password in its Railway variables) | `phoenix.railway.internal:6006` (OTLP/HTTP), `:4317` (gRPC) | traces UI for every negotiation, duel, monitor tick and CLI line | running |
 | `Postgres` | `iriguchi.proxy.rlwy.net:28880`, db `railway`, user `postgres`, SSL (password: Postgres service → Variables) | `${{Postgres.DATABASE_URL}}` | the team's shared memory (feed, tape, dealer curves, traders, snapshots, alerts, decisions) | running |
 | `bazaar-duels` | none (worker, no HTTP) | — | the team's ONE duel player (`duel run --play`) | running |
-| `bazaar-monitor` | — | — | removed 2026-10-03 (Omar): the monitor runs in the CLI on a laptop (`uv run bazaar monitor --notify`) | removed |
+| `bazaar-monitor` | — | — | leaving Railway (2026-10-03): no deployment since `railway down`; Omar deletes the service and its volume by hand. The monitor runs in the CLI on a laptop (`uv run bazaar monitor --notify`) | down, being removed |
 | `bazaar-taker` | https://bazaar-taker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-taker-production.up.railway.app/events | `bazaar-taker.railway.internal:8080` | autonomous buyer (`bazaar agent taker`): board asks + dealer desk; read-only status | **LIVE** since Sat 01:45 Madrid (`BAZAAR_LIVE=1`, set by hand) |
 | `bazaar-maker` | https://bazaar-maker-production.up.railway.app (`/health`, `/state`) · wss://bazaar-maker-production.up.railway.app/events | `bazaar-maker.railway.internal:8080` | autonomous market maker (`bazaar agent maker`): asks, bids, reprices; read-only status | **LIVE** since Sat 01:45 Madrid (`BAZAAR_LIVE=1`, set by hand) |
 | `bazaar-mcp` | https://bazaar-mcp-production.up.railway.app/mcp (bearer token; `/health` public) | `bazaar-mcp.railway.internal:8080` | the runtime tools as a remote MCP server (`bazaar mcp serve`) for teammates' Claude Code | running, dry run (no `BAZAAR_LIVE`) |
@@ -714,9 +714,11 @@ Code, Python authoring, beta): change it by PR.
   source or not. On Fri 23:14 UTC an apply that added `RUNTIME.md` to the shared watch patterns revived
   the off `bazaar-monitor` (an `iac-change-set` redeploy) and it held one of the key's six live-stream
   slots until `railway down` (Sat 01:55 Madrid). So a service we do not run is not declared at all:
-  `bazaar-monitor` and its volume were removed on 2026-10-03 (Omar; the monitor runs in the CLI), and
-  `bazaar-evals` too (the evals move into the agents). `tests/test_railway_iac.py` fails on any
-  `enabled=False` service. To run the monitor on Railway again, re-add its volume and
+  `bazaar-monitor` and its volume are no longer in `.railway/railway.py` (Omar, 2026-10-03: the monitor
+  runs in the CLI; he deletes the service and its volume by hand, and nothing is applied before that),
+  nor is `bazaar-evals` (the evals move into the agents; its service was deleted the same night).
+  `tests/test_railway_iac.py` fails on a service without a source, on taker or maker not built with
+  `agent()`, and on a declared monitor or evals service. To run the monitor on Railway again, re-add its volume and
   `runtime("bazaar-monitor", "monitor", ...)` in `.railway/railway.py`, apply, and stop the laptop monitor.
 - **Variables.** `DATABASE_URL = ${{Postgres.DATABASE_URL}}` (private network),
   `PHOENIX_COLLECTOR_ENDPOINT = http://${{phoenix.RAILWAY_PRIVATE_DOMAIN}}:6006`,
@@ -724,8 +726,13 @@ Code, Python authoring, beta): change it by PR.
   Secrets (`BAZAAR_KEY`, `TYPESAFE_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `SIM_ADMIN_TOKEN`, `PHOENIX_SECRET`,
   `PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD`, `PHOENIX_API_KEY`) are only in Railway; the file says `preserve()`. Set or rotate one without
   it touching a command line: `printf %s "$VALUE" | railway variable set NAME --stdin --service <svc>`.
-- **Pause every write** (the guardrail kill switch): `railway ssh --service bazaar-duels -- touch /app/.local/PAUSE`
-  (on the volume, so it survives redeploys); `rm` it to resume.
+- **Pause writes** (the guardrail kill switch): `railway ssh --service bazaar-duels -- touch /app/.local/PAUSE`
+  pauses that one service (the file is on its own volume, so it survives redeploys; `rm` it to resume).
+  Everything that trades, at once, then check each file is there (`/health`'s `paused` is the game
+  clock's flag, not this file):
+  `for s in bazaar-duels bazaar-taker bazaar-maker; do railway ssh --service "$s" -- touch /app/.local/PAUSE; done`
+  and `for s in bazaar-duels bazaar-taker bazaar-maker; do railway ssh --service "$s" -- ls /app/.local/PAUSE; done`.
+  A pause keeps our open offers on the board: see "Stop one" below to withdraw them.
 
 ### Open Phoenix
 
@@ -775,9 +782,13 @@ then redeploy `bazaar-duels`.
   open at 09:00). `.railway/railway.py` `preserve()`s `BAZAAR_LIVE` and never sets it, so a
   `railway config apply` keeps whatever is set by hand.
   - **Stop one:** `railway variable delete BAZAAR_LIVE --service bazaar-taker` (or `bazaar-maker`): it
-    redeploys in dry run; `/health` then says `mode: dry`. To stop every write at once without a
-    redeploy, the kill switch: `railway ssh --service bazaar-taker -- touch /app/.local/PAUSE`
-    (`rm` it to resume).
+    redeploys in dry run; `/health` then says `mode: dry` (if it still says `live`, `railway redeploy
+    --service bazaar-taker --yes`). To stop a service's writes without a redeploy, its kill switch:
+    `railway ssh --service bazaar-taker -- touch /app/.local/PAUSE` (`rm` it to resume). PAUSE lives on
+    each service's own volume: "Pause writes" above pauses all of them.
+  - **Neither withdraws our open offers.** A dry run sends nothing (no cancels) and PAUSE holds by design,
+    so up to 30 asks and bids the maker posted stay on the board and can still fill. To withdraw them:
+    `uv run bazaar sell offers`, then `uv run bazaar sell cancel <offer_id> --live` for each.
   - **Turn one on:** `printf 1 | railway variable set BAZAAR_LIVE --stdin --service bazaar-taker` (it
     redeploys); `/health` says `mode: live`.
 - **Known limit: other state in `BAZAAR_DATA_DIR` is per container.** `steering.json`: a laptop

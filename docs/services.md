@@ -17,8 +17,9 @@ Both agents are **LIVE since Sat 2026-10-03 01:45 Madrid**: `BAZAAR_LIVE=1` is s
 `bazaar-taker` and `bazaar-maker` (they trade from the 09:00 opening), and `GET /health` says
 `"mode": "live"`. Without that variable an agent is a dry run: it logs what it *would* do and publishes
 only its outline (no prices, see "Public by design"). To stop one: `railway variable delete BAZAAR_LIVE
---service bazaar-taker` (it redeploys in dry run), or the kill switch `railway ssh --service bazaar-taker
--- touch /app/.local/PAUSE` (README, "Production on Railway").
+--service bazaar-taker` (it redeploys in dry run), or that service's kill switch `railway ssh --service
+bazaar-taker -- touch /app/.local/PAUSE`, per service. Neither withdraws our open offers: `bazaar sell
+cancel` does (README, "Production on Railway").
 
 ## Taker and maker: HTTP
 
