@@ -79,7 +79,7 @@ def _cards_wanted(want: dict[str, Any]) -> list[str]:
 SIDE_KEYS = frozenset({"cash", "assets", "types", "cards"})  # what an offer side may carry; anything else is not plain
 
 
-def _extra_structure(side: dict[str, Any]) -> bool:
+def extra_structure(side: dict[str, Any]) -> bool:
     """A non-empty key we do not price (`want.packs`, `give.debt`, ...): the offer is not a plain shape."""
     return any(value not in (None, 0, [], {}, "") for key, value in side.items() if key not in SIDE_KEYS)
 
@@ -91,7 +91,7 @@ def parse_offer(o: dict[str, Any], venue: str | None = None) -> BoardOffer | Non
     give, want = o.get("give") or {}, o.get("want") or {}
     if not isinstance(o.get("id"), int) or not isinstance(give, dict) or not isinstance(want, dict):
         return None
-    if _extra_structure(give) or _extra_structure(want):
+    if extra_structure(give) or extra_structure(want):
         return None
     assets = [a for a in give.get("assets") or [] if isinstance(a, dict)]
     oid, where, maker = int(o["id"]), str(o.get("venue") or venue or ""), str(o.get("maker") or "")

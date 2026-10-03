@@ -342,6 +342,18 @@ def test_the_scanner_prices_a_sell_from_our_free_copies_only():
     assert none_free is None
 
 
+def test_the_feed_board_reads_shapes_as_strictly_as_the_taker():
+    # pr-reviewer #138 P2: rivals._plain still read a bid that also wants one of our assets as plain, so the
+    # scanner (without --live), its replay and `bazaar rivals` listed it as an allowed sell.
+    plain = {"give": {"cash": 62}, "want": {"types": ["card:LAT-09"]}}
+    trap = {"give": {"cash": 62}, "want": {"types": ["card:LAT-09"], "assets": [5]}}
+    hidden = {"give": {"cash": 62, "debt": 1}, "want": {"types": ["card:LAT-09"]}}
+    ask_plain = {"give": {"assets": [{"id": 9, "ref": "LAV-02"}]}, "want": {"cash": 10}}
+    ask_trap = {"give": {"assets": [{"id": 9, "ref": "LAV-02"}]}, "want": {"cash": 10, "assets": [5]}}
+    assert rv._plain(plain) == ("bid", "LAT-09", 62, None) and rv._plain(ask_plain) == ("ask", "LAV-02", 10, 9)
+    assert [rv._plain(o) for o in (trap, hidden, ask_trap)] == [None, None, None]
+
+
 def test_a_known_copy_fills_only_its_own_ask_and_a_buyer_taking_an_ask_keeps_its_bid():
     events = [
         ask(1, 3, "t06", "LAT-03", 9, 71),

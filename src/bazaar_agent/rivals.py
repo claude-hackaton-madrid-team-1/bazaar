@@ -29,6 +29,7 @@ from typing import Any, Literal
 
 from bazaar_agent import intel
 from bazaar_agent.affinity import AffinityMap
+from bazaar_agent.agents.market import extra_structure
 
 Event = dict[str, Any]
 Outcome = Literal["open", "filled", "cancelled", "expired"]
@@ -64,8 +65,13 @@ class Listed:
 
 
 def _plain(offer: dict[str, Any]) -> tuple[Literal["ask", "bid"], str, int, int | None] | None:
-    """(side, card, price, asset id) of a one-card-for-cash offer; None for any other shape."""
+    """(side, card, price, asset id) of a one-card-for-cash offer; None for any other shape, including one with
+    extra structure (a bid that also wants one of our assets, an unknown key), as `market.parse_offer` reads it."""
     give, want = offer.get("give") or {}, offer.get("want") or {}
+    if not isinstance(give, dict) or not isinstance(want, dict) or extra_structure(give) or extra_structure(want):
+        return None
+    if want.get("assets") or give.get("cards") or give.get("types"):
+        return None
     assets = [a for a in give.get("assets") or [] if isinstance(a, dict)]
     wanted = [str(t).split(":", 1)[-1] for t in (want.get("types") or []) + (want.get("cards") or [])]
     if len(assets) == 1 and not wanted and int(want.get("cash") or 0) > 0 and not give.get("cash"):
