@@ -262,10 +262,14 @@ class VenueKeeper:
         return stored.key if stored is not None else None
 
     def _broker_tick(self, venue: str, clock: Clock, snap: Snapshot | None, window: TickWindow) -> None:
-        if self.plan.mechanism == "auto":  # the engine crosses an auto venue itself: a broker match is refused
+        # The venue's own mechanism decides (one opened by hand may differ from `venue_mechanism`); the plan's
+        # only while the public list does not show it yet. The engine crosses an auto venue: a broker is refused.
+        listed = next((v for v in snap.venues if v.id == venue), None) if snap is not None else None
+        mechanism = listed.mechanism if listed is not None and listed.mechanism else self.plan.mechanism
+        if mechanism == "auto":
             if clock.tick - self.reminded >= REMIND_TICKS:
                 self.reminded = clock.tick
-                self.log(f"tick {clock.tick} venue: {venue} is auto (venue_mechanism): the engine matches, no broker")
+                self.log(f"tick {clock.tick} venue: {venue} is auto: the engine matches, no broker")
             return
         if self._broker is None or self._broker[0] != venue:
             key = self._key(venue)
