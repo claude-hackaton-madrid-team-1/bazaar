@@ -250,7 +250,11 @@ def dealer_refusal(dealer_id: str, personas: list[Any], me: Mapping[str, Any], c
 
 
 def copy_to_sell(
-    me: Mapping[str, Any], ref: str, listed: frozenset[int] = frozenset(), unnamed: int = 0
+    me: Mapping[str, Any],
+    ref: str,
+    listed: frozenset[int] = frozenset(),
+    unnamed: int = 0,
+    allow_page_card: bool = False,
 ) -> dict[str, Any]:
     """The copy of `ref` we lose least by selling, from /api/me, among the copies none of our open offers
     gives (`listed` asset ids; `unnamed`: listed assets whose card we cannot tell, counted against every card).
@@ -261,7 +265,7 @@ def copy_to_sell(
     if not copies:
         raise SellRefused(f"we hold no card {ref!r} (check `uv run bazaar status`)")
     free = [a for a in copies if a["id"] not in listed]
-    if only_copy(ref, copies[0].get("rarity"), len(free) - unnamed):
+    if not allow_page_card and only_copy(ref, copies[0].get("rarity"), len(free) - unnamed):
         raise SellRefused(
             f"{ref}: {len(free) - unnamed} free copies (not on our offers); never sell the last one of a page card"
         )

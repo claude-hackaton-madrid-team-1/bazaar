@@ -942,6 +942,12 @@ def dealer_sell(
         "abuela", help="Dealer id: abuela, chato, pilar, ... (its menu must buy this rarity and set)"
     ),
     live: bool = typer.Option(False, help="Actually trade. Without it: dry run, nothing is sent"),
+    allow_page_card: bool = typer.Option(
+        False,
+        "--allow-page-card",
+        help="Also sell our only copy of a page card (pages do not score; a human decision, Omar Sat 3 Oct)."
+        " The floor may then sit below the copy's your_value.",
+    ),
 ) -> None:
     """Sell one duplicate to a dealer (a ladder deal): falling distinct asks, hard floor, never at her opening bid."""
     from rich.markup import escape
@@ -965,13 +971,16 @@ def dealer_sell(
     from bazaar_agent.ledger_pg import LedgerUnavailable
 
     rules = _rules().rules
+    if allow_page_card:  # a human decision for this one sale: pages do not score (RULES.md Scoring)
+        rules = rules.model_copy(update={"protect_page_sets": "none", "sell_min_value_ratio": 0.0})
     settings = load_settings()
     client, me = _team_me()  # album first: the copy, its your_value and how many we hold, from /api/me
     mine = open_commitments(_my_offers(client), str(me.get("id") or ""))  # copies our asks give
     try:
-        asset = copy_to_sell(me, ref, mine.listed, mine.unnamed_listed)
+        asset = copy_to_sell(me, ref, mine.listed, mine.unnamed_listed, allow_page_card)
         your_value = float(asset["your_value"])
-        check_floor(floor, your_value)
+        if not allow_page_card:
+            check_floor(floor, your_value)
         plan = AskPlan(start, step, floor)
     except (SellRefused, ValueError) as e:
         _fail(str(e))
@@ -1002,7 +1011,7 @@ def dealer_sell(
     def checked(kind: gr.ActionKind, price: int | None, ctx: gr.Context) -> gr.Verdict:
         """guardrails.check plus the last uncommitted copy of a page card (any page, not only new ones)."""
         verdict = gr.check(action(kind, price), ctx, rules)
-        if only_copy(ref, rarity, (ctx.sellable or {}).get(ref, 0)):
+        if not allow_page_card and only_copy(ref, rarity, (ctx.sellable or {}).get(ref, 0)):
             why = f"{ref}: the last copy not on an open offer of ours (sellable {(ctx.sellable or {}).get(ref, 0)})"
             return gr.Verdict(False, (*verdict.violations, why))
         return verdict

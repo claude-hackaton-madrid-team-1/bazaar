@@ -360,3 +360,15 @@ def test_only_copy_guard_reads_the_sellable_count():
 def test_an_opening_bid_at_or_above_our_start_is_countered_above_it_not_walked():
     move = decide_sell(SellNegotiation(AskPlan(10, 1, 6)), 12, 99, False)
     assert (move.kind, move.price) == ("bid", 13)
+
+
+def test_allow_page_card_sells_our_only_copy_of_a_page_card() -> None:
+    from bazaar_agent.agents.dealer_sell import SellRefused, copy_to_sell
+
+    me = {"assets": [{"id": 7, "kind": "card", "ref": "RET-06", "rarity": "uncommon", "your_value": 17.5}]}
+    try:
+        copy_to_sell(me, "RET-06")
+        raise AssertionError("the only copy must be refused by default")
+    except SellRefused:
+        pass
+    assert copy_to_sell(me, "RET-06", allow_page_card=True)["id"] == 7
