@@ -194,9 +194,9 @@ def test_the_cli_scans_the_board_rebuilt_from_the_feed(tmp_path):
     files += ["--catalog", str(tmp_path / "catalog.json")]
     out = CliRunner().invoke(app, ["opportunities", *files, "--venues", str(tmp_path / "venues.json"), "--json"])
     assert out.exit_code == 0, out.output
-    assert [(o["kind"], o["ref"]) for o in json.loads(out.output)] == [("buy", "LAV-08"), ("sell", "LAT-09")]
+    assert [(o["kind"], o["ref"]) for o in json.loads(out.stdout)] == [("buy", "LAV-08"), ("sell", "LAT-09")]
     out = CliRunner().invoke(app, ["rivals", *files, "--json"])
-    assert out.exit_code == 0 and json.loads(out.output)["t06"]["asks"] == 4
+    assert out.exit_code == 0 and json.loads(out.stdout)["t06"]["asks"] == 4  # stderr has the target banner
 
 
 # ---------------------------------------------------------------- the taker's sell side (accept_bids)
