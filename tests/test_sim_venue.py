@@ -58,7 +58,9 @@ def test_the_keeper_opens_a_board_venue_and_its_broker_matches_the_bench_at_leas
         venue = keeper.opened.venue if keeper.opened else None
         assert venue is not None, lines
         assert me["venue"]["venue"] == venue and me["cash"] == 400 - 270
-        assert list(store) == [venue] and len([v for v in sim.world.state.venues.values() if v.owner == "t01"]) == 1
+        assert (
+            list(store) == [("", venue)] and len([v for v in sim.world.state.venues.values() if v.owner == "t01"]) == 1
+        )
         run = sim.world.state.bench[0]
         assert run.scored
         stall = BenchRun(run=run.run, start_tick=run.start_tick, end_tick=run.end_tick, traders=run.traders)

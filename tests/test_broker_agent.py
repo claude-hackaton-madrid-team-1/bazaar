@@ -172,8 +172,7 @@ def test_a_refused_match_is_logged_and_the_rest_still_go(tmp_path):
 def test_a_closed_tick_window_drops_matches_instead_of_sending_late(tmp_path):
     broker = crossing_book()
     agent(tmp_path, broker, live=True, allow_venue_open=True).on_tick(clock(next_tick_in=0.5))
-    assert broker.sent == []
-    assert {d["status"] for d in rows(tmp_path)} == {"expired"}
+    assert broker.sent == [] and rows(tmp_path) == []  # no time left: not even the book is read
 
 
 def test_per_tick_telemetry_counts_distinct_pairs_and_surplus(tmp_path):

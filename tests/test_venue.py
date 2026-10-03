@@ -69,7 +69,8 @@ def vault(data_dir, connect=None):
 
 
 class FakeConn:
-    """psycopg's surface the vault uses: execute(...).fetchone(), autocommit, closed, close()."""
+    """psycopg's surface the vault uses (execute(...).fetchone(), autocommit, closed, close()), over a dict
+    {(target, venue): (key, tick)} that stands for the `venue_keys` table."""
 
     def __init__(self, store, fail=False):
         self.store, self.fail, self.closed, self.autocommit = store, fail, False, False
@@ -78,15 +79,31 @@ class FakeConn:
         if self.fail:
             raise RuntimeError("database down")
         self.last = None
-        if sql.startswith("insert into venue_keys"):
-            venue, key, tick = params
-            self.store[venue] = (key, tick)
+        if sql.startswith("create table"):
+            return self
+        if sql.startswith("select count(*) from venue_keys where target = %s and venue <> %s"):
+            target, claim = params
+            self.last = (sum(1 for t, v in self.store if t == target and v != claim),)
+        elif sql.startswith("select count(*)"):
+            self.last = (sum(1 for t, _ in self.store if t == params[0]),)
+        elif sql.startswith("insert into venue_keys") and "''" in sql:  # the claim
+            target, claim, tick, stale = params
+            held = self.store.get((target, claim))
+            if held is None or held[1] < stale:
+                self.store[(target, claim)] = ("", tick)
+                self.last = (claim,)
+        elif sql.startswith("insert into venue_keys"):
+            target, venue, key, tick = params
+            self.store[(target, venue)] = (key, tick)
+        elif sql.startswith("delete from venue_keys"):
+            self.store.pop(tuple(params), None)
         elif sql.startswith("select venue, broker_key"):
-            wanted = params[0]
-            rows = [(v, k) for v, (k, _) in self.store.items() if wanted in (None, v)]
+            target, claim, wanted, _ = params
+            rows = [(v, k) for (t, v), (k, _) in self.store.items() if t == target and v != claim]
+            rows = [r for r in rows if wanted in (None, r[0])]
             self.last = rows[-1] if rows else None
-        elif sql.startswith("select count"):
-            self.last = (len(self.store),)
+        else:
+            raise AssertionError(f"unexpected SQL {sql}")
         return self
 
     def fetchone(self):
@@ -146,7 +163,7 @@ def test_a_live_allowed_open_sends_a_board_venue_and_saves_the_key_0600_never_re
             "broker_key": "[saved]",
         }
     )
-    assert store == {"v07": (SIM_KEY, 150)}
+    assert store == {("", "v07"): (SIM_KEY, 150)}  # the claim row is gone once the key is saved
     saved = tmp_path / BROKER_ENV_FILE
     assert stat.S_IMODE(saved.stat().st_mode) == 0o600
     assert SIM_KEY in saved.read_text() and "v07" in saved.read_text()

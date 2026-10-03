@@ -255,6 +255,14 @@ def shutdown_tracing() -> None:
 # ---------------------------------------------------------------- what a span may carry
 
 
+def add_secret(value: str) -> None:
+    """A secret learnt at run time (our venue's broker key): cut out of every span and stored row by value,
+    like the `*_KEY` variables read at start."""
+    value = value.strip()
+    if len(value) >= MIN_SECRET_LENGTH and value not in _RT.secrets:
+        _RT.secrets = tuple(sorted({*_RT.secrets, value}, key=len, reverse=True))
+
+
 def scrub(text: str) -> str:
     """DB passwords cut out (`pgconn.redact`: libpq can echo one), our secret values and team-key
     shapes cut out, then the Jev masking."""
