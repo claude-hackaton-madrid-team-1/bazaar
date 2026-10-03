@@ -1,0 +1,29 @@
+{
+  "about": "Bazaar strategy gates (SG1). Each strategy runs only on a decided yes to its question, asked again every `strategy_jev_refresh_ticks` with the live state; undecided, no, a timeout or a failed call keeps it off (fail closed). Code still checks every send against GUARDRAILS.md (caps, the official value, the cash floor, the accept slot); a verdict never authorizes a trade on its own.",
+  "questions": {
+    "ladder_probe_worth_it": {
+      "type": "noul",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state`, should our taker run the ladder probe this game hour: one small negotiated BUY per dealer we have unlocked, laddered up from a low bid, never at the dealer's opening ask?",
+        "note": "The dealer ladder scores the share of each dealer's price range we capture on our best three deals per level (a missing deal counts zero, higher levels weigh more); a deal at the dealer's opening ask scores nothing. `state.ladder` shows how many scored deals we have per dealer and our ladder points. `state.probe` lists the planned probes: the card, the dealer's opening ask, its lowest fill seen, our ladder (start, top) and the share of the range our top would still capture. Each probe's top is at most the official value of the card (what the scorer counts), its rarity cap and the cash we may spend above `cash_floor`. Cash spent on a dealer buy is not lost score by itself, but cash left above the floor is what every other strategy (duels aside) needs."
+      },
+      "criteria": {
+        "true": "We have few or no scored deals at some dealer level, the planned probes are small next to the cash above the floor, and each one can still capture a fair share (0.3 or more) of that dealer's range.",
+        "false": "The probes would spend most of the cash above the floor, our ladder deals are already scored, or the planned prices capture too little of the range to score."
+      }
+    },
+    "dealer_sell_duplicates_worth_it": {
+      "type": "noul",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state`, should our maker sell duplicate cards to dealers this game hour (one sell thread at a time, with the backoff and the floors below)?",
+        "note": "`state.duplicates` lists our spare copies (a page keeps one copy) with `your_value`. A dealer sale gives us cash and, when negotiated, counts on the dealer ladder (a deal at the dealer's opening bid scores nothing). Rules in force: never below our value + 2, a dealer's FINAL is taken only at or above max(our floor, half our first ask), one sell thread at a time, after a no-deal the same card waits one game hour with that dealer, a dealer just used waits 6 ticks, and no sell thread opens with a dealer the taker wanted in the last ticks. `state.history` shows what happened last time (Sat: four threads for one copy with Abuela, then the taker was blocked)."
+      },
+      "criteria": {
+        "true": "We hold duplicates worth little to us that dealers pay more for, cash is low, and the backoff rules stop the old failure (repeated threads, a blocked taker).",
+        "false": "There is nothing worth selling, the dealers pay below our floor, or a sell thread would keep a dealer from the taker's buys."
+      }
+    }
+  }
+}

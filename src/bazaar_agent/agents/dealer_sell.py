@@ -122,9 +122,12 @@ def _counter_above(neg: SellNegotiation, bid: int) -> Move:
     return Move("bid", price, reason=f"counter above her unraised bid {bid}")
 
 
-def decide_sell(neg: SellNegotiation, bid: int | None, offer_id: int | None, final: bool) -> Move:
-    """The next move, given the dealer's newest open bid (None when none stands). A "bid" move is OUR ask."""
+def decide_sell(neg: SellNegotiation, bid: int | None, offer_id: int | None, final: bool, final_min: int = 0) -> Move:
+    """The next move, given the dealer's newest open bid (None when none stands). A "bid" move is OUR ask.
+    `final_min`: a FINAL below it walks even above our floor (`dealer_sell_final_min_first_ask_share`)."""
     neg.see_bid(bid)
+    if final and bid is not None and bid < final_min:
+        return Move("walk", reason=f"her final {bid} is below {final_min} (share of our first ask)")
     if bid is None and neg.asks and neg.opening_bid is None:
         neg.awaiting_reply = True
         return _patient(neg, "waiting for her first bid") or Move("walk", reason="no bid from her", rest=True)
