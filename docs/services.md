@@ -90,7 +90,9 @@ A decision, as published:
 
 - `kind` is one of `accept_ask`, `dealer_open`, `dealer_bid`, `dealer_accept`, `dealer_walk`, `post_ask`,
   `post_bid`, `cancel_ask`, `cancel_bid`, `hold_ask` / `hold_bid` and `reprice_ask` / `reprice_bid` (the
-  maker's `reprice_or_hold` verdict).
+  maker's `reprice_or_hold` verdict), and, from the duel player (`agent: "duels"`, no HTTP), `duel_accept`,
+  `duel_offer`, `duel_hold`, and, from our venue's broker (`agent: "broker"`, `bazaar broker run`, no HTTP yet),
+  `broker_match`.
 - `status` is `approved` (sent, or would be in a dry run), `rejected` or `expired`; `sent` is
   `would-send`, `sending` or `not sent`.
 - `guardrail` is only a label: `allowed`, `denied` or `-` (the rules it broke are in the `decisions` table).
@@ -214,6 +216,36 @@ to type: the targets are hardcoded in `src/bazaar_agent/config.py`), e.g. `BAZAA
 status`. A dashboard can point its base URL there to develop against live-looking data; team routes
 take `X-Team-Key: sim-team1` (a simulator key, not a secret, refused by the real game). The taker's,
 maker's and MCP server's `/health` carry `target: {mode: real|simulator, url}`. README, "Simulator".
+
+## Our venue: from build only to live
+
+Everything for our own market is built and tested, and blocked: `allow_venue_open = false` in
+`GUARDRAILS.md` makes `guardrails.check()` refuse `venue_open`, `venue_fee`, `venue_announce` and every
+`broker_match`, even with `--live`. Closing (`venue_close`) never waits for the switch, so a venue opened
+by hand can always be closed. The kill switch (`trading_enabled = false`, `touch .local/PAUSE`) stops all of them.
+
+1. **Check the cash.** Opening takes the 250 P bond + 20 P fee, and the guardrail keeps cash at or above
+   `cash_floor` (270) afterwards: with today's floor we need **540 P** to open. The floor was set to
+   reserve exactly the venue's 270 P, so whoever flips the switch decides whether to lower it first.
+2. **Flip the switch** in `GUARDRAILS.md` (`allow_venue_open` = true), run `uv run bazaar rules`, commit.
+3. **Open a board venue** (a broker acts only on `board`; on `auto` the engine crosses first and earns
+   what the free stall earns, half the bench points). Dry run first, then live:
+   `uv run bazaar venue open --name "..." --fee-bps 0` → read the line → add `--live`.
+   The broker key comes back once: it is saved to `.local/broker.env` (mode 0600) as
+   `BAZAAR_BROKER_KEY` with `BAZAAR_VENUE`, and never printed. For a Railway service, copy it into the
+   service's variables by hand (`BAZAAR_BROKER_KEY`, `BAZAAR_VENUE`). Team venues start trading at +3 h.
+4. **Run the broker**: `uv run bazaar broker run` (dry run: `decisions` rows with `dry_run = true`,
+   `.local/agents/broker_ticks.jsonl` and `broker_sessions.jsonl`), then `uv run bazaar broker run --live`.
+   It reads `/api/broker/book` once per tick, never matches our own offers or two offers of one maker, and
+   sends the exact maximum-surplus matching (bench first) at the midpoint price.
+5. **Fees** change with `uv run bazaar venue fee <bps> [--fee-per-card N] --live` (effective after the
+   public notice); `uv run bazaar venue announce "..." --live` posts a notice with the broker key.
+6. **Watch** `uv run bazaar venue status` (switch, venue row, what the broker would match) and the
+   per-session lines `Market Test bNN over: pairs, quoted surplus`.
+
+A real broker key (`bk_...`) is only sent to `https://bazaar.causaprima.ai`, a simulator key (`simbk-...`)
+only to another host: the broker works unchanged against PR #55's `bazaar-sim` (`/api/broker/book`,
+`/api/broker/matches`, `/api/broker/announce`, `bench_offers`, `bench.started` / `bench.finished`).
 
 ## Not public
 

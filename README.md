@@ -164,6 +164,9 @@ uv run bazaar threads                     # our negotiation threads; `bazaar thr
 uv run bazaar obs up                      # Phoenix traces UI (then BAZAAR_TRACING=1, see Observability)
 uv run bazaar agent taker                 # autonomous buyer, every tick: DRY RUN (logs WOULD-moves) until --live
 uv run bazaar agent maker                 # autonomous market maker (asks, bids, reprices): DRY RUN until --live
+uv run bazaar venue status                # our venue, the build-only switch, what our broker would match now
+uv run bazaar venue open --fee-bps 0      # open our board venue (250 P bond + 20 P): DRY RUN, build only
+uv run bazaar broker run                  # our venue's broker, every tick: exact max-surplus matches, DRY RUN
 
 uv run bazaar db up && uv run bazaar db init && uv run bazaar db load   # Postgres + pgvector memory
 uv run bazaar db tables                   # every table with its row count
@@ -273,6 +276,21 @@ per rarity, no buying cards we hold, accepts per tick, Jev and duel parameters, 
 reads go on, nothing is sent, not even cancels or closes, and open offers and threads stay as they are. To
 empty the book, pause and then `uv run bazaar flatten --live` (`--threads` also closes our threads): the one
 operator write that goes out while the kill switch is on.
+
+## Our venue and its broker (market making, build only)
+
+Market making is 30 % of the score: the Market Test (every two hours every venue gets the same synthetic
+book; we score the share of possible gains our broker realises) and the value other teams create on our
+venue. The code is built and tested, but `allow_venue_open = false` in `GUARDRAILS.md` keeps it from
+opening, re-feeing, announcing or matching on a real venue, even with `--live`.
+
+- `uv run bazaar venue status` shows the switch, our venue (if any) and what the broker would match now.
+- `uv run bazaar venue open|close|fee|announce ...` are dry runs; `--live` sends only when the switch is on,
+  the kill switch is off and the 250 P bond + 20 P fee leave cash at or above `cash_floor`.
+- `uv run bazaar broker run` reads our book every tick and proposes an exact maximum-surplus matching
+  (bench first, never two offers of one maker, never ours, midpoint price), logged to `decisions`.
+
+How to go live (opening the venue, the fee, the broker): [docs/services.md](docs/services.md#our-venue-from-build-only-to-live).
 
 ## Strategy (what to do next, ranked)
 
@@ -926,6 +944,12 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 | `uv run bazaar sell offers` | Our open and queued offers, and open offers addressed to us (GET /api/me/offers). |
 | `uv run bazaar sell cancel` | Withdraw one of our open offers (refused while the kill switch is on: open offers stay open). |
 | `uv run bazaar flatten` | Cancel every open offer of ours (--threads: also close our threads); works while the kill switch holds. |
+| `uv run bazaar venue open` | Open our venue: 250 P bond + 20 P; saves the broker key (0600), never prints it. |
+| `uv run bazaar venue close` | Close our venue; the bond comes back after a cooldown (a session counts the best venue open in it). |
+| `uv run bazaar venue fee` | Announce new fees on our venue; they take effect after the public notice. |
+| `uv run bazaar venue announce` | Post a notice on our venue with the broker key. |
+| `uv run bazaar venue status` | Read only: the build-only switch, our venue on the public list, what the broker would match now. |
+| `uv run bazaar broker run` | Every tick: read our venue's book and send the maximum-surplus matches (bench first). |
 | `uv run bazaar llm` | Runtime LLM config (RUNTIME.md), pinned model, which credentials are set (never values), Jev's last choices. |
 | `uv run bazaar ask` | Talk to the agent: sentence → desk (or strict intent) → guardrail verdict → exact command. Dry run by default. |
 | `uv run bazaar steer` | Steer the style: instruction → bounded parameter deltas, clamped to GUARDRAILS.md, expiring at a tick. |
