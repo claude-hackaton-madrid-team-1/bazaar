@@ -21,6 +21,7 @@ from bazaar_agent import intel, render, traces
 from bazaar_agent import telemetry as tm
 from bazaar_agent.config import REPO_ROOT, ConfigError, Settings, load_settings
 from bazaar_agent.evals import cli as evals_cli
+from bazaar_agent.evals.model import EVERY_TICKS
 from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore, load_events
 from bazaar_agent.identity import remember_team_id, resolve_team_id
 from bazaar_agent.learn import cli as learn_cli
@@ -51,6 +52,19 @@ console = Console()
 err_console = Console(stderr=True)
 
 LIVE_HELP = "Merge the live feed window into the captured history"
+
+
+def evals_default(asked: int | None, trading: bool) -> int:
+    """`--evals-every`, else every EVERY_TICKS ticks for a process that trades (live, or duel --play) and off
+    for a dry run: a laptop dry run must not write the team's scores."""
+    if asked is not None:
+        return asked
+    return EVERY_TICKS if trading else 0
+
+
+EVALS_EVERY_HELP = (
+    "Score this agent's settled decisions every N ticks in the background (default: 6 if it trades, else off)"
+)
 
 
 @app.callback()
@@ -451,6 +465,7 @@ def duel_run(
     play: bool = typer.Option(False, help="Send offers/accepts. Without it: log only"),
     max_ticks: int = typer.Option(0, help="Stop after N ticks (0 = run until Ctrl-C)"),
     jev: bool = typer.Option(True, help="Jev duel_move picks among the legal moves (undecided: today's move)"),
+    evals_every: int | None = typer.Option(None, "--evals-every", min=0, help=EVALS_EVERY_HELP),
 ) -> None:
     """Every tick: log raw /api/duels to .local/duels; with --play, offer/accept inside our limit."""
     from rich.markup import escape
@@ -547,6 +562,9 @@ def duel_run(
         except BazaarError as e:
             console.print(f"tick {tick}: /api/duels?done=true refused {e.code}")
             return
+        except Exception as e:  # noqa: BLE001 - bookkeeping after the tick's sends: it never breaks the loop
+            console.print(f"tick {tick}: /api/duels?done=true failed ({type(e).__name__})")
+            return
         append_jsonl(log_path, {"tick": tick, "response": data, "done": True})
         store.save(tick, [d for d in duel_list(data) if d.get("status") != "live"])
 
@@ -635,9 +653,12 @@ def duel_run(
         store.save(c.tick, duels)  # after the sends: the evals read duels from Postgres, never the API
         if store.read_finished(duels):
             save_finished(c.tick)
+        evals.after_tick(c.tick)  # last: a background pass every N ticks, never on the tick's path
 
+    every = evals_default(evals_every, play)
+    evals = _tick_evals("duels", every, lambda m: console.print(f"[dim]{escape(m)}[/dim]"))
     mode = f"{'PLAYING' if play else 'log only'}{', Jev duel_move' if jev else ''}"
-    console.print(f"duels → {log_path} + Postgres duels ({mode})")
+    console.print(f"duels → {log_path} + Postgres duels ({mode}) · evals every {every or '-'} ticks")
     try:
         run_per_tick(client.clock, traces.per_tick("duels tick", on_tick), max_ticks=max_ticks or None)
     finally:
@@ -650,6 +671,28 @@ def _db_connect(app: str) -> Callable[[], Any]:
     from bazaar_agent import db
 
     return lambda: db.connect(app=app)
+
+
+def _tick_evals(agent: str, every: int, log: Callable[[str], None]) -> Any:
+    """The agent's in-loop evals (evals/inline.py). A missing Phoenix key is said once, not every pass."""
+    from bazaar_agent.evals.inline import TickEvals
+    from bazaar_agent.evals.phoenix import annotator_from
+
+    said: set[str] = set()
+
+    def once(message: str) -> None:
+        if message not in said:
+            said.add(message)
+            log(message)
+
+    def annotator() -> Any:
+        if load_settings().simulator:  # simulated duel ids collide with real ones: never annotate real traces
+            once(f"evals ({agent}): simulator, scores stay in Postgres only")
+            return None
+        cfg = tm.tracing_config()
+        return annotator_from(cfg.ui_url, cfg.api_key, cfg.project, once)
+
+    return TickEvals(agent, every, _db_connect(f"bazaar-evals-{agent}"), evals_cli.team_id, annotator, log)
 
 
 def _jev_journal(settings: Any) -> Any:
@@ -1343,6 +1386,7 @@ def _run_agent(
     build: Callable[..., Any],
     port: int | None = None,
     host: str | None = None,
+    evals_every: int | None = None,
     learn: bool = False,
 ) -> None:
     """Shared wiring: settings, guardrails, strategy, the shared ledger, the decision log, the feed, the
@@ -1425,10 +1469,17 @@ def _run_agent(
         ),
         **extra,
     )
-    log(f"{name}: ledger {ledger.where} · decisions {decisions.where}")
+    every = evals_default(evals_every, is_live)
+    evals = _tick_evals(name, every, log)
+    log(f"{name}: ledger {ledger.where} · decisions {decisions.where} · evals every {every or '-'} ticks")
+
+    def on_tick(clock: Clock) -> None:
+        agent.on_tick(clock)
+        evals.after_tick(clock.tick)  # after every send of the tick; the pass runs in the background
+
     try:
         read_clock = watched_clock(team.clock, name, log, hub)
-        run_per_tick(read_clock, traces.per_tick(f"{name} tick", agent.on_tick), max_ticks=max_ticks or None)
+        run_per_tick(read_clock, traces.per_tick(f"{name} tick", on_tick), max_ticks=max_ticks or None)
     finally:
         decisions.close()
 
@@ -1441,6 +1492,7 @@ def agent_taker(
     jev: bool = typer.Option(True, help="Ask Jev offer_is_worth_accepting (advisory) and spend_pack_slot_now"),
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
+    evals_every: int | None = typer.Option(None, "--evals-every", min=0, help=EVALS_EVERY_HELP),
     learn: bool = typer.Option(
         True,
         envvar="BAZAAR_LEARN",
@@ -1467,7 +1519,7 @@ def agent_taker(
             **kw,
         )
 
-    _run_agent("taker", live, max_ticks, build, port, host, learn=learn)
+    _run_agent("taker", live, max_ticks, build, port, host, evals_every, learn=learn)
 
 
 @agent_app.command("maker")
@@ -1477,6 +1529,7 @@ def agent_maker(
     jev: bool = typer.Option(True, help="Jev list_price_choice / reprice_or_hold pick among legal prices"),
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
+    evals_every: int | None = typer.Option(None, "--evals-every", min=0, help=EVALS_EVERY_HELP),
 ) -> None:
     """Every tick: post asks for sell candidates and bids for missing cards; reprice or cancel stale offers."""
     from bazaar_agent.agents.maker import Maker
@@ -1484,7 +1537,7 @@ def agent_maker(
     def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
         return Maker(team, public, jev=_maker_jev(settings, kw["rules"]) if jev else None, **kw)
 
-    _run_agent("maker", live, max_ticks, build, port, host)
+    _run_agent("maker", live, max_ticks, build, port, host, evals_every)
 
 
 # ---------------------------------------------------------------- runtime LLM (RUNTIME.md)
