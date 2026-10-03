@@ -1044,3 +1044,15 @@ a buyer's bid down (9 times in duel session 2, one per restart tick, from `duels
 the old process had already offered in also sent a second message, refused `wait_for_tick` (8 in the Railway logs).
 Fix: `payload_start(..., wait)` backs our earliest message off by the wait, and `duel run` holds an offer when the
 duel already shows one of ours this tick (`spoke_this_tick`). Duel sends are not in `executions`: read `duels`.
+
+### [2026-10-03] gotcha — a log line that says " refused " fails the simulator smoke
+`scripts/sim_smoke.py` fails a step on any ` refused ` in its output (CRASH_MARKERS), our own WARN lines included: the
+human-approval board's first fail-closed note ("… is refused (fail closed)") failed `agent taker --live`. Word new
+WARN lines without " refused " (HA1 says "no trade at or above … goes out").
+
+### [2026-10-03] finding — every service read at the tick boundary and the key answered 429 (Sat ticks 646–650)
+Taker, maker, duels and mcp all woke at the boundary on our one key (5 req/s, bursts of 20): `tick 647 maker: read
+refused rate_limited … nothing sent` (649 too), `tick 646: /api/duels refused rate_limited` (a lost duel tick scores 0).
+Fix (TS1): each tick loop wakes `BAZAAR_TICK_OFFSET_S` after the tick (≤ 10 s, ≤ 40 % of the tick), set by hand per
+service (duels 0, taker 2.5, maker 5, mcp 7.5; declared `preserve()` in `.railway/railway.py`); `duel run` re-reads a
+429'd `/api/duels` once (`sdk.read_once_more_after_429`). A new service or tick loop on the key needs its own offset.

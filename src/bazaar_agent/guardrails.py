@@ -23,6 +23,7 @@ from typing import Any, Literal, Protocol, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
 
+from bazaar_agent.approvals import ApprovalBook
 from bazaar_agent.config import REPO_ROOT
 from bazaar_agent.intel import TEAM_ID
 from bazaar_agent.official_values import OfficialValues, cap_violations
@@ -173,6 +174,7 @@ class Guardrails(BaseModel):
     deploy_guard_duel_ticks: int = Field(default=4, ge=0, le=100)
     deploy_guard_bench_ticks: int = Field(default=10, ge=0, le=200)
     breaker_read_timeout_s: float = Field(default=1.0, gt=0, le=5)
+    human_approval_above: int = Field(default=0, ge=0)  # 0: off (GUARDRAILS.md turns it on)
     live_watchdog_enabled: bool = False
     watchdog_window_ticks: int = Field(default=120, ge=1, le=2000)
     watchdog_swap_cash_per_hour: int = Field(default=40, ge=0)
@@ -298,6 +300,7 @@ ENFORCED_BY: dict[str, str] = {
     "deploy_guard_duel_ticks": "deploy_guard.verdict (`bazaar deploy-guard`, scripts/merge_safe.sh)",
     "deploy_guard_bench_ticks": "deploy_guard.verdict (`bazaar deploy-guard`, scripts/merge_safe.sh)",
     "breaker_read_timeout_s": "guardrails.check → breakers.BreakerBoard.tripped (once per tick, fail open)",
+    "human_approval_above": "guardrails.check → approvals.ApprovalBoard.read (once per tick, fail closed)",
     "live_watchdog_enabled": "agents.taker → watchdog.run (after the tick's sends)",
     "watchdog_window_ticks": "watchdog.run (every rule's window)",
     "watchdog_swap_cash_per_hour": "watchdog.swap_rules (trips team_swap)",
@@ -700,6 +703,8 @@ class Context:
     ranking: bool = False  # a ranking or plan check: no official value read; the send's own check caps the buy
     # Tripped circuit breakers (`breakers.py`). None: read this process's board for `tick` (once per tick, fail open).
     breakers: frozenset[str] | None = None
+    # Human approvals (`approvals.py`). None: read this process's board for `tick` (once per tick, fail closed).
+    approvals: ApprovalBook | None = None
 
 
 # What a stored or answered /me (`holdings.without_secrets`) keeps of `starter_broker_key`: that it was there.
@@ -825,6 +830,8 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
     v.extend(_breaker_violations(action, ctx, rules))
     if buying and not v and not ctx.ranking:  # last, so /api/me/value is read only for a buy every rule allows
         v.extend(_official_value_violations(action, ctx, rules))
+    if not v:  # after every other rule: a human is asked only about a trade nothing else refuses
+        v.extend(_approval_violations(action, ctx, rules))
     return Verdict(not v, tuple(v), halted)
 
 
@@ -856,6 +863,53 @@ def _breaker_violations(action: Action, ctx: Context, rules: Guardrails) -> list
     if tripped is None:
         tripped = breakers.board(rules.breaker_read_timeout_s).tripped(ctx.tick)
     return [f"circuit breaker {scope} is tripped (`bazaar breaker list`)"] if scope in tripped else []
+
+
+def approval_side(action: Action) -> str | None:
+    """The side a human approves for this write: a card buy or a card sell. Duels (synthetic prices, not our cash),
+    packs (their own caps) and writes that move no cash have none."""
+    if action.price is None or action.rarity == "pack" or is_pack(action.item):
+        return None
+    if action.kind in ("buy", "accept_buy", "bid"):
+        return "buy"
+    return "sell" if action.kind in SELLING else None
+
+
+def _approval_violations(action: Action, ctx: Context, rules: Guardrails) -> list[str]:
+    """`human_approval_above`: a card trade at or above it (fee included, plus the copy a swap gives) needs an
+    approval covering its card, side and price. Fails closed: approvals that cannot be read approve nothing."""
+    side = approval_side(action)
+    # A ranking or plan check skips it (as the official value cap): a plan prices at its ladder top, not at the
+    # bid, and a human is asked only about a write about to be sent.
+    if side is None or rules.human_approval_above <= 0 or action.price is None or ctx.ranking:
+        return []
+    price = action.price + (action.gives_value if side == "buy" else 0.0)
+    if price < rules.human_approval_above:
+        return []
+    from bazaar_agent import approvals
+
+    board = approvals.board(rules.breaker_read_timeout_s)
+    book = ctx.approvals if ctx.approvals is not None else board.read(ctx.tick)
+    if book is not None and book.covers(action.item, side, price, ctx.tick):
+        return []
+    shown = math.ceil(round(price, 6))
+    held = ctx.held.get(action.item, 0)
+    official = ctx.values.cached(action.item, ctx.tick, held) if ctx.values is not None else None
+    board.needed(
+        {
+            "card": action.item,
+            "side": side,
+            "price": shown,
+            "tick": ctx.tick,
+            "counterparty": action.counterparty,
+            "official_value": official,
+            "our_value": action.your_value,
+            "kind": action.kind,
+        },
+        int(ctx.t_hours),
+    )
+    unread = "" if book is not None else f" {approvals.UNREAD}"
+    return [f"needs human approval: {action.item} {side} {shown}{unread}"]
 
 
 def _official_value_violations(action: Action, ctx: Context, rules: Guardrails) -> list[str]:

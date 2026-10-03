@@ -18,7 +18,17 @@ from typing import Annotated, Any
 import typer
 from rich.console import Console
 
-from bazaar_agent import breaker_cli, deploy_guard, flags_cli, intel, persona_cli, render, supply_cli, traces
+from bazaar_agent import (
+    approval_cli,
+    breaker_cli,
+    deploy_guard,
+    flags_cli,
+    intel,
+    persona_cli,
+    render,
+    supply_cli,
+    traces,
+)
 from bazaar_agent import telemetry as tm
 from bazaar_agent.agents import dealer_finals
 from bazaar_agent.config import REPO_ROOT, ConfigError, Settings, load_settings
@@ -2275,6 +2285,8 @@ sell_app = typer.Typer(no_args_is_help=True, help="Our offers on a venue: list a
 app.add_typer(sell_app, name="sell")
 app.add_typer(flags_cli.flags_app, name="flags")
 app.add_typer(breaker_cli.breaker_app, name="breaker")
+app.command("approve")(approval_cli.approve)
+app.command("approvals")(approval_cli.approvals_list)
 app.command("deploy-guard", help="Is it safe to merge to main (which redeploys the duels)? Exit 1 = no.")(
     deploy_guard.deploy_guard_cmd
 )
