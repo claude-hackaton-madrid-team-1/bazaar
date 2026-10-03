@@ -33,7 +33,8 @@ class Style:
     dealer: str
     open_mult: dict[str, float]  # opening ask over the menu's list price, per rarity
     floor_range: dict[str, tuple[float, float]]  # the secret floor, as a share of the list price
-    buy_open: float  # share of book a dealer bids for a card it buys (and never moves from)
+    buy_open: float  # share of book a dealer first bids for a card it buys
+    buy_ceiling: float  # its secret limit when buying: it raises one prima per move of ours, up to this share
     patience: int  # rounds before a final offer when selling
     buy_patience: int
     matches_moves: bool  # El Chato: holds the first move, one per small step, matches a big one
@@ -50,6 +51,7 @@ ABUELA = Style(
     {"common": 1.2, "uncommon": 1.16},
     {"common": (0.7, 0.9), "uncommon": (0.84, 0.92), "pack": (0.654, 0.70)},
     buy_open=0.5,
+    buy_ceiling=0.65,  # real feed, Friday sells: 5→6 on commons, 12→16 and 20→23 on uncommons
     patience=10,
     buy_patience=4,
     matches_moves=False,
@@ -65,6 +67,7 @@ CHATO = Style(
     {"uncommon": 1.1, "rare": 1.078},
     {"uncommon": (0.9, 1.0), "rare": (0.95, 1.02), "pack": (0.92, 0.95)},
     buy_open=0.52,
+    buy_ceiling=0.6,
     patience=8,
     buy_patience=3,
     matches_moves=True,
@@ -158,7 +161,7 @@ def start(
             assets=assets,
             list_price=list_price,
             opening=bid,
-            limit=bid,
+            limit=max(bid, round(list_price * style.buy_ceiling)),
             patience=style.buy_patience,
         )
     key = "pack" if item_kind == "pack" else str(rarity)
@@ -260,8 +263,8 @@ def _haggle(
 ) -> Reply:
     assert neg.ask is not None
     step = _moved(neg, team_price)
-    give = concession(style, step, neg.rounds) if neg.side == "sell" else 0
-    ask = max(neg.limit, neg.ask - give) if neg.side == "sell" else neg.ask
+    give = concession(style, step, neg.rounds) if neg.side == "sell" else min(step, 1)
+    ask = max(neg.limit, neg.ask - give) if neg.side == "sell" else min(neg.limit, neg.ask + give)
     spam = style.spam_penalty and team_price is None and team_text is not None and team_text == neg.last_team_text
     cost = 1 if step > 0 else (2 if _backward(neg, team_price) or spam else 1)
     patience = neg.patience - cost
@@ -275,7 +278,11 @@ def _haggle(
         "pending_reply": False,
     }
     if patience <= 0:
-        final = ask - round((ask - neg.limit) * style.generosity) if neg.side == "sell" else ask
+        final = (
+            ask - round((ask - neg.limit) * style.generosity)
+            if neg.side == "sell"
+            else ask + round((neg.limit - ask) * style.generosity)
+        )
         key = "final" if neg.side == "sell" else "final_buy"
         done = neg.model_copy(update={**update, "ask": final, "final": True})
         return Reply("final", final, _say(style, key, rng, p=final), done)
