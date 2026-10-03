@@ -16,7 +16,7 @@ from statistics import median
 from typing import Any
 
 Event = dict[str, Any]
-TEAM_ID = re.compile(r"^t\d+$")
+TEAM_ID = re.compile(r"^t\d+\Z")  # \Z, not $: "t05\n" is not a team id
 
 
 # ---------------------------------------------------------------- us vs the competition
