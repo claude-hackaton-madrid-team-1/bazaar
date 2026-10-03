@@ -612,7 +612,10 @@ def duel_run(
                 first_seen.setdefault(live_id, payload_start(d, c.tick) if v2 else c.tick)
         picks: dict[int, DuelPick] = {}
         limit = min(rules.max_accepts_per_tick, c.limits.accepts_per_team_per_tick)
-        slots = max(0, limit - ledger.accepts_in_tick(c.tick))  # another process may have taken it already
+        try:
+            slots = max(0, limit - ledger.accepts_in_tick(c.tick))  # another process may have taken it already
+        except LedgerUnavailable:  # no accept can be booked this tick; each duel's turn fails closed (#62)
+            slots = 0
         params = V2Params.from_rules(rules, anchor, floor) if v2 else None
         gap = c.tick - handled[-1] if handled else 1
         handled[:] = [c.tick]
@@ -627,18 +630,24 @@ def duel_run(
                 planned = {did: DuelMove("hold", reason="v2 planner failed") for did in live_ids}
         booked: set[int] = set()  # v2: the planner's accept takes the team's slot now, before Jev and the taker
         for planned_id, m in planned.items() if play else ():
-            d = next(x for x in duels if duel_id(x) == planned_id)
-            ctx = gr.Context(
-                cash=0,
-                held={},
-                tick=c.tick,
-                t_hours=c.t_hours,
-                accepts_this_tick=ledger.accepts_in_tick(c.tick),
-                paused=(REPO_ROOT / rules.pause_file).exists(),
-            )
-            if m.kind != "accept" or not gr.check(duel_action(d, m), ctx, rules).allowed:
+            if m.kind != "accept":
                 continue
-            if ledger.reserve_accept(c.tick, c.t_hours, 0, f"duel:{planned_id}", limit):
+            d = next(x for x in duels if duel_id(x) == planned_id)
+            try:
+                ctx = gr.Context(
+                    cash=0,
+                    held={},
+                    tick=c.tick,
+                    t_hours=c.t_hours,
+                    accepts_this_tick=ledger.accepts_in_tick(c.tick),
+                    stops=gr.kill_switch(rules),  # read live (#68): a held switch books no slot
+                )
+                if not gr.check(duel_action(d, m), ctx, rules).allowed:
+                    continue
+                reserved = ledger.reserve_accept(c.tick, c.t_hours, 0, f"duel:{planned_id}", limit)
+            except LedgerUnavailable:  # unbooked: the duel's own turn below fails closed for it alone (#62)
+                continue
+            if reserved:
                 booked.add(planned_id)
             else:
                 planned[planned_id] = DuelMove("hold", reason="another process took the team's accept this tick")
