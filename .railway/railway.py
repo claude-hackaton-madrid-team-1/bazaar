@@ -214,6 +214,12 @@ def live_show() -> object:
             "TRANSCRIPT_SPEAK_QUOTES": preserve(),  # opt-in: voice dealer quotes (captions only by default)
             "TRANSCRIPT_STREAMS_PER_ADDRESS": preserve(),  # SSE streams per address (default 24)
             "TTS_DAILY_CHARS": preserve(),  # daily ElevenLabs budget (chars ~ credits): guards the 10k weekend credits
+            "ELEVENLABS_VOICE_SELLER": preserve(),  # the seller's voice id, set by hand
+            # Game screens (bazaar-live #9): the relay reads the real game with the team key and serves
+            # private state (cash, cards, album) only to a page that carries ?token=GAME_VIEW_TOKEN.
+            # Both are set by hand with --stdin; undeclared, an apply would delete them and open the page.
+            "BAZAAR_KEY": preserve(),
+            "GAME_VIEW_TOKEN": preserve(),
         },
     )
 
