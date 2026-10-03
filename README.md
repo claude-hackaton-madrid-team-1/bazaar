@@ -1011,6 +1011,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] gotcha — the vendored SDK re-sends a 429 (GET and POST) and only a 4xx "costs nothing"
 - [2026-10-03] gotcha — decision inputs are scrubbed: a host name is stored as `[redacted]`
 - [2026-10-03] gotcha — after a restart, only the old taker's own threads may be touched (B17 review)
 - [2026-10-03] build-error — an adopted orphan thread waited 2 more ticks instead of walking (B17 on #72)
@@ -1018,7 +1019,6 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 - [2026-10-03] gotcha — BAZAAR_SIM=local talks to WHOEVER holds 127.0.0.1:8765
 - [2026-10-03] gotcha — refunds dated at `max_tick_seconds` over-count at 30 s / 15 s ticks
 - [2026-10-03] finding — a dealer's offer lapses 2 ticks after it is made; a hold then leaves us bidding blind
-- [2026-10-03] gotcha — a sim run without BAZAAR_SIM_DATABASE_URL writes the LOCAL docker Postgres
 
 <!-- BAZAAR:STATUS:END -->
 

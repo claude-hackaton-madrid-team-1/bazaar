@@ -81,7 +81,7 @@ class RefusingAccept(FakeTeam):
 BOARD = FakePublic(boards={"rastro": [ask(1, "LAV-02", 10), ask(2, "LAV-08", 20, asset=901)]})
 
 
-@pytest.mark.parametrize("code,status", [("offer_closed", 409), ("insufficient_cash", 400), ("not_found", 404)])
+@pytest.mark.parametrize("code,status", [("offer_closed", 409), ("asset_locked", 409), ("not_found", 404)])
 def test_a_refused_accept_gives_the_slot_to_the_next_candidate(tmp_path, code, status):
     team = RefusingAccept(code, status)
     t, _, ledger = make_taker(tmp_path, team, BOARD, threads=0)
@@ -99,12 +99,42 @@ def test_after_a_rate_limited_accept_the_slot_is_free_but_no_more_accepts_are_tr
     assert any("no more accepts this tick" in line for line in lines)
 
 
-@pytest.mark.parametrize("code,status", [("wait_for_tick", 429), ("network", 0), ("bad_response", 200)])
+@pytest.mark.parametrize("code,status", [("insufficient_cash", 400), ("cooloff", 403), ("persona_quota", 429)])
+def test_a_refusal_every_candidate_would_meet_frees_the_slot_and_ends_the_ticks_accepts(tmp_path, code, status):
+    team = RefusingAccept(code, status)
+    t, lines, ledger = make_taker(tmp_path, team, BOARD, threads=0)
+    t.on_tick(clock())
+    assert len(team.attempts) == 1 and ledger.accepts_in_tick(TICK) == 0
+    assert any("no more accepts this tick" in line for line in lines)
+
+
+def test_at_most_two_refused_accepts_per_tick(tmp_path):
+    """Each refused try costs a keyed clock read and a POST on the key every process shares (review of #141)."""
+    team = RefusingAccept("offer_closed", 409)
+    team.accept = lambda offer_id, assets=None: (team.attempts.append(offer_id), _raise("offer_closed", 409))[1]
+    asks = [ask(1, "LAV-02", 10), ask(2, "LAV-08", 20, asset=901), ask(3, "LAV-02", 11, asset=902)]
+    board = FakePublic(boards={"rastro": asks + [ask(4, "LAV-08", 21, asset=903)]})
+    t, _, ledger = make_taker(tmp_path, team, board, threads=0)
+    t.on_tick(clock())
+    assert len(team.attempts) == 2 and ledger.accepts_in_tick(TICK) == 0
+
+
+def _raise(code, status):
+    raise BazaarError(code, "refused", status)
+
+
+@pytest.mark.parametrize(
+    "code,status",
+    [("wait_for_tick", 429), ("network", 0), ("bad_response", 200), ("http_502", 502), ("internal", 500)],
+)
 def test_an_accept_that_used_the_quota_or_may_have_landed_keeps_its_slot(tmp_path, code, status):
+    """A 5xx may come after the game applied the accept: the slot is kept and the spend booked (fail safe)."""
     team = RefusingAccept(code, status)
     t, _, ledger = make_taker(tmp_path, team, BOARD, threads=0)
     t.on_tick(clock())
     assert len(team.attempts) == 1 and ledger.accepts_in_tick(TICK) == 1
+    if status >= 500:
+        assert ledger.spent_since(0) > 0
 
 
 def test_a_refused_accept_books_no_spend(tmp_path):
@@ -122,7 +152,10 @@ def _duel_ledger(tmp_path):
     return Ledger(tmp_path / "ledger.jsonl")
 
 
-@pytest.mark.parametrize("code,status,kept", [("rate_limited", 429, 0), ("duel_closed", 409, 0), ("network", 0, 1)])
+@pytest.mark.parametrize(
+    "code,status,kept",
+    [("rate_limited", 429, 0), ("duel_closed", 409, 0), ("network", 0, 1), ("http_503", 503, 1)],
+)
 def test_a_refused_duel_accept_gives_the_slot_back(duel_cli, code, status, kept):  # noqa: F811
     cli, client, _, tmp_path = duel_cli
 
@@ -217,3 +250,9 @@ def test_a_write_and_a_429_are_never_sent_twice(monkeypatch):
 def test_the_public_client_keeps_the_sdk_retries():
     public = sdk.public_client(types.SimpleNamespace(bazaar_url="http://127.0.0.1:9"))
     assert public.retries == 2 and not isinstance(public, TeamBazaar)
+
+
+@pytest.mark.parametrize("pace", [True, float("nan"), float("inf"), -1.0, 1e308, "30"])
+def test_a_clock_pace_that_is_not_a_sane_number_is_ignored(pace):
+    assert sdk._pace(pace) is None
+    assert sdk._pace(30) == 30.0 and sdk._pace(15.0) == 15.0

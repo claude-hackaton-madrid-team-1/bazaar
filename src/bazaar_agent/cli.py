@@ -505,7 +505,7 @@ def duel_run(
         rival_text,
         template_duel_words,
     )
-    from bazaar_agent.agents.runtime import KEEPS_THE_ACCEPT, Recorder
+    from bazaar_agent.agents.runtime import Recorder, cost_nothing
     from bazaar_agent.agents.words import WordsRequest
     from bazaar_agent.decisions import DecisionLog, Status
     from bazaar_agent.duel_store import DuelStore, duel_list
@@ -553,7 +553,7 @@ def duel_run(
             return "done"
         except BazaarError as e:
             console.print(f"  duel {did}: refused {e.code} ({e.message[:80]})")
-            if move.kind == "accept" and e.code not in KEEPS_THE_ACCEPT:  # refused: it cost nothing (RULES.md)
+            if move.kind == "accept" and cost_nothing(e.code, e.status):  # a 4xx: it cost nothing (RULES.md)
                 with suppress(LedgerUnavailable):  # unreachable: the slot stays taken (fail closed)
                     ledger.release_accept(c.tick, f"duel:{did}")
             duel_traces.refused(did, e)

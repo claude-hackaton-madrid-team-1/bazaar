@@ -486,3 +486,9 @@ a tick after the new process starts. A `process_started` row marks the first pro
 `DecisionLog` writes `inputs` through `telemetry.scrub`, which redacts anything that looks like an internal host
 name (`Omars-MacBook-Pro.local` → `[redacted]`). An identity meant to be compared later must be a token the
 scrubber keeps: `decisions.writer()` stores a short hash (`w` + 10 hex) of `RAILWAY_SERVICE_ID` or the host name.
+
+### [2026-10-03] gotcha — the vendored SDK re-sends a 429 (GET and POST) and only a 4xx "costs nothing"
+`bazaar_sdk._Http` re-sends a `rate_limited` call up to `retries` times, writes included, and waits 15 s per
+attempt: on one key shared by every process that fills the 5 req/s bucket further. `TeamBazaar` (B18) never
+re-sends a refusal or a write. RULES.md's "a refused request costs nothing" is about a `4xx`: a 5xx (or an edge
+502/504) may come after the game applied it, so it keeps the team's accept slot and books the spend (#141 review).

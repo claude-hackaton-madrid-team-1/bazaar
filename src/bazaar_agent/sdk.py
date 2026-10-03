@@ -9,6 +9,7 @@ before it goes and after it returns, so no process answers /api/me from a snapsh
 from __future__ import annotations
 
 import logging
+import math
 import sys
 from collections.abc import Callable
 from typing import Any
@@ -118,14 +119,17 @@ class TeamBazaar(TrackedBazaar):
                     raise
                 bazaar_sdk.time.sleep(0.5 * attempt)  # the SDK's back-off for a network error
                 continue
-            if (
-                path == "/api/clock"
-                and isinstance(result, dict)
-                and isinstance(result.get("tick_seconds"), int | float)
-            ):
-                self.tick_seconds = float(result["tick_seconds"])
+            if path == "/api/clock" and isinstance(result, dict):
+                self.tick_seconds = _pace(result.get("tick_seconds")) or self.tick_seconds
             return result
         raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _pace(value: object) -> float | None:
+    """A sane tick length in seconds (the rules say 5-60), else None: never a bool, NaN, inf or a huge value."""
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+        return None
+    return float(value) if 1 <= value <= 3600 else None
 
 
 def team_client(settings: Settings, *, track: bool = True) -> Bazaar:

@@ -162,7 +162,7 @@ def _team_client():
     return sdk.team_client(settings)
 
 
-def test_sdk_sends_a_429_refused_call_up_to_three_times(monkeypatch):
+def test_sdk_sends_a_429_refused_call_once(monkeypatch):
     """team_client: retries=2. A 429 is an HTTPError, so it is retried for GET AND POST (the
     'never repeat a write' guard covers only the network branch), after 0.25 s and 0.5 s."""
     now = _fake_time(monkeypatch)

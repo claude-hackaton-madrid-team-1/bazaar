@@ -55,7 +55,6 @@ from bazaar_agent.agents.market import (
     tradable_venues,
 )
 from bazaar_agent.agents.runtime import (
-    KEEPS_THE_ACCEPT,
     JevAdvice,
     JevFn,
     MarketFeed,
@@ -63,6 +62,7 @@ from bazaar_agent.agents.runtime import (
     Snapshot,
     TickWindow,
     accept_limit,
+    cost_nothing,
     guard_context,
     no_jev,
     read_snapshot,
@@ -332,6 +332,7 @@ class Taker:
         self._owner = decisions.writer()  # this service or checkout: only its own threads are touched
         self._restart_ticks = 0  # ticks the restart wrap-up ran (bounded by `restart_lookback_ticks`)
         self._accepts_stop: str | None = None  # why no more accepts are tried this tick (rate limit, lost race)
+        self._accepts_refused = 0  # refused accepts this tick (each one cost a clock read and a POST)
         self._quiet: dict[int, int] = {}  # open dealer thread of ours with no bid standing -> first tick seen so
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
@@ -707,7 +708,7 @@ class Taker:
         clock = run.snap.clock
         limit = accept_limit(clock, self.rules)
         used = self.ledger.accepts_in_tick(clock.tick) if self.live else self._dry_accepts.get(clock.tick, 0)
-        self._accepts_stop = None
+        self._accepts_stop, self._accepts_refused = None, 0
         for p in rank_accepts(proposals):
             if used >= limit:
                 self._skip(run, p, f"accept quota {limit}/tick used", "rejected")
@@ -762,6 +763,7 @@ class Taker:
             return False
         if self.live and not self._fresh_tick(clock):
             run.window = TickWindow(clock.tick, 0.0, self.now)  # every later send this tick is dropped too
+            self._accepts_stop = "the tick ended before the send"
             self._skip(run, p, "the tick ended before the send", "expired", jev)
             return False
         if stops := kill_switch(self.rules):  # Jev and the duel grace took seconds: it may have gone on since
@@ -791,12 +793,18 @@ class Taker:
             self._commit(run, p.price, p.ref, skip_thread)
             return True
         body = self.rec.send(did, clock.tick, "accept", {"offer": p.offer_id}, lambda: self.team.accept(p.offer_id))
-        if body is None and self.rec.last_code not in KEEPS_THE_ACCEPT:
-            # Refused, so it cost nothing (RULES.md): the team's accept is free again, for the next candidate
-            # or a duel; after a rate limit no more accepts are tried this tick.
-            self.ledger.release_accept(clock.tick, p.ref)
-            if self.rec.last_code in RATE_LIMITED:
-                self._accepts_stop = f"accept refused {self.rec.last_code}: no more accepts this tick"
+        if body is None and cost_nothing(self.rec.last_code, self.rec.last_status):
+            # Refused with a 4xx, so it cost nothing (RULES.md): the team's accept is free again, for the next
+            # candidate or a duel. A rate limit, a refusal every candidate would meet (cash, cool-off, quota)
+            # or MAX_REFUSED_ACCEPTS refusals end the tick's accepts: each try costs a clock read and a POST.
+            code = self.rec.last_code
+            self._accepts_refused += 1
+            if code in RATE_LIMITED or code in TEAM_WIDE_REFUSALS or self._accepts_refused >= MAX_REFUSED_ACCEPTS:
+                self._accepts_stop = f"accept refused {code}: no more accepts this tick"
+            try:
+                self.ledger.release_accept(clock.tick, p.ref)
+            except LedgerUnavailable as e:  # the slot stays taken (fail closed); the tick goes on
+                self._accepts_stop = f"accept refused {code}; its slot could not be given back ({e})"
             return False
         if body is None and not self.rec.maybe_landed:
             return True  # `wait_for_tick`: the team's accept of this tick is already used, the slot stays spent
@@ -836,8 +844,13 @@ class Taker:
             self.sleep(wait)
 
     def _fresh_tick(self, clock: Clock) -> bool:
-        """Re-read the clock right before an accept: a tick that rolled over drops it."""
-        fresh = Clock.model_validate(self.team.clock())
+        """Re-read the clock right before an accept: a tick that rolled over drops it, and so does a refused
+        read (no accept is sent on a clock we could not read)."""
+        try:
+            fresh = Clock.model_validate(self.team.clock())
+        except BazaarError as e:
+            self.log(f"tick {clock.tick} taker: clock read refused {e.code} before an accept: none sent this tick")
+            return False
         return fresh.tick == clock.tick and action_budget_s(fresh) > 0
 
     def _withdraw(self, run: _TickRun, bid: OpenOffer) -> None:
@@ -1051,6 +1064,9 @@ class Taker:
 
 
 RATE_LIMITED = ("rate_limited", "too_many_requests", "too_many_failures")
+# Refusals every other candidate of the tick would meet too: no more accepts are tried after one.
+TEAM_WIDE_REFUSALS = ("insufficient_cash", "locked", "cooloff", "persona_quota")
+MAX_REFUSED_ACCEPTS = 2  # refused accepts per tick before the taker stops trying (2 keyed calls each)
 RESTART_TRIES = 5  # wrap-up reads of one thread from before a restart that did not wrap it up, then given up
 
 

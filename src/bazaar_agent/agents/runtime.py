@@ -32,6 +32,14 @@ MAYBE_LANDED = ("network", "bad_response")
 # `wait_for_tick`), or it may have landed (MAYBE_LANDED). Any other refusal costs nothing and moves nothing
 # (RULES.md), so its ledger reservation is given back (`LedgerStore.release_accept`).
 KEEPS_THE_ACCEPT = ("wait_for_tick", *MAYBE_LANDED)
+
+
+def cost_nothing(code: str | None, status: int | None) -> bool:
+    """A refusal that gave the team's accept back: a 4xx (RULES.md: a refused request "costs nothing and moves
+    nothing") other than KEEPS_THE_ACCEPT. A 5xx is not one: the game may have applied it before failing."""
+    return code not in KEEPS_THE_ACCEPT and status is not None and 400 <= status < 500
+
+
 LIVE_ENV = "BAZAAR_LIVE"  # "1" on a Railway service turns its agent live; never read from .env
 
 
@@ -222,6 +230,7 @@ class Recorder:
         self.hub = hub  # agents.status.StatusHub when the status server runs
         self.maybe_landed = False  # the last send failed in a way that may still have reached the game
         self.last_code: str | None = None  # the last send's refusal code (None: it went through)
+        self.last_status: int | None = None  # the last refusal's HTTP status (0: no response)
 
     def decide(
         self,
@@ -320,11 +329,13 @@ class Recorder:
         spend is then booked as if it did (fail safe: the caps may over-count, never under-count)."""
         from bazaar_agent.sdk import BazaarError
 
-        self.maybe_landed, self.last_code = False, None
+        self.maybe_landed, self.last_code, self.last_status = False, None, None
         try:
             response = call()
         except BazaarError as e:
-            self.maybe_landed, self.last_code = e.code in MAYBE_LANDED, e.code
+            # A 5xx may come after the game applied the write: counted as landed too (fail safe for the caps).
+            self.maybe_landed = e.code in MAYBE_LANDED or e.status >= 500
+            self.last_code, self.last_status = e.code, e.status
             self._executed(decision_id, tick, method, request, None, e.code)
             self.decisions.settle(decision_id, "failed")
             tm.event("refused", {"method": method, "code": e.code, "message": e.message[:200]})
