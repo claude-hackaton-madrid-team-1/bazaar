@@ -3,6 +3,8 @@
 Pure: payloads in (`/api/venues`, `/api/venues/{id}/offers`, `/api/me/offers`), typed rows out.
 Fees: the accepting side pays `ceil(price × fee_bps / 10000 + fee_per_card × cards)` (checked against
 the tape on 2026-10-02: El Rastro, 500 bps + 1 P per card, charged 2 on 12 P, 5 on 65 P and 5 on 70 P).
+A fee change is announced ahead (`pending_fee`, `effective_tick`); an accept at T settles at T+1, so a change
+effective by then is priced in: the higher of the two fees, since which one the server charges is unverified.
 Only plain shapes are traded: one card for cash (an ask) or cash for one card (a bid); anything else
 on a board is skipped, never guessed at. Words persuade, structure binds.
 """
@@ -27,13 +29,35 @@ class Venue:
     mechanism: str
     trades: int
     house: bool
+    pending_fee: tuple[int, int] | None = None  # announced (fee_bps, fee_per_card), in force by settlement
 
     def fee(self, price: int, cards: int = 1) -> int:
-        raw = price * self.fee_bps / 10_000 + self.fee_per_card * cards
-        return math.ceil(raw - 1e-9) if raw > 0 else 0
+        fee = _fee(self.fee_bps, self.fee_per_card, price, cards)
+        return max(fee, _fee(*self.pending_fee, price, cards)) if self.pending_fee else fee
 
 
-def venues_from(payload: dict[str, Any]) -> list[Venue]:
+def _fee(bps: int, per_card: int, price: int, cards: int) -> int:
+    raw = price * bps / 10_000 + per_card * cards
+    return math.ceil(raw - 1e-9) if raw > 0 else 0
+
+
+def _pending_fee(pending: Any, tick: int | None) -> tuple[int, int] | None:
+    """The announced fee when an accept now could settle under it (effective by tick + 1; always when the
+    tick is unknown); None when nothing is pending, it takes effect later, or it cannot be read."""
+    if not isinstance(pending, dict):
+        return None
+    try:
+        bps, per_card = int(pending.get("fee_bps") or 0), int(pending.get("fee_per_card") or 0)
+        effective = pending.get("effective_tick")
+        if tick is not None and effective is not None and int(effective) > tick + 1:
+            return None
+    except (TypeError, ValueError):
+        return None
+    return bps, per_card
+
+
+def venues_from(payload: dict[str, Any], tick: int | None = None) -> list[Venue]:
+    """`/api/venues` as typed rows; `tick` (the current one) decides whether an announced fee is priced in."""
     rows = []
     for v in payload.get("venues") or []:
         if not isinstance(v, dict) or not v.get("venue"):
@@ -48,6 +72,7 @@ def venues_from(payload: dict[str, Any]) -> list[Venue]:
                 mechanism=str((v.get("rules") or {}).get("mechanism") or ("board" if v.get("house") else "")),
                 trades=int(v.get("trades") or 0),
                 house=bool(v.get("house")),
+                pending_fee=_pending_fee(v.get("pending_fee"), tick),
             )
         )
     return rows
