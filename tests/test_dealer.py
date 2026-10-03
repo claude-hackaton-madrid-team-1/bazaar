@@ -683,11 +683,17 @@ def test_a_failed_booking_after_a_late_deal_is_said_loudly_never_raised():
 
 
 def test_a_late_deal_while_the_switch_holds_is_booked_on_the_way_out():
+    # Bids 6 and 7 use the 2 ticks; the switch goes on after the second, so negotiate exits "held". Her "Deal!"
+    # to our 7 lands meanwhile: the exit's one read books it (pr-reviewer #72 round 5: the old test never
+    # reached its deal).
     from bazaar_agent.agents.dealer import negotiate
 
     class LateDealWhileHeld(FakeDealerClient):
+        thread_reads = 0
+
         def thread(self, tid):
-            if len(self.sent) >= 2 and self.reads > 40:  # her "Deal!" to our 7 lands during the hold
+            self.thread_reads += 1
+            if self.thread_reads >= 3:  # the exit's read
                 return {"status": "deal", "messages": [{"offer": {"status": "settled", "give": {"cash": 7}}}]}
             return super().thread(tid)
 
@@ -701,7 +707,69 @@ def test_a_late_deal_while_the_switch_holds_is_booked_on_the_way_out():
         log=lambda _: None,
         sleep=lambda _: None,
         max_ticks=2,
-        kill_switch=lambda: ("pause",) if len(client.sent) >= 2 and client.reads <= 40 else (),
+        kill_switch=lambda: ("pause",) if len(client.sent) >= 2 else (),
         on_deal=lambda price, tick, t_hours: booked.append(price),
     )
-    assert out.status in ("deal", "held") and (booked == [7]) == (out.status == "deal")
+    assert client.sent == [6, 7] and not client.closed and (out.status, booked) == ("deal", [7])
+
+
+def test_a_rate_limited_timeout_close_is_retried_on_the_next_tick_not_the_same_one():
+    # pr-reviewer #72 round 5 (P1): the retry went out on the same tick, right after the 429.
+    from bazaar_agent.agents.dealer import negotiate
+    from bazaar_agent.sdk import BazaarError
+
+    class Limited(FakeDealerClient):
+        close_ticks: list[int] = []
+
+        def close_thread(self, tid):
+            self.close_ticks.append(100 + self.reads // self.reads_per_tick)
+            if len(self.close_ticks) == 1:
+                raise BazaarError("wait_for_tick", "too early", 429)
+            self.closed = True
+            return {"ok": True, "thread": tid, "status": "closed"}
+
+    client = Limited(asks=[30] * 20)
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lambda _: None,
+        sleep=lambda _: None,
+        max_ticks=2,
+    )
+    first, second = client.close_ticks
+    assert second > first and out.status == "timeout" and client.closed
+
+
+def test_no_second_close_waits_out_closed_doors():
+    # Security audit #72 round 5: a 429 just before 23:00 made the retry wait for the next live tick (all night).
+    from bazaar_agent.agents.dealer import negotiate
+    from bazaar_agent.sdk import BazaarError
+
+    class ClosingTime(FakeDealerClient):
+        closes = 0
+
+        def close_thread(self, tid):
+            self.closes += 1
+            self.doors = "closed"
+            raise BazaarError("rate_limited", "slow down", 429)
+
+        def clock(self):
+            c = super().clock()
+            return {**c, "doors": getattr(self, "doors", "open")}
+
+    slept: list[float] = []
+    client = ClosingTime(asks=[30] * 20)
+    lines: list[str] = []
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lines.append,
+        sleep=slept.append,
+        max_ticks=2,
+    )
+    assert client.closes == 1 and out.status == "open" and max(slept, default=0) < 300
+    assert any("no live tick for a second close" in line for line in lines)

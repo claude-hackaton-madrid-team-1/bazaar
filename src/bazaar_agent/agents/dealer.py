@@ -510,6 +510,33 @@ def negotiate(
         reread(clock)
         return str(state["status"])
 
+    def retry_close_next_tick() -> None:
+        """One more timeout close, on the NEXT tick (a 429 names it), never the same one. Bounded: no wait
+        while the doors are closed or the clock is paused (no overnight block), at most a few reads; held
+        (one read, nothing sent) under the kill switch."""
+        from bazaar_agent.ticks import seconds_until_next_tick
+
+        try:
+            first = Clock.model_validate(client.clock())
+            now = first
+            for _ in range(5):
+                if not now.is_live or now.tick > first.tick:
+                    break
+                sleep(seconds_until_next_tick(now))
+                now = Clock.model_validate(client.clock())
+        except BazaarError as e:
+            log(f"thread {tid}: clock unreadable ({e.code}), no second close")
+            return
+        if not now.is_live or now.tick <= first.tick:
+            log(f"thread {tid}: no live tick for a second close ({now.doors}, paused={now.paused})")
+            return
+        if holding(f"tick {now.tick}, before closing thread {tid} again"):
+            reread(now)  # a "Deal!" that landed is booked; otherwise the thread stays open, never closed
+            if state["status"] == "open":
+                state["status"] = "held"
+            return
+        state["status"] = close("timeout", now)
+
     def on_tick(clock: Clock) -> None:
         state["clock"] = clock
         if state["status"] != "open":
@@ -612,15 +639,8 @@ def negotiate(
         state["status"] = "held" if state["status"] == "open" else state["status"]
     elif state["status"] == "open":
         state["status"] = close("timeout", last)
-        if state["status"] == "open":  # refused (a rate limit) and still open: one more try on the next tick
-
-            def close_again(clock: Clock) -> None:
-                if holding(f"tick {clock.tick}, before closing thread {tid} again"):
-                    state["status"] = "held"  # the switch went on since: the thread stays open, never closed
-                    return
-                state["status"] = close("timeout", clock)
-
-            run_per_tick(client.clock, close_again, max_ticks=1, sleep=sleep)
+        if state["status"] == "open":  # refused (a rate limit) and still open: one more try on the NEXT tick
+            retry_close_next_tick()
         if state["status"] == "open":
             standing = neg.bids[-1] if neg.bids else "-"
             log(f"thread {tid} is still open with our bid {standing} standing: close it by hand")

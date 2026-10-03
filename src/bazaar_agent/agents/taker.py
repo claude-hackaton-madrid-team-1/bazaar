@@ -651,6 +651,8 @@ class Taker:
             self.convs.pop(conv.dealer, None)
             if move.reopen and status != "deal":
                 self._held_opening(run, conv)
+            elif move.rest and status != "deal":  # she stopped answering: rest the item, as after a clean walk
+                self.cooling[(conv.dealer, conv.item)] = run.snap.clock.t_hours + 1.0
 
     def _held_opening(self, run: _TickRun, conv: Conversation) -> None:
         """She held her opening ask and we walked (a deal there scores nothing): reopen once with a lower

@@ -534,3 +534,20 @@ def test_a_dealer_who_stops_answering_rests_the_item_for_a_game_hour(tmp_path):
     opens = [s for s in team.sent if s == ("open_thread", "abuela", {"buy": {"card": "LAV-08"}})]
     t.on_tick(at(team, TICK + 4))
     assert [s for s in team.sent if s == ("open_thread", "abuela", {"buy": {"card": "LAV-08"}})] == opens
+
+
+def test_a_rest_walk_whose_close_answer_was_lost_still_rests_the_item(tmp_path):
+    # pr-reviewer #72 round 5 (P2): the close landed, its answer was lost (network), the thread reads closed.
+    from bazaar_agent.sdk import BazaarError
+
+    class LostAnswer(FakeTeam):
+        def close_thread(self, tid):
+            her(self, tid, status="closed")
+            raise BazaarError("network", "connection reset", 0)
+
+    team = LostAnswer()
+    t, _, _ = taker(tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=3))
+    t.on_tick(clock())  # opens 5000, bids 18; she never answers
+    for n in range(1, 4):
+        t.on_tick(at(team, TICK + n))
+    assert t.cooling == {("abuela", "LAV-08"): 1.5 + 1.0} and "abuela" not in t.convs
