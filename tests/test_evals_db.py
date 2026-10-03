@@ -367,3 +367,37 @@ def test_an_agent_scores_and_annotates_only_its_own_targets(seeded: psycopg.Conn
     assert taker.scored == {"dealer": 6, "trade": 1}
     assert {p.target for p in store.pending_annotations(seeded, {"dealer"})} == {"dealer"}
     assert len(store.pending_annotations(seeded)) == 27
+
+
+def test_an_agents_pass_makes_no_network_call_but_postgres(
+    database_url: str, schema: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import urllib.request
+
+    from bazaar_agent.evals.inline import TickEvals
+
+    setup = open_in(database_url, schema)
+    db.init_schema(setup)
+    seed(setup)
+    setup.close()
+    calls: list[str] = []
+
+    def refuse(*args: Any, **kwargs: Any) -> Any:
+        calls.append("network")
+        raise AssertionError("a pass called the network")
+
+    monkeypatch.setattr(httpx.Client, "send", refuse)
+    monkeypatch.setattr(urllib.request, "urlopen", refuse)
+    logs: list[str] = []
+    for agent in ("duels", "taker", "maker"):
+        evals = TickEvals(
+            agent, 1, lambda: open_in(database_url, schema), lambda c: OURS, lambda: None, logs.append, lambda w: w()
+        )
+        evals.after_tick(1)
+        assert evals.after_tick(2) is True
+    assert calls == [] and not [m for m in logs if "failed" in m], logs
+    assert [m.split(":")[1].split("·")[0].strip() for m in logs if "new/changed" in m] == [
+        "duel 20",
+        "dealer 6, trade 1",
+        "nothing settled yet",
+    ]

@@ -327,3 +327,8 @@ config, source or not; the #59 apply added `RUNTIME.md` to the shared `BUILD` wa
 then the monitor left `.railway/railway.py` (Omar deletes its service and volume by hand) and so did
 `bazaar-evals` (service deleted): the file declares no service we do not run, and
 tests/test_railway_iac.py fails on a service without a source.
+
+### [2026-10-03] gotcha — simulated duel and thread ids collide with real ones
+The simulator numbers duels and threads from 1 like the game, so sim duel 85 is not our duel 85. A
+simulator run must never write scores onto the real Phoenix traces: with `BAZAAR_SIM`, the agents'
+in-loop evals and `bazaar evals run` keep their outcomes in the simulator's Postgres (no annotation).

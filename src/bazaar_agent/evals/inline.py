@@ -52,12 +52,13 @@ class TickEvals:
         self._connect, self._team, self._annotator, self._log, self._start = connect, team, annotator, log, start
         self._last: int | None = None
         self._running = threading.Event()
+        self._said: set[str] = set()  # a pass's notes, each logged once (e.g. "our team id is unknown")
 
     def after_tick(self, tick: int) -> bool:
         """Call at the end of a tick. True when a pass started (it runs in the background)."""
         if self.every_ticks <= 0 or not self.targets:
             return False
-        if self._last is None:
+        if self._last is None or tick < self._last:  # boot, or a simulator restarted under the agent
             self._last = tick  # the first pass comes `every_ticks` ticks after start, not at boot
             return False
         if tick - self._last < self.every_ticks or self._running.is_set():
@@ -88,6 +89,10 @@ class TickEvals:
         finally:
             if annotator is not None:
                 annotator.close()
+        for note in summary.notes:
+            if note not in self._said:
+                self._said.add(note)
+                self._log(f"evals ({self.agent}): {note}")
         scored = ", ".join(f"{k} {v}" for k, v in sorted(summary.scored.items())) or "nothing settled yet"
         self._log(
             f"evals ({self.agent}): {scored} · {summary.changed} new/changed · phoenix {summary.phoenix}: "

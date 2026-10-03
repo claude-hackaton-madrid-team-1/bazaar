@@ -44,7 +44,7 @@ def passes(monkeypatch: pytest.MonkeyPatch) -> list[frozenset[str]]:
 
     def fake_run_once(conn: Any, ours: str | None, **kw: Any) -> RunSummary:
         seen.append(frozenset(kw["targets"]))
-        return RunSummary(ours, {"dealer": 2}, 1)
+        return RunSummary(ours, {"dealer": 2}, 1, notes=("our team id is unknown",) if ours is None else ())
 
     monkeypatch.setattr(inline, "run_once", fake_run_once)
     return seen
@@ -136,7 +136,15 @@ def test_the_taker_calls_its_evals_after_each_tick(agent_cli: Any, monkeypatch: 
 
 
 def test_the_duel_player_calls_its_evals_after_each_tick(duel_cli: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    cli = duel_cli[0]
+    cli, client = duel_cli[0], duel_cli[1]
+    live_only = client.duels
+
+    def duels(done: bool = False) -> dict[str, Any]:
+        if done:
+            raise RuntimeError("finished-duel read failed")  # any error after the sends
+        return dict(live_only())
+
+    monkeypatch.setattr(client, "duels", duels)
     recorder = Recorder()
     monkeypatch.setattr(cli, "_tick_evals", lambda agent, every, log: recorder if agent == "duels" else None)
     result = CliRunner().invoke(cli.app, ["duel", "run", "--max-ticks", "1"])
@@ -144,7 +152,7 @@ def test_the_duel_player_calls_its_evals_after_each_tick(duel_cli: Any, monkeypa
     output = " ".join(result.output.split())
     assert len(recorder.ticks) == 1 and "evals every 6 ticks" in output
     # its first tick reads finished duels; that bookkeeping failing never cuts the tick short
-    assert "/api/duels?done=true failed (TypeError)" in output
+    assert "/api/duels?done=true failed (RuntimeError)" in output
 
 
 def test_the_cli_builds_each_agents_evals(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -170,3 +178,31 @@ def test_against_the_simulator_no_score_reaches_the_real_phoenix(monkeypatch: py
     assert evals._annotator() is None and evals._annotator() is None
     assert logs == ["evals (duels): simulator, scores stay in Postgres only"]  # said once
     assert evals_cli._annotator(True) is None
+
+
+def test_a_notes_line_is_logged_once_and_a_tick_going_back_restarts_the_count(passes: list[frozenset[str]]) -> None:
+    logs: list[str] = []
+    evals = TickEvals("taker", 2, Conn, lambda conn: None, lambda: None, logs.append, lambda w: w())
+    for tick in (10, 12, 14):
+        evals.after_tick(tick)
+    assert logs.count("evals (taker): our team id is unknown") == 1 and len(passes) == 2
+    assert evals.after_tick(3) is False and evals.after_tick(5) is True  # a simulator restarted at tick 0
+
+
+def test_a_hung_pass_never_holds_the_tick_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+
+    release = threading.Event()
+
+    def hang(conn: Any, ours: str | None, **kw: Any) -> RunSummary:
+        release.wait(10)
+        return RunSummary(ours, {}, 0)
+
+    monkeypatch.setattr(inline, "run_once", hang)
+    evals = TickEvals("duels", 1, Conn, lambda conn: "t01", lambda: None, lambda m: None)  # the real daemon thread
+    evals.after_tick(1)
+    started = time.perf_counter()
+    assert evals.after_tick(2) is True
+    assert [evals.after_tick(t) for t in range(3, 10)] == [False] * 7  # still running: skipped, not queued
+    assert time.perf_counter() - started < 0.5
+    release.set()
