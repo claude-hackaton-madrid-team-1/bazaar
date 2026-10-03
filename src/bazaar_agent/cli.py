@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
+from functools import partial
 from typing import Any
 
 import typer
@@ -18,10 +19,11 @@ from rich.console import Console
 
 from bazaar_agent import intel, render, traces
 from bazaar_agent import telemetry as tm
-from bazaar_agent.config import REPO_ROOT, ConfigError, load_settings
+from bazaar_agent.config import REPO_ROOT, ConfigError, Settings, load_settings
 from bazaar_agent.evals import cli as evals_cli
 from bazaar_agent.evals.model import EVERY_TICKS
 from bazaar_agent.feed import DEFAULT_WINDOW, Event, FeedStore, load_events
+from bazaar_agent.identity import remember_team_id, resolve_team_id
 from bazaar_agent.llm import cli as llm_cli
 from bazaar_agent.runtime import cli as runtime_cli
 from bazaar_agent.sdk import BazaarError, public_client, team_client
@@ -234,20 +236,46 @@ def book(
 
 
 @app.command()
-def status(cards: bool = typer.Option(True, help="Also list our cards with your_value")) -> None:
-    """Our cash, level, score, album pages with missing cards, and cards (GET /api/me)."""
+def status(
+    cards: bool = typer.Option(True, help="Also list our cards with your_value"),
+    db_snapshot: bool = typer.Option(
+        True, "--db/--no-db", help="Answer from the shared Postgres snapshot when current"
+    ),
+) -> None:
+    """Our cash, level, score, album pages with missing cards, and cards (GET /api/me, or its current snapshot)."""
+    settings = load_settings()
     try:
-        me: dict[str, Any] = team_client(load_settings()).me()
+        read = _holdings_read(settings, db_snapshot)
     except ConfigError as e:
         _fail(str(e))
     except BazaarError as e:
         _fail(f"/api/me refused: {e.code} ({e.status})")
-    console.print(render.status_table(me, load_settings().target_line()))
+    me: dict[str, Any] = read.me
+    console.print(render.status_table(me, settings.target_line(), snapshot=read.line()))
     from bazaar_agent.album import album_view
 
-    console.print(render.album_table(album_view(me, public_client(load_settings()).catalog())))
+    console.print(render.album_table(album_view(me, public_client(settings).catalog())))
     if cards:
         console.print(render.cards_table(me))
+
+
+def _holdings_read(settings: Settings, from_db: bool = True) -> Any:
+    """Album first through the shared holdings: the Postgres snapshot while provably current, else /api/me."""
+    from bazaar_agent import holdings as hd
+    from bazaar_agent.holdings import SharedDb
+
+    hd.name_process("cli")
+    team = team_client(settings) if from_db else team_client(settings, track=False)  # --no-db: no connection
+    try:
+        clock: Clock | None = Clock.model_validate(public_client(settings).clock())
+    except BazaarError:
+        clock = None  # unknown tick: a live read
+    team_id = resolve_team_id(settings.team_id, settings.data_dir, None)
+    rules = _rules().rules
+    if not from_db:
+        return hd.Holdings(team.me, SharedDb(None), reader="cli", rules=rules, scope=hd.scope_of(settings)).me(clock)
+    remember = partial(remember_team_id, settings.data_dir)
+    return hd.for_process(team.me, rules, settings, team=team_id, on_team=remember).me(clock)
 
 
 def _team_read(read: Callable[[Any], Any]) -> Any:
@@ -1339,6 +1367,7 @@ def _run_agent(
     from rich.markup import escape
 
     from bazaar_agent import db
+    from bazaar_agent import holdings as hd
     from bazaar_agent.agents.runtime import MarketFeed, live_mode, watched_clock
     from bazaar_agent.agents.status import StatusHub, start_status_server
     from bazaar_agent.decisions import DecisionLog
@@ -1347,6 +1376,7 @@ def _run_agent(
 
     loaded, rules = _strategy(), _rules().rules
     settings = load_settings()
+    hd.name_process(name)  # how its sends and /me reads are tagged in the shared holdings
     team, public = _team_client(), public_client(settings)
     is_live = live_mode(live)
 
@@ -1382,6 +1412,13 @@ def _run_agent(
         log=log,
         settings=settings,
         hub=hub,
+        holdings=hd.for_process(
+            team.me,
+            rules,
+            settings,
+            team=resolve_team_id(settings.team_id, settings.data_dir, None),
+            on_team=partial(remember_team_id, settings.data_dir),
+        ),
     )
     every = evals_default(evals_every, is_live)
     evals = _tick_evals(name, every, log)
