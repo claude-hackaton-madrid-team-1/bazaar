@@ -314,3 +314,29 @@ def test_a_hung_save_or_load_never_holds_the_caller():
             break
         threading.Event().wait(0.01)
     assert latest.matrix is not None and latest.current(420) is latest.matrix
+
+
+def test_a_reset_clock_reloads_and_never_trusts_a_matrix_from_the_future():
+    class Loaded:
+        loads = 0
+
+        def load(self):
+            Loaded.loads += 1
+            return matrix()  # tick 420
+
+    latest = LatestMatrix(Loaded(), background=False)  # type: ignore[arg-type]
+    latest.refresh(425)
+    assert latest.current(3) is None  # a simulator reset: tick 3 < the matrix's 420
+    latest.refresh(5)
+    assert Loaded.loads == 2  # the clock went back: read again at once
+
+
+def test_a_save_skipped_behind_a_hung_one_is_said_once():
+    from bazaar_agent.team_matrix_store import TeamMatrixStore
+
+    lines: list[str] = []
+    store = TeamMatrixStore(None, lines.append)
+    store._saving.acquire()  # a save that hangs
+    assert store.save_later(matrix()) is False and store.save_later(matrix()) is False
+    assert lines == ["team matrix: the last save is still running (database link slow or hung); skipping"]
+    store._saving.release()

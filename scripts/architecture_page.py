@@ -47,7 +47,7 @@ GEOMETRY: dict[str, tuple[int, int, int, int]] = {
     "state": (110, 370, 262, 190),
     "llm_proposer": (450, 340, 332, 238),
     "jev": (862, 300, 410, 292),
-    "runtime": (1588, 70, 380, 252),
+    "runtime": (1588, 70, 380, 280),
     "llm_runtime": (1588, 376, 380, 200),
     "buy_sell": (1420, 760, 400, 250),
     "pg_vectors": (74, 770, 320, 140),
