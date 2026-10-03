@@ -42,7 +42,7 @@ from dataclasses import asdict, dataclass, field, replace
 from functools import partial
 from typing import Any, Literal, Protocol
 
-from bazaar_agent.agents.bench_edge import BenchEdge, EdgeConfig
+from bazaar_agent.agents.bench_edge import BenchEdge, EdgeConfig, expiries_in
 from bazaar_agent.agents.bench_model import PRIORS, BenchPrior
 from bazaar_agent.agents.matcher import BrokerBook, Fee, Match, max_weight_assignment, plan_matches, quotes_from
 
@@ -65,6 +65,7 @@ class BenchSpec:
     seller_markup: tuple[float, float] = (1.05, 1.30)  # first ask = cost × markup
     buyer_shade: tuple[float, float] = (0.75, 0.95)  # first bid = value × shade
     stall_pairs: int | None = None  # pairs the stall crosses per tick (None: every crossing pair)
+    show_expiry: bool = False  # bench offers carry `expires_tick` (their last tick in the book)
 
     def fee(self, price: int) -> int:
         return round(price * self.fee_bps / 10_000) + self.fee_per_card
@@ -158,6 +159,8 @@ class InProcessBench:
             else:
                 want: dict[str, Any] = {"cash": 0, "types": ["card:BENCH"]}
                 offers.append({"id": t.id, "run": self.run, "give": {"cash": q}, "want": want})
+            if self.spec.show_expiry:
+                offers[-1]["expires_tick"] = t.arrive + t.patience - 1
         return {
             "offers": [],
             "bench_offers": offers,
@@ -313,7 +316,7 @@ class Edge:
         for _ in range(self.reads_per_tick):
             book = BrokerBook.model_validate(bench.book())
             quotes = quotes_from(book).quotes
-            self.edge.observe(quotes, bench.tick)
+            self.edge.observe(quotes, bench.tick, expiries_in(book.bench_offers, bench.tick))
             fee = Fee(book.fee_bps, book.fee_per_card)
             plan = self.edge.plan(quotes, fee, bench.tick, limit=MAX_SENDS - sent)
             if not plan:
@@ -361,9 +364,7 @@ def policies(edge_config: EdgeConfig | None = None) -> dict[str, PolicyFactory]:
         "greedy": lambda preset: Greedy(),
         "exact": lambda preset: Exact(),
         "edge": lambda preset: Edge(PRIORS[preset], edge_config or EdgeConfig()),
-        "edge_limit": lambda preset: Edge(
-            PRIORS[preset].widened(), replace(edge_config or EdgeConfig(), cross="limit"), 3
-        ),
+        "edge_limit": lambda preset: Edge(PRIORS[preset], replace(edge_config or EdgeConfig(), cross="limit"), 3),
     }
 
 
@@ -398,6 +399,7 @@ SCENARIOS: dict[str, dict[str, Any]] = {
     "stall1": {"stall_pairs": 1},
     "front_stall1": {"arrivals": "front", "stall_pairs": 1},
     "wide": {"seller_markup": (1.10, 1.60), "buyer_shade": (0.50, 0.90)},
+    "expiry": {"show_expiry": True},
     "limit": {"cross": "limit"},
     "wide_limit": {"cross": "limit", "seller_markup": (1.10, 1.60), "buyer_shade": (0.50, 0.90)},
 }

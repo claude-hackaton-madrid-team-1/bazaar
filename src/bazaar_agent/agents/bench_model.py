@@ -20,6 +20,7 @@ outside its band) degrades to "critical" and "band = what it has shown", never t
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
@@ -58,8 +59,8 @@ class BenchPrior:
         return max(self.impatient_ticks[1], self.patient_ticks[1])
 
     def widened(self) -> BenchPrior:
-        """Wide limit bands (asks up to 1.6 × cost, bids down to half the value): what a limit probe prices on,
-        so that a bench shading more than #55 does is still probed (docs/night/w1b-broker-edge.md)."""
+        """Wide limit bands (asks up to 1.6 × cost, bids down to half the value): what a limit probe prices on
+        (`BenchEdge.probe_prior`), so that a bench shading more than #55 does is still probed."""
         return replace(self, seller_markup=(1.0, 1.6), buyer_shade=(0.5, 1.0))
 
 
@@ -67,6 +68,25 @@ PRIORS: dict[str, BenchPrior] = {
     "normal": BenchPrior(),
     "hard": BenchPrior(impatient_share=0.35, firm_share=0.35),
 }
+
+
+# Fields a bench offer might carry about when it leaves. None is documented (openapi BenchOffer has only id, give,
+# want); the broker logs every key it sees in a bench offer once per session, so the first real Market Test tells.
+EXPIRY_ABSOLUTE = ("expires_tick", "expires_at_tick", "leaves_tick", "until_tick", "last_tick")
+EXPIRY_RELATIVE = ("ticks_left", "ttl_ticks", "patience_left")
+
+
+def expiry_of(offer: Mapping[str, object], tick: int) -> int | None:
+    """The last tick a bench offer stays in the book, if the offer says (absolute tick, or ticks left after this)."""
+    for key in EXPIRY_ABSOLUTE:
+        value = offer.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    for key in EXPIRY_RELATIVE:
+        value = offer.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return tick + value
+    return None
 
 
 @dataclass
@@ -78,6 +98,7 @@ class TraderModel:
     first_tick: int
     prior: BenchPrior
     quotes: list[tuple[int, int]] = field(default_factory=list)  # (tick, quote), one per tick it was seen
+    expires: int | None = None  # its last tick in the book, when the bench offer says so (`expiry_of`)
 
     def observe(self, tick: int, quote: int) -> None:
         if self.quotes and self.quotes[-1][0] == tick:
@@ -94,6 +115,8 @@ class TraderModel:
         return tick - self.first_tick + 1
 
     def hazard(self, tick: int) -> float:
+        if self.expires is not None:
+            return 1.0 if tick >= self.expires else 0.0
         return self.prior.hazard(self.age(tick))
 
     @property
@@ -102,33 +125,34 @@ class TraderModel:
         first = self.quotes[0][1]
         return any((q < first) if self.side == "sell" else (q > first) for _, q in self.quotes)
 
-    def band(self) -> tuple[float, float]:
-        """Where its hidden limit lies: (low, high)."""
+    def band(self, prior: BenchPrior | None = None) -> tuple[float, float]:
+        """Where its hidden limit lies: (low, high), under its own prior or the one given."""
+        prior = prior or self.prior
         first = self.quotes[0][1]
         if self.side == "sell":  # cost ≤ every ask shown
             shown = min(q for _, q in self.quotes)
-            lo, hi = first / self.prior.seller_markup[1], min(first / self.prior.seller_markup[0], shown)
+            lo, hi = first / prior.seller_markup[1], min(first / prior.seller_markup[0], shown)
         else:  # value ≥ every bid shown
             shown = max(q for _, q in self.quotes)
-            lo, hi = max(first / self.prior.buyer_shade[1], shown), first / self.prior.buyer_shade[0]
+            lo, hi = max(first / prior.buyer_shade[1], shown), first / prior.buyer_shade[0]
         if lo > hi:  # the prior is wrong for this trader: trust only what it has shown
             return (float(shown), float(shown))
         return (lo, hi)
 
-    def limit(self) -> float:
-        lo, hi = self.band()
+    def limit(self, prior: BenchPrior | None = None) -> float:
+        lo, hi = self.band(prior)
         return (lo + hi) / 2
 
-    def p_limit_below(self, price: float) -> float:
+    def p_limit_below(self, price: float, prior: BenchPrior | None = None) -> float:
         """P(limit ≤ price) under a uniform band: a seller accepts `price` with this chance."""
-        lo, hi = self.band()
+        lo, hi = self.band(prior)
         if hi - lo < 1e-9:
             return 1.0 if lo <= price else 0.0
         return min(1.0, max(0.0, (price - lo) / (hi - lo)))
 
-    def p_limit_above(self, price: float) -> float:
+    def p_limit_above(self, price: float, prior: BenchPrior | None = None) -> float:
         """P(limit ≥ price): a buyer pays `price` (fee included) with this chance."""
-        lo, hi = self.band()
+        lo, hi = self.band(prior)
         if hi - lo < 1e-9:
             return 1.0 if hi >= price else 0.0
         return min(1.0, max(0.0, (hi - price) / (hi - lo)))

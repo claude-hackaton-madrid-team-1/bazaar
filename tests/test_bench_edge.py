@@ -159,3 +159,23 @@ def test_every_pair_the_edge_plans_is_feasible_in_both_modes_for_random_sessions
                 crossing = m.sell.price <= m.price and m.price + m.fee <= m.buy.price
                 assert crossing or cross == "limit"
                 edge.note_sent(m, accepted=crossing)
+
+
+def test_a_pair_whose_offers_say_when_they_leave_is_held_until_the_first_of_them_leaves():
+    from bazaar_agent.agents.bench_edge import expiries_in
+
+    edge = BenchEdge(PRIORS["normal"])
+    quotes = [ask(0, 30), bid(1, 60)]
+    offers = [{"id": "b3-0", "expires_tick": 2}, {"id": "b3-1", "expires_tick": 5}, {"id": "b3-9"}]
+    assert expiries_in(offers, 0) == {"b3-0": 2, "b3-1": 5}
+    for tick in (0, 1):
+        edge.observe(quotes, tick, expiries_in(offers, tick))
+        assert edge.plan(quotes, NO_FEE, tick) == []
+    edge.observe(quotes, 2, expiries_in(offers, 2))
+    assert [(m.sell.id, m.buy.id) for m in edge.plan(quotes, NO_FEE, 2)] == [("b3-0", "b3-1")]
+
+
+def test_with_hold_known_off_a_known_expiry_does_not_delay_a_match():
+    edge = BenchEdge(PRIORS["normal"], EdgeConfig(hold_known=False))
+    edge.observe([ask(0, 30), bid(1, 60)], 0, {"b3-0": 4, "b3-1": 4})
+    assert len(edge.plan([ask(0, 30), bid(1, 60)], NO_FEE, 0)) == 1

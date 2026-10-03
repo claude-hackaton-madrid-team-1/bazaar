@@ -144,3 +144,14 @@ def test_cli_broker_run_takes_the_edge_options_and_stays_a_dry_run(tmp_path, mon
 def test_cli_broker_run_refuses_an_unknown_bench_policy(tmp_path, monkeypatch):
     broker, result = _cli(tmp_path, monkeypatch, "--bench-policy", "magic")
     assert result.exit_code == 1 and "--bench-policy must be one of exact, edge" in result.output
+
+
+def test_the_shape_of_a_bench_offer_is_logged_once_per_run(tmp_path):
+    offer = {**bench_sell("b5-0", 30), "expires_tick": 120}
+    broker = FakeBroker(bench=[offer, bench_buy("b5-1", 40)])
+    a = agent(tmp_path, broker, bench_policy="edge")
+    a.on_tick(clock())
+    a.on_tick(clock(tick=101))
+    shapes = (tmp_path / "agents" / "broker_bench_shapes.jsonl").read_text().splitlines()
+    assert len(shapes) == 1 and '"expires_tick"' in shapes[0]
+    assert a.edge.models["b5-0"].expires == 120

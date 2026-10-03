@@ -19,12 +19,12 @@ probe, off by default; a refused pair is not proposed again until one of its quo
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import combinations
-from typing import Literal
+from typing import Any, Literal
 
-from bazaar_agent.agents.bench_model import BenchPrior, TraderModel
+from bazaar_agent.agents.bench_model import BenchPrior, TraderModel, expiry_of
 from bazaar_agent.agents.matcher import Fee, Match, Quote, feasible, match_price, max_weight_assignment
 
 
@@ -32,6 +32,9 @@ from bazaar_agent.agents.matcher import Fee, Match, Quote, feasible, match_price
 class EdgeConfig:
     hold_below: float = 0.0  # cross a pair at once when either trader's leave hazard reaches this (0: never hold)
     endgame_ticks: int = 1  # cross everything in the session's last tick(s)
+    # When both traders' bench offers say when they leave, hold their pair until one of them is on its last tick
+    # (the prescient bound in the tournament: a pair held is never lost, and a later trader may need one of them).
+    hold_known: bool = True
     cross: Literal["quote", "limit"] = "quote"  # "limit": also propose non-crossing pairs (a probe, see above)
     min_accept: float = 0.5  # "limit": propose a non-crossing pair only with at least this chance of acceptance
     tries_per_pair: int = 3  # "limit": refused prices remembered per pair; a pair refused this often is dropped
@@ -51,14 +54,35 @@ def _run(quote: Quote) -> str:
     return quote.item.removeprefix("bench:")
 
 
+def expiries_in(bench_offers: Iterable[Mapping[str, Any]], tick: int) -> dict[str, int]:
+    """Offer id -> last tick, for the bench offers that say when they leave."""
+    out = {}
+    for o in bench_offers:
+        if isinstance(o, Mapping) and (last := expiry_of(o, tick)) is not None:
+            out[str(o.get("id"))] = last
+    return out
+
+
+def _assign(table: Sequence[Sequence[Candidate | None]]) -> list[tuple[int, int]]:
+    """The maximum-weight matching of the candidates (more pairs among equal weights)."""
+    return max_weight_assignment([[0 if c is None else int(c.weight * 100) + 1 for c in row] for row in table])
+
+
 @dataclass
 class BenchEdge:
     prior: BenchPrior
     config: EdgeConfig = field(default_factory=EdgeConfig)
+    # A probe prices on wide bands (asks up to 1.6 × cost, bids down to half the value), so that a bench that shades
+    # more than the prior still gets probed; crossing pairs are weighed on `prior`.
+    probe_prior: BenchPrior | None = None
     models: dict[str, TraderModel] = field(default_factory=dict)
     first_tick: dict[str, int] = field(default_factory=dict)  # bench run -> the first tick it showed
     refused: dict[tuple[str, str], list[int]] = field(default_factory=dict)  # non-crossing pair -> prices refused
     probes: dict[str, int] = field(default_factory=lambda: {"sent": 0, "refused": 0, "accepted": 0})
+
+    def __post_init__(self) -> None:
+        if self.probe_prior is None:
+            self.probe_prior = self.prior.widened()
 
     @property
     def probing(self) -> bool:
@@ -66,8 +90,9 @@ class BenchEdge:
         p = self.probes
         return self.config.cross == "limit" and (p["accepted"] > 0 or p["refused"] < self.config.give_up_after)
 
-    def observe(self, quotes: Iterable[Quote], tick: int) -> None:
-        """One book read: every bench quote updates (or starts) its trader's model."""
+    def observe(self, quotes: Iterable[Quote], tick: int, expiries: Mapping[str, int] | None = None) -> None:
+        """One book read: every bench quote updates (or starts) its trader's model. `expiries` (offer id -> last
+        tick) is what the bench offers say about when they leave, if anything (`bench_model.expiry_of`)."""
         for q in quotes:
             if not q.bench:
                 continue
@@ -76,6 +101,8 @@ class BenchEdge:
             if model is None:
                 model = self.models[str(q.id)] = TraderModel(str(q.id), q.side, tick, self.prior)
             model.observe(tick, q.price)
+            if expiries and str(q.id) in expiries:
+                model.expires = expiries[str(q.id)]
 
     def last_tick(self, run: str, session_ticks: int | None = None) -> int:
         return self.first_tick.get(run, 0) + (session_ticks or self.prior.session_ticks) - 1
@@ -117,14 +144,26 @@ class BenchEdge:
     def _plan_run(
         self, sells: Sequence[Quote], buys: Sequence[Quote], fee: Fee, tick: int, endgame: bool
     ) -> list[tuple[float, Match]]:
+        """Crossing pairs first (a sure match is never displaced by a probe), then probes among who is left."""
         table = [[self._candidate(s, b, fee) for b in buys] for s in sells]
-        weights = [[0 if c is None else int(c.weight * 100) + 1 for c in row] for row in table]
+        pairs = _assign([[c if c is not None and c.crossing else None for c in row] for row in table])
+        rows, cols = {r for r, _ in pairs}, {c for _, c in pairs}
+        left = [
+            [
+                c if c is not None and not c.crossing and r not in rows and j not in cols else None
+                for j, c in enumerate(row)
+            ]
+            for r, row in enumerate(table)
+        ]
+        pairs += _assign(left)
         out = []
-        for r, c in max_weight_assignment(weights):
+        for r, c in pairs:
             cand = table[r][c]
             assert cand is not None
             urgency = max(cand.sell.hazard(tick), cand.buy.hazard(tick))
-            if endgame or urgency >= self.config.hold_below or not cand.crossing:  # a probe is never held
+            known = cand.sell.expires is not None and cand.buy.expires is not None
+            hold = urgency < self.config.hold_below or (known and urgency < 1.0 and self.config.hold_known)
+            if endgame or not hold or not cand.crossing:  # a probe is never held
                 out.append((1.0 if endgame else urgency, Match(sells[r], buys[c], cand.price, fee.of(cand.price))))
         return out
 
@@ -138,14 +177,16 @@ class BenchEdge:
         tried = self.refused.get((str(s.id), str(b.id)), [])
         if len(tried) >= self.config.tries_per_pair:
             return None
-        price, chance = self._best_price(seller, buyer, fee, tried)
+        price, chance = self._best_price(seller, buyer, fee, tried, self.probe_prior)
         if chance < self.config.min_accept:
             return None
-        gain = buyer.limit() - seller.limit()
+        gain = buyer.limit(self.probe_prior) - seller.limit(self.probe_prior)
         return Candidate(seller, buyer, price, chance * gain, False) if gain > 0 else None
 
     @staticmethod
-    def _best_price(seller: TraderModel, buyer: TraderModel, fee: Fee, tried: Sequence[int] = ()) -> tuple[int, float]:
+    def _best_price(
+        seller: TraderModel, buyer: TraderModel, fee: Fee, tried: Sequence[int] = (), prior: BenchPrior | None = None
+    ) -> tuple[int, float]:
         """The whole price most likely to be at least the seller's cost and, fee included, at most the buyer's value,
         given that every price in `tried` was refused (each refusal rules out "cost ≤ p and value ≥ p + fee(p)").
 
@@ -153,7 +194,8 @@ class BenchEdge:
         region is a union of such products: inclusion–exclusion over the (few) refused prices is exact."""
 
         def mass(prices: Sequence[int]) -> float:  # P(cost ≤ min p and value ≥ max(p + fee(p))): all accept
-            return seller.p_limit_below(min(prices)) * buyer.p_limit_above(max(p + fee.of(p) for p in prices))
+            top = max(p + fee.of(p) for p in prices)
+            return seller.p_limit_below(min(prices), prior) * buyer.p_limit_above(top, prior)
 
         def free(extra: Sequence[int]) -> float:  # P(every price in `extra` accepts and no refused one would)
             total = 0.0
@@ -165,7 +207,7 @@ class BenchEdge:
         left = free(())
         if left <= 1e-9:
             return (0, 0.0)
-        lo, hi = int(seller.band()[0]), int(buyer.band()[1]) + 1
+        lo, hi = int(seller.band(prior)[0]), int(buyer.band(prior)[1]) + 1
         best = (lo, 0.0)
         for price in range(max(1, lo), max(lo, hi) + 1):
             if price in tried:

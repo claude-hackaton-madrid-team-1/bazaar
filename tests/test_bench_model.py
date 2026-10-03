@@ -80,3 +80,18 @@ def test_the_widened_prior_keeps_the_patience_and_widens_the_bands():
     assert wide.seller_markup == (1.0, 1.6) and wide.buyer_shade == (0.5, 1.0)
     assert wide.hazard(3) == BenchPrior().hazard(3)
     assert seller(130, prior=wide).band() == pytest.approx((130 / 1.6, 130.0))
+
+
+def test_an_offer_that_says_when_it_leaves_gives_its_last_tick():
+    from bazaar_agent.agents.bench_model import expiry_of
+
+    assert expiry_of({"id": "b1-0", "expires_tick": 14}, 9) == 14
+    assert expiry_of({"id": "b1-0", "ticks_left": 2}, 9) == 11
+    assert expiry_of({"id": "b1-0", "expires_tick": True}, 9) is None
+    assert expiry_of({"id": "b1-0", "give": {"cash": 30}}, 9) is None
+
+
+def test_a_known_expiry_replaces_the_hazard_prior():
+    t = seller(50)
+    t.expires = 12
+    assert [t.hazard(tick) for tick in (10, 11, 12, 13)] == [0.0, 0.0, 1.0, 1.0]

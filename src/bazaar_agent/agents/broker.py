@@ -32,7 +32,7 @@ from typing import Any, Literal
 from pydantic import ValidationError
 
 from bazaar_agent import telemetry as tm
-from bazaar_agent.agents.bench_edge import BenchEdge, EdgeConfig
+from bazaar_agent.agents.bench_edge import BenchEdge, EdgeConfig, expiries_in
 from bazaar_agent.agents.bench_model import PRIORS
 from bazaar_agent.agents.matcher import BrokerBook, Fee, Match, Quote, Quotes, plan_matches, quotes_from
 from bazaar_agent.agents.runtime import Recorder, TickWindow, window_for
@@ -203,10 +203,8 @@ class BrokerAgent:
         self.live, self.log, self.events, self.now = live, log, events, now
         self.sleep = sleep or time.sleep
         self.config = config or BrokerConfig()
-        prior = PRIORS[self.config.bench_preset]
-        if self.config.bench_cross == "limit":  # a probe prices on wide bands: a narrow wrong prior never probes
-            prior = prior.widened()
-        self.edge = BenchEdge(prior, EdgeConfig(cross=self.config.bench_cross))
+        self.edge = BenchEdge(PRIORS[self.config.bench_preset], EdgeConfig(cross=self.config.bench_cross))
+        self._shapes_logged: set[str] = set()
         self.stats_dir = stats_dir
         self.rec = Recorder("broker", decisions, live, log)
         self.sessions = BenchSessions(self._session_closed)
@@ -226,7 +224,9 @@ class BrokerAgent:
         fee = Fee(book.fee_bps, book.fee_per_card)
         stats = TickStats(clock.tick, self.live, skipped=quotes.skipped, ours=quotes.ours)
         run = _Run(clock, window, stats)
-        for m in self._plan(quotes, fee, clock.tick, self.config.max_matches_per_tick):
+        self._bench_shape(book)
+        expiries = expiries_in(book.bench_offers, clock.tick)
+        for m in self._plan(quotes, fee, clock.tick, self.config.max_matches_per_tick, expiries):
             self._match(run, m)
         self._reread_bench(run, self.config.bench_reads_per_tick - 1)
         self.pairs_seen |= run.pairs
@@ -242,13 +242,28 @@ class BrokerAgent:
             self.log(f"tick {tick} broker: book unreadable ({e.error_count()} problem(s)); nothing matched")
         return None
 
-    def _plan(self, quotes: Quotes, fee: Fee, tick: int, cap: int) -> list[Match]:
+    def _bench_shape(self, book: BrokerBook) -> None:
+        """Log once per bench run the keys its offers carry: nobody has seen a real Market Test offer yet, and a key
+        like an expiry would let the edge hold pairs safely (`bench_model.expiry_of`)."""
+        for o in book.bench_offers:
+            run = bench_run(str(o.get("id", "")).split("-")[0])
+            if run in self._shapes_logged:
+                continue
+            self._shapes_logged.add(run)
+            keys = {"offer": sorted(o), "give": sorted(o.get("give") or {}), "want": sorted(o.get("want") or {})}
+            tm.event("broker.bench_shape", {"run": run, **keys})
+            self._append("broker_bench_shapes.jsonl", {"run": run, **keys})
+            self.log(f"broker: bench {run} offers carry {keys}")
+
+    def _plan(
+        self, quotes: Quotes, fee: Fee, tick: int, cap: int, expiries: dict[str, int] | None = None
+    ) -> list[Match]:
         """Today's exact matching of everything, or, with `bench_policy = "edge"`, the edge's bench plan first and
         the exact public matching with the slots left."""
         if self.config.bench_policy != "edge":
             return plan_matches(quotes.quotes, fee, cap)
         bench = [q for q in quotes.quotes if q.bench]
-        self.edge.observe(bench, tick)
+        self.edge.observe(bench, tick, expiries)
         session_ticks = {}
         for run, session in self.sessions.open.items():
             self.edge.first_tick[run] = min(self.edge.first_tick.get(run, session.first_tick), session.first_tick)
@@ -273,7 +288,8 @@ class BrokerAgent:
                 return
             fresh = [q for q in quotes_from(book, public=False).quotes if str(q.id) not in run.taken]
             cap = self.config.max_matches_per_tick - run.stats.proposed
-            for m in self._plan(Quotes(fresh, 0, 0), Fee(book.fee_bps, book.fee_per_card), run.clock.tick, cap):
+            fee, expiries = Fee(book.fee_bps, book.fee_per_card), expiries_in(book.bench_offers, run.clock.tick)
+            for m in self._plan(Quotes(fresh, 0, 0), fee, run.clock.tick, cap, expiries):
                 self._match(run, m)
 
     def _observe_feed(self, tick: int) -> None:
