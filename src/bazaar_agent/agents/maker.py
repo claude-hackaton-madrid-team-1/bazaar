@@ -56,6 +56,7 @@ from bazaar_agent.agents.seller import (
 )
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.guardrails import Context, Guardrails, LedgerStore, context_from
+from bazaar_agent.holdings import Holdings
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import Playbook, StrategyParams, build_playbook
@@ -170,11 +171,13 @@ class Maker:
         now: Callable[[], float] = time.monotonic,
         hub: Any = None,
         jev: MakerJev | None = None,
+        holdings: Holdings | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.ledger, self.feed, self.live, self.log, self.now = ledger, feed, live, log, now
         self.config = config or MakerConfig()
         self.jev = jev  # Jev picks prices and reprice-or-hold among legal candidates; None = today's prices
+        self.holdings = holdings  # /me from the shared Postgres snapshot while provably current, else live
         self.rec = Recorder("maker", decisions, live, log, hub)
         self.hub = hub  # agents.status.StatusHub: the read-only HTTP/WS view, when served
 
@@ -182,7 +185,7 @@ class Maker:
         window = window_for(clock, self.now(), self.now)
         self.rec.decisions.begin_tick(clock.tick)
         try:
-            self._tick(read_snapshot(self.team, self.public, self.feed, clock), window)
+            self._tick(read_snapshot(self.team, self.public, self.feed, clock, self.holdings), window)
         except BazaarError as e:
             self.log(f"tick {clock.tick} maker: read refused {e.code} ({e.message[:80]}); nothing sent")
         except LedgerUnavailable as e:
@@ -221,6 +224,7 @@ class Maker:
             f"tick {clock.tick} maker: {len(actions)} action(s), {len(run.posted)} {verb}, {run.open_total} open "
             f"offer(s), {run.listings_left} listing(s) left, {window.left():.1f} s left · "
             f"{'LIVE' if self.live else 'dry run'}"
+            + (f" · {snap.holdings.line()}" if snap.holdings is not None else "")
         )
 
     def _ctx(self, run: _MakerRun) -> Context:

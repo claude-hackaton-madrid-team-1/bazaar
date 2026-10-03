@@ -49,6 +49,7 @@ from bazaar_agent.agents.words import WordsRequest
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.evals.dealers import price_class
 from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, check
+from bazaar_agent.holdings import Holdings
 from bazaar_agent.learn.blockers import Blocks
 from bazaar_agent.learn.live import LiveLearner
 from bazaar_agent.learn.outcomes import OutcomeLearner
@@ -295,6 +296,7 @@ class Taker:
         now: Callable[[], float] = time.monotonic,
         hub: Any = None,
         sleep: Callable[[float], None] = time.sleep,
+        holdings: Holdings | None = None,
         learner: LiveLearner | None = None,
         outcome_learner: OutcomeLearner | None = None,
         lessons: Lessons | None = None,
@@ -304,6 +306,7 @@ class Taker:
         self.jev, self.pack_judge, self.words_fn, self.now = jev, pack_judge, words_fn, now
         self.config = config or TakerConfig()
         self.sleep = sleep
+        self.holdings = holdings  # /me from the shared Postgres snapshot while provably current, else live
         self.learner = learner  # the live-feed reader: blockers recalled before a dealer thread opens
         self.outcome_learner = outcome_learner  # lessons from settled outcomes, on its own worker (N3)
         self.lessons = lessons  # the hybrid recall for the words context (Jev gets them through its JevFn)
@@ -320,7 +323,7 @@ class Taker:
         window = window_for(clock, self.now(), self.now)
         self.rec.decisions.begin_tick(clock.tick)
         try:
-            snap = read_snapshot(self.team, self.public, self.feed, clock)
+            snap = read_snapshot(self.team, self.public, self.feed, clock, self.holdings)
             threads = [t for t in self.team.my_threads("open").get("threads") or [] if isinstance(t, dict)]
             self._tick(snap, threads, window)
         except BazaarError as e:
@@ -363,6 +366,7 @@ class Taker:
         self.log(
             f"tick {clock.tick} taker: {len(proposals)} accept candidate(s), {len(run.accepted)} taken, "
             f"{len(self.convs)} dealer thread(s), {window.left():.1f} s left · {'LIVE' if self.live else 'dry run'}"
+            + (f" · {snap.holdings.line()}" if snap.holdings is not None else "")  # what the tick decided from
         )
 
     def _ctx(self, run: _TickRun, *, skip_thread: int | None = None, skip_offer: int | None = None) -> Context:
@@ -569,6 +573,8 @@ class Taker:
         price = conv.accepted_price or (conv.neg.bids[-1] if conv.neg.bids else None)
         if status == "deal" and price is not None and self.live:
             self.ledger.record("spend", tick, run.snap.clock.t_hours, int(price), conv.item)
+        if status == "deal" and self.live:
+            self._after_deal(run, f"deal in thread {conv.thread_id}")
         if self.learner is not None:
             self.learner.thread_closed(thread, run.snap.us, run.snap.clock)
         self.log(
@@ -753,7 +759,21 @@ class Taker:
             self.ledger.record("spend", clock.tick, clock.t_hours, p.price, p.ref)
             if p.candidate is not None and p.candidate.replaces_bid is not None:
                 self._withdraw(run, p.candidate.replaces_bid)
+        self._after_deal(run, f"accept of offer {p.offer_id}")  # after the books: a failed re-read loses nothing
         return True
+
+    def _after_deal(self, run: _TickRun, what: str) -> None:
+        """Album first after every deal: re-read /me (stored for every process) and decide on it from now on."""
+        if self.holdings is None:
+            return
+        tick = run.snap.clock.tick
+        try:
+            run.snap = run.snap.with_me(self.holdings.after_deal(run.snap.clock, what))
+        except Exception as e:  # any failure (a refusal, a dropped connection): the next tick reads /me again
+            code = e.code if isinstance(e, BazaarError) else type(e).__name__
+            self.log(f"tick {tick} taker: /me re-read after {what} failed ({code}); the next tick reads it")
+            return
+        self.log(f"tick {tick} taker: {what}: {run.snap.holdings.line() if run.snap.holdings else '/me re-read'}")
 
     def _duel_grace(self, run: _TickRun) -> None:
         """Duels own the first `duel_grace_s` of a tick: the duel player decides right after the tick lands

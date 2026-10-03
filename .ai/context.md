@@ -94,6 +94,11 @@ scripts/readme_status.py`, run by the pre-commit hook) · each task ships an Hon
 Report — no ✅ without pasted evidence (see "Honesty protocol" below).
 
 ## Hard rules
+**Parallel by default (Omar, 2026-10-03, HARD RULE):** every worker splits its task and runs Claude Code
+sub-agents / parallel agents whenever the pieces can run independently (file-disjoint slices, research,
+reviews: pr-reviewer + security-auditor always in parallel, test runs, simulator runs, docs), or asks Jev to
+orchestrate the split (`python -m bazaar_agent.jev judge` with the options as a choice question). Work done
+serially must say why in the PR body. Each sub-agent gets fresh, verified context and writes only its own files.
 Workers push their own feature branch and open PRs; nobody pushes to main; only the coordinator
 (or a human) merges, after `/pr-review` APPROVE and green CI. Never deploy or change Railway
 without the coordinator. NEVER add collaborators. NEVER commit `.env` or any secret.

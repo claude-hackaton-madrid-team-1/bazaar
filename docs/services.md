@@ -152,17 +152,47 @@ there, create your own key in Phoenix (Settings → API Keys) and follow README,
 on every request: missing or wrong → `401 {"error": "unauthorized"}`; more than 5 requests/s per token
 (burst 20) → `429` with `Retry-After`; more than `mcp_calls_per_minute` (RUNTIME.md, 30) tool calls per
 minute per token → an error result `rate limited: …`. `GET /health` → `{"ok": true, "server": "bazaar",
-"tools": 19, "target": {"mode": "real", "url": "https://bazaar.causaprima.ai"}}` with no token (the
+"tools": 21, "target": {"mode": "real", "url": "https://bazaar.causaprima.ai"}}` with no token (the
 target is a mode and a public URL; nothing about the live/dry mode or the game state).
 
-Tools: the 13 reads (`learnings`, `status`, `clock`, `strategy`, `curves`, `tape`, `teams`, `book`, `traders`, `alerts`,
-`rules`, `threads`, `thread`) and 6 writes (`dealer_buy`, `sell_list`, `sell_bid`, `sell_cancel`,
+Tools: the 15 reads (`learnings`, `status`, `holdings`, `cards`, `clock`, `strategy`, `curves`, `tape`, `teams`, `book`,
+`traders`, `alerts`, `rules`, `threads`, `thread`) and 6 writes (`dealer_buy`, `sell_list`, `sell_bid`, `sell_cancel`,
 `duel_move`, `steer`). Each answer is one text block holding JSON. A write answers
 `{"tool", "tick", "status": "approved"|"rejected"|"expired"|"done"|"failed"|"hold", "sent", "guardrail",
 "request", "command", ...}`: `approved` + `sent: false` is a dry run (what WOULD be sent), the default
 unless `BAZAAR_LIVE=1` is set on the service by hand. The guardrails run inside the server for every
 write; every write call is a `decisions` row with agent `mcp`. Answers never carry a key, token,
 password or URL. Add it to Claude Code: README, "The tools as a remote MCP server".
+
+`status`, `holdings` and `strategy` (and every write's album-first read) answer from the shared Postgres
+snapshot of `/api/me` while it is provably current, else from `/api/me` itself (README, "Holdings"). Each
+answer carries where it came from:
+
+```json
+"holdings": {"source": "db", "tick": 812, "age_s": 0.4, "epoch": 57, "digest": "3f9c0a1b2c3d4e5f",
+             "read_by": "taker", "why": "fresh"}
+```
+
+`source: "live"` with `why` (`no snapshot this tick`, `a write of ours since it was read`, `a thread message
+of ours this tick`, `older than 5 s`, `the tick is about to end`, `stored row does not match itself`, `postgres
+busy or not connected`, `postgres error`, ...) means the server read `/api/me` itself.
+`holdings` answers `{team, cash, level, affinity, pages, missing: {rows: [{set, ref, name, rarity,
+value_to_us}]}, duplicates: {ref: [asset ids]}, packs: [{asset, pack}], cards: {rows: [{asset, ref, set,
+rarity, serial, your_value}]}, holdings}`. `cards` (`set`, `rarity`, `ref` filters) answers `{source: "db" |
+"live", rows: [{ref, set, set_name, name, rarity, book, print_run, minted, released, page, hidden,
+updated_tick}]}`.
+
+## Holdings and catalog tables (Postgres)
+
+`me_snapshots` (key `(world, team, tick)`; `world` is `real` or `sim:<host:port>`): `epoch`, `digest` (etag of cash, level, assets and album counts),
+`read_at`, `read_by` (taker | maker | mcp | cli | runtime), `cash`, `level`, `cards`, `duplicates`, `packs`,
+`pages`, `affinity`, `score`, `me` (the whole `/api/me` payload). A newer epoch, or the same epoch read
+later, wins; a row never moves backwards. `holdings_state` (one row per world, key `scope`): `epoch`, `written_at`,
+`thread_message_at`, `last_write`, `last_writer`. `cards` (key `id`, the card ref): `set_code`,
+`set_name`, `name`, `rarity`, `book`, `print_run`, `minted`, `released`, `page`, `hidden`, `updated_tick`.
+The evals' `snapshots` (one row per tick) follows the winning `me_snapshots` row of the real game (or of a
+simulator in its own database).
+
 ## Evals scorecard (Postgres)
 
 The evals (README "Evals") write one `outcomes` row per settled duel, dealer thread, team trade or
