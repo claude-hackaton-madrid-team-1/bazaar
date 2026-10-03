@@ -212,3 +212,9 @@ def test_replaying_each_real_conversation(real):
     results = [play(plan, e) for c in mine if (e := episode_from(c))]
     s = summarise(results)
     assert s.runs == 37 and s.mean_share >= 0.85 and s.repeated == 0
+
+
+def test_the_reason_names_the_opening_ask_when_it_is_the_bound():
+    tight = FloorRow("abuela", "card:common", 10, 5, 5, (10, 10, 10, 10, 10), 5, None, 2.0)
+    choice = plan_for(tight, cap=None)
+    assert choice.plan is None and "its opening ask 10 below market" in choice.reason

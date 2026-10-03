@@ -204,5 +204,7 @@ def test_a_rolling_cap_with_nothing_to_age_out_gives_up_instead_of_raising(plans
     assert pack_plans[("abuela", "pack:sobre_barrio")].choice.plan is not None
     sched = schedule(pack_plans, [Target("abuela", "pack:sobre_barrio")], zero_packs, loose, cash=1000)
     assert sched.slots == ()
-    spent = schedule(plans, [Target("abuela", "card:uncommon")], DEFAULT_QUOTAS, RULES, cash=1000, spent_this_hour=140)
-    assert spent.slots == () and spent.notes  # 140 spent before the window: no 25 P slot fits the first hour
+    targets = [Target("abuela", "card:uncommon")] * 4
+    spent = schedule(plans, targets, DEFAULT_QUOTAS, RULES, cash=1000, spent_this_hour=140)
+    # 140 spent before the window ages out at 10:00: the four slots wait for it instead of giving up
+    assert [s.wall for s in spent.slots] == ["10:00:00", "10:03:00", "10:06:00", "10:09:00"]
