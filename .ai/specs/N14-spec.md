@@ -2,7 +2,7 @@
 
 - Task id: N14 (migrated from GitHub issue(s) #22, #9, #8)
 - Priority: P1
-- Status: ⬜ starts when the learner (#96) merges in the 09:30 window; the ladder pieces (#8, #9) live in N3's auto-evolve (#112).
+- Status: 🔵 slices merged: N14a hard dealers (#158, `dealer_final_lift` = 0), N14b new pages (#145) and supply + packs (#155); the learner (#96) and the ladder pieces (#8, #9, N3's auto-evolve #112) are merged too.
 - Backlog source: local (`.ai/specs`). GitHub issues are not used any more (migrated and closed 2026-10-03).
 - Traces up to: [`01-spec.md`](./01-spec.md)  ·  Indexed in: [`02-plan.md`](./02-plan.md)
 
@@ -17,7 +17,7 @@ Every mechanic reads the learner's lessons through the hybrid recall and writes 
 ## N14b slice — packs, supply and new pages (coordinator brief, Sat 2026-10-03 05:00)
 Shipped as two PRs: the new-page re-rank first (El Retiro is live from 09:00), then supply + packs.
 - [ ] 4. New pages: a page released mid-game (El Retiro Sat 09:00 with a `sobre_barrio` + 150 P grant; Chamberí
-  Sun 09:00) is ranked by the running taker and maker the first tick `/api/me` shows it, no restart; the
+  Sun, game hour 16.65, about 11:34) is ranked by the running taker and maker the first tick `/api/me` shows it, no restart; the
   maker/taker never sell our only copy of a card the new page needs (`protect_page_sets`, GUARDRAILS.md).
   Zero-minted cards of the new set become dealer buys only behind `dealer_mints_unminted` (STRATEGY.md,
   default false; ported from the night shift's B26, #129).
@@ -47,6 +47,14 @@ Covers criterion 1. This slice sets prices only: the words belong to N16 and the
 - [ ] d. Simulator proof per dealer (Abuela, Chato) on our own port, with `scripts/sim_smoke.py` green.
 - Decision (coordinator, 05:40, Jev undecided at 0.31): ship `dealer_final_lift` = 0. Omar decides the value
   around 08:00, using the replay numbers for 0.15 and 0.25 in the PR.
+
+Superseded Sat 3 Oct (rules audit): the ladder counts the best 3 deals per level and restarts every round; a round starts on
+the organisers' `round` action in `/api/schedule` (round 2 at tick 160, round 3 at game hour 16.65, about Sun 11:34), not at
+"h4" or "h18" as in the source text below. A dealer deal scores the share of that dealer's own range, buying or selling;
+the opening price scores 0 and the dealer's final the whole range. Pack luck never scores (`STRATEGY.md`, "What scores").
+`protect_page_sets` now lists every set. The dealers in play are L1 Abuela, L2 El Chato, L3 Doña Pilar (a collector who sells
+only Gold packs) and L4 Los Pícaros (they swap the card in the offer: read the structure); a `banco` dealer (Don Ernesto)
+shows in the feed, unannounced. See `docs/briefing.md` ("Scoring", "Dealers and ladder").
 
 ## Source (the original issue text, verbatim)
 

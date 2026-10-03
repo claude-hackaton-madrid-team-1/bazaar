@@ -287,6 +287,13 @@ not to a stop. This keeps the rule in `.ai/skills/jev/` that a verdict never aut
 | Market (30) | Market Test efficiency + organic value on our venue | `board` venue + broker that estimates hidden limits from quote shading and patience (#11, #12). Needs level 2. |
 | Judges (40) | Ideas and craft | This architecture: memory → learnings → Jev → fresh executor, framed for agent-to-agent invoice negotiation (#16). |
 
+Corrected by the rules audit (Sat 3 Oct, commit 8dbf50b7; full text in `docs/briefing.md` "Scoring" and `STRATEGY.md` "What scores"):
+
+- Holding cards, the album and `collection_value` never score by themselves. A card scores only when it moves: a team trade (price minus our `your_value`, into `neg_points`) or a dealer deal (ladder share of that dealer's own range, buying or selling; the opening price scores 0 and the dealer's final scores the whole range).
+- Per round, market-making is about 22.5 × `bench_points` + 7.5 × organic, and negotiating is about ladder 7.5 + duels 7.5 + team trades 15, each part capped at the top-3 mean. The ladder restarts every round.
+- A round starts on the organisers' `round` action in `/api/schedule` (round 2 at tick 160, round 3 at game hour 16.65, about Sun 11:34), not when the doors open.
+- Page cards still cost points when sold: team-acquired page cards are marked at the current `your_value`, so breaking a complete page dropped `neg_points` 134.7 → 44.6 (Sat 3 Oct, tick 948). Hence the hard rules in `.ai/context.md`.
+
 ### 7.3 Level 2 is the gate to 30 points
 
 Abuela's `unlock.early_min_deals = 3`: three negotiated deals (not at her opening price) unlock the
@@ -297,8 +304,10 @@ three negotiated Abuela deals, preferably packs with LAV/SAL upside.
 
 We start with 11 commons, 3 uncommons and 1 rare (`/api/me`). The buyer agent first fills pages
 with the best value per prima: high-affinity sets (LAV, SAL), cheap commons from Abuela at ≤10, and
-packs while she sells 3 per hour. The seller agent lists only cards whose value to us is far below
-their value to a likely buyer. Each new set (RET Saturday, CHA Sunday) re-runs the collect plan.
+packs while she sells 3 per hour. A page does not score by itself (§7.2); it raises what each of its
+cards is worth to us, and a trade is scored against that value. The seller agent lists only true
+duplicates whose value to us is far below their value to a likely buyer, and never our only copy of a
+page card (`protect_page_sets`). Each new set (RET Saturday, CHA Sunday) re-runs the collect plan.
 
 ### 7.5 Embeddings and what the vector store is for
 

@@ -2,7 +2,7 @@
 
 - Task id: M1 (migrated from GitHub issue(s) #11, #12, #13)
 - Priority: P0
-- Status: 🔵 #71 approved: the maker opens our 0 bps board venue at game hour 6.5 (~11:30) and brokers it; merges before 06:00. Matcher efficiency on the bench and organic pair breadth are open.
+- Status: 🔵 #71 merged. Our board venue v19 is ON (`allow_venue_open` = true, team decision Sat 3 Oct, PR #171) and open since about game hour 3.6, replacing the free starter stall; the maker runs the exact broker (the edge broker is BE1, #218, behind `BAZAAR_BENCH_POLICY`, default `exact`). So far v19 scores exactly the stall's 0.5 bench and 0 organic trades (`docs/briefing.md`, "Our own market"). Open: a bench edge over the stall and organic pair breadth.
 - Backlog source: local (`.ai/specs`). GitHub issues are not used any more (migrated and closed 2026-10-03).
 - Traces up to: [`01-spec.md`](./01-spec.md)  ·  Indexed in: [`02-plan.md`](./02-plan.md)
 
@@ -10,9 +10,14 @@
 Score the market half (30 points): a venue open in every Market Test session, a broker that matches at least as well as the free stall, and organic trades between other teams on our venue.
 
 ## Acceptance criteria (each MUST be testable)
-- [ ] 1. Our venue is open in every Market Test session from Saturday 12:00 (venue check at 11:41).
+- [ ] 1. Our venue is open in every Market Test session (planned from Saturday 12:00; brought forward by team decision, open since about game hour 3.6).
 - [ ] 2. Bench efficiency >= the free auto stall on the simulator's bench (#71: 0.892 vs 0.892); a max-weight matcher only if it beats it.
 - [ ] 3. Organic: fee well below El Rastro, announced; trades between distinct team pairs counted per session; anti-wash guard.
+
+Superseded Sat 3 Oct (rules audit): the Market Test game hours in the source text below are history; the live
+schedule is in `docs/briefing.md` ("Windows this weekend") and `/api/schedule`. Market-making per round is
+22.5 x bench points + 7.5 x organic, and the free stall is bench 0.5 (`docs/briefing.md`, "Scoring"). The El Rastro fee
+is ceil(5 % x price) + 1 P per card, paid by the side that accepts. Our key cannot trade on our own venue (`self_venue`).
 
 ## Source (the original issue text, verbatim)
 
