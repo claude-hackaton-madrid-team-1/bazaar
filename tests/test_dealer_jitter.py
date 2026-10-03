@@ -31,6 +31,7 @@ JITTERS = (
     dict(start_spread=3, jump_share=0.5, band_jump_share=0.2, jump_max=4, min_step=1),
     dict(start_spread=10, jump_share=1.0, band_jump_share=1.0, jump_max=20, min_step=2),
     dict(start_spread=0, jump_share=0.0, band_jump_share=0.35, jump_max=4, min_step=3),
+    dict(start_spread=2, jump_share=1.0, band_jump_share=0.5, jump_max=2, min_step=1, band_gap=3),
 )
 
 
@@ -52,7 +53,7 @@ def schedule(plan: BidPlan, salt: str = "") -> list[int]:
 def test_no_jitter_is_todays_ladder():
     assert bid_schedule(BidPlan(21, 1, 25)) == [21, 22, 23, 24, 25]
     assert bid_schedule(BidPlan(3, 4, 12)) == [3, 7, 11, 12]
-    off = dict(start_spread=0, jump_share=0.0, band_jump_share=0.0, jump_max=3, min_step_pct=0.02, seed=7)
+    off = dict(start_spread=0, jump_share=0.0, band_jump_share=0.0, jump_max=3, band_gap=2, min_step_pct=0.02, seed=7)
     assert make_jitter(max_price=25, **off) is None  # type: ignore[arg-type]
 
 
@@ -245,3 +246,32 @@ def test_predictability_is_perfect_on_todays_ladder_and_falls_with_jitter():
     seqs = [("u", s) for s in silent_sequences(plan, noisy, 400, 1)]
     p = predictability(seqs[:200], seqs[200:])
     assert p.hit_rate < 0.9 and p.first_hit_rate < 0.5 and p.step_entropy_bits > 0.3
+
+
+def test_the_seed_never_shows_in_a_log_line_or_a_trace():
+    plan = BidPlan(21, 1, 25, jitter=StepJitter(987654321, start_spread=2))
+    assert "987654321" not in repr(plan) and "987654321" not in str(plan.__dict__)
+
+
+def test_counter_below_never_steps_past_the_dealer_minimum_and_keeps_its_plus_one():
+    plan = jittered(BidPlan(89, 1, 93), 5, min_step=2)
+    # her opening 90 is inside our max and our next bid (90) meets it, but she has not come down yet:
+    # one under her ask a +1 still counters (no concession earned, but a bid at her limit is taken)
+    assert decide(Negotiation(plan, bids=[88]), 90, 7, False).price == 89
+    # a jump past her unconceded ask counters at ask − base step, never above it
+    jumpy = jittered(BidPlan(80, 1, 99), 5, band_jump_share=1.0, jump_max=9, min_step=2)
+    neg = Negotiation(jumpy, bids=[80], salt="t")
+    nxt = neg.next_bid()
+    assert nxt is not None and nxt > 84
+    assert decide(neg, 84, 7, False).price == 82
+
+
+def test_a_band_gap_allows_a_jump_only_while_her_ask_is_far_above_where_it_lands():
+    always = jittered(BidPlan(20, 1, 40), 3, band_jump_share=1.0, jump_max=3, band_gap=3)
+    for salt in map(str, range(200)):
+        far, near = Negotiation(always, bids=[22], salt=salt), Negotiation(always, bids=[22], salt=salt)
+        far.see_ask(35)
+        near.see_ask(26)
+        assert far.next_bid() in (24, 25)  # a jump: her ask 35 is at least 3 above 24 or 25
+        assert near.next_bid() == 23  # 24 or 25 would land within 3 of her ask 26: the base step
+        assert Negotiation(always, bids=[22], salt=salt).next_bid() == 23  # no ask seen yet: no jump

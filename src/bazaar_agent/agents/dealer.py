@@ -43,21 +43,26 @@ class StepJitter:
     `min_step` earns nothing) or, with some probability, a jump drawn uniformly from base + 1..`jump_max`.
     Below the plan's start (the bottom of the limit band the plan was built around) jumps come with
     `jump_share` and are clipped to land at most on the start; from the start up they come with
-    `band_jump_share`, where a jump past the dealer's limit gives back share. Every draw is a pure
-    function of (seed, the thread's salt, the bid index), so deciding twice on the same state sends the
-    same bid. The plan's hard rules are untouched: strictly rising, never above `max_price`.
+    `band_jump_share`, where a jump past the dealer's limit gives back share; with `band_gap` > 0 only
+    while her standing ask (never below her secret limit) is at least `band_gap` above where the jump
+    lands. Every draw is a pure function of (seed, the thread's salt, the bid index), so deciding twice
+    on the same state sends the same bid. The plan's hard rules are untouched: strictly rising, never
+    above `max_price`. Any knob on also raises every in-band step to `min_step` (a step-1 plan on a
+    90-primas rare climbs 89, 91, 93).
     """
 
-    seed: int
+    seed: int = field(repr=False)  # never in a log line or a trace: with the public thread id it replays our bids
     start_spread: int = 0
     jump_share: float = 0.0
     band_jump_share: float = 0.0
     jump_max: int = 3
     min_step: int = 1
+    band_gap: int = 0
 
     def __post_init__(self) -> None:
         shares = (self.jump_share, self.band_jump_share)
-        if self.start_spread < 0 or self.jump_max < 1 or self.min_step < 1 or not all(0 <= p <= 1 for p in shares):
+        counts = (self.start_spread, self.band_gap, self.jump_max - 1, self.min_step - 1)
+        if min(counts) < 0 or not all(0 <= p <= 1 for p in shares):
             raise ValueError(f"bad jitter: {self}")
 
     def _rng(self, salt: str, index: int) -> random.Random:
@@ -66,14 +71,18 @@ class StepJitter:
     def first_bid(self, plan: BidPlan, salt: str) -> int:
         return max(1, plan.start - self._rng(salt, 0).randint(0, self.start_spread))
 
-    def step(self, plan: BidPlan, salt: str, index: int, last: int) -> int:
-        """The raise after our `index`-th bid (1-based), which was `last`."""
-        rng, base = self._rng(salt, index), max(plan.step, self.min_step)
+    def step(self, plan: BidPlan, salt: str, index: int, last: int, ask: int | None = None) -> int:
+        """The raise after our `index`-th bid (1-based), which was `last`; `ask` is her standing ask."""
+        rng, base = self._rng(salt, index), max(plan.step, self.min_step)  # = Negotiation.base_step
         below = last < plan.start
         if self.jump_max <= base or rng.random() >= (self.jump_share if below else self.band_jump_share):
             return base
         jump = rng.randint(base + 1, self.jump_max)
-        return max(base, min(jump, plan.start - last)) if below else jump
+        if below:
+            return max(base, min(jump, plan.start - last))
+        if self.band_gap and (ask is None or last + jump > ask - self.band_gap):
+            return base
+        return jump
 
 
 def make_jitter(
@@ -82,6 +91,7 @@ def make_jitter(
     jump_share: float,
     band_jump_share: float,
     jump_max: int,
+    band_gap: int,
     min_step_pct: float,
     seed: int,
     max_price: int,
@@ -99,6 +109,7 @@ def make_jitter(
         band_jump_share=band_jump_share,
         jump_max=jump_max,
         min_step=max(1, math.ceil(min_step_pct * max_price - 1e-9)),
+        band_gap=band_gap,
     )
 
 
@@ -136,13 +147,18 @@ class Negotiation:
     bids_at_opening: int = 0  # bids we had sent when her opening ask appeared; later ones are counters
     salt: str = ""  # the thread id once it is open: each thread draws its own jittered steps
 
+    @property
+    def base_step(self) -> int:
+        """The plan's step, raised to the dealer's minimum move when a jitter knows it."""
+        return max(self.plan.step, self.plan.jitter.min_step) if self.plan.jitter else self.plan.step
+
     def next_bid(self) -> int | None:
         """A strictly higher price than our last bid, capped at the limit; None when spent."""
         plan, jitter = self.plan, self.plan.jitter
         if not self.bids:
             return plan.start if jitter is None else jitter.first_bid(plan, self.salt)
         last = self.bids[-1]
-        step = plan.step if jitter is None else jitter.step(plan, self.salt, len(self.bids), last)
+        step = plan.step if jitter is None else jitter.step(plan, self.salt, len(self.bids), last, self.lowest_ask)
         nxt = min(plan.max_price, last + step)
         return nxt if nxt > last else None
 
@@ -172,13 +188,15 @@ class Negotiation:
 
 def counter_below(neg: Negotiation, ask: int, offer_id: int) -> Move:
     """Her ask is inside what we would pay, but she has not come down yet: bid strictly below it (a bid
-    at her ask would close at her opening price). The dealer matches our step, so we never step past it.
+    at her ask would close at her opening price). The dealer matches our step, so we never step past it
+    (the base step: with a jitter, the dealer's minimum move). One under her ask a +1 still counters: it
+    earns no concession, but a bid that reaches her limit is taken.
     When no whole price is left between our last bid and her ask, waiting freezes the thread (she only
     moves when we move) and there is no range left to capture: take her ask."""
     if neg.bids and neg.bids[-1] + 1 >= ask:
         return Move("accept", ask, offer_id, f"no room left between our {neg.bids[-1]} and her {ask}")
     last = neg.bids[-1] if neg.bids else 0
-    price = max(1, last + 1, ask - neg.plan.step)
+    price = max(1, last + 1, ask - neg.base_step)
     if price >= ask:  # defensive: only reachable with no bids and her ask at 1
         return Move("wait", reason=f"no counter left below her unconceded {ask}")
     return Move("bid", price, reason=f"counter below her unconceded ask {ask}")

@@ -131,6 +131,7 @@ PARAMS = strategy.StrategyParams(
     dealer_jitter_jump_share=0.0,
     dealer_jitter_band_jump_share=0.0,
     dealer_jitter_jump_max=3,
+    dealer_jitter_band_gap=0,
     dealer_min_step_pct=0.02,
     dealer_jitter_seed=0,
 )

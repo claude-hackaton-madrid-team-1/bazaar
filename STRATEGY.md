@@ -46,5 +46,6 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 - `dealer_jitter_jump_share` = 0 — below the plan's start, the chance that a raise is a jump (base + 1..`dealer_jitter_jump_max`) instead of the base step; a jump lands at most on the start.
 - `dealer_jitter_band_jump_share` = 0 — the same chance from the plan's start up, where a jump past the dealer's secret limit gives back ladder share (`docs/night/b12-dealer-jitter.md`).
 - `dealer_jitter_jump_max` = 3 — the largest raise a jump may take.
+- `dealer_jitter_band_gap` = 0 — 0 lets a band jump happen anywhere; above 0 only while the dealer's standing ask (never below her secret limit) is at least this many primas above where the jump lands.
 - `dealer_min_step_pct` = 0.02 — with any jitter on, no raise is smaller than this share of the plan's max (our stand-in for book): the dealer never moves faster than our last step, and a smaller step earns nothing.
 - `dealer_jitter_seed` = 0 — 0 draws a fresh seed per process (a committed seed plus the public thread id would replay our bids); any other value fixes the draws, for tests and simulations.

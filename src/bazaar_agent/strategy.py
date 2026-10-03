@@ -64,6 +64,7 @@ class StrategyParams(BaseModel):
     dealer_jitter_jump_share: float = Field(ge=0, le=1)
     dealer_jitter_band_jump_share: float = Field(ge=0, le=1)
     dealer_jitter_jump_max: int = Field(ge=1, le=20)
+    dealer_jitter_band_gap: int = Field(ge=0, le=20)
     dealer_min_step_pct: float = Field(ge=0, le=0.2)
     dealer_jitter_seed: int = Field(ge=0)
 
@@ -461,6 +462,7 @@ def dealer_jitter(params: StrategyParams, max_price: int) -> StepJitter | None:
         jump_share=params.dealer_jitter_jump_share,
         band_jump_share=params.dealer_jitter_band_jump_share,
         jump_max=params.dealer_jitter_jump_max,
+        band_gap=params.dealer_jitter_band_gap,
         min_step_pct=params.dealer_min_step_pct,
         seed=params.dealer_jitter_seed,
         max_price=max_price,

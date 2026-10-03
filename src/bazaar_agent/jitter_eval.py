@@ -24,7 +24,8 @@ from dataclasses import dataclass, replace
 from statistics import mean
 
 from bazaar_agent.agents.dealer import BidPlan, Negotiation, StepJitter, decide
-from bazaar_agent.ladder_replay import DealerModel, Episode, Result, Summary, draw, play, summarise
+from bazaar_agent.ladder import Conversation
+from bazaar_agent.ladder_replay import DealerModel, Episode, Result, Summary, draw, episode_from, play, summarise
 
 # The dealer's minimum move, 2 % of book (B12), with book = the dealer's list price per class
 # (`GET /api/dealers`, Friday; El Chato from the #55 simulator's dealers.json).
@@ -52,17 +53,21 @@ class Level:
     band_jump_share: float = 0.0
     jump_max: int = 3
     min_step_pct: float = MIN_STEP_PCT
+    band_gap: int = 0
+    force: bool = False  # build the jitter even with every share at 0: the minimum step alone
 
     @property
     def off(self) -> bool:
-        return self.start_spread <= 0 and self.jump_share <= 0 and self.band_jump_share <= 0
+        return not self.force and self.start_spread <= 0 and self.jump_share <= 0 and self.band_jump_share <= 0
 
     def plan(self, plan: BidPlan, seed: int) -> BidPlan:
         """`plan` with this level's jitter drawn from `seed` (unchanged when the level is off)."""
         if self.off:
             return plan
         min_step = max(1, math.ceil(self.min_step_pct * plan.max_price - 1e-9))
-        jitter = StepJitter(seed, self.start_spread, self.jump_share, self.band_jump_share, self.jump_max, min_step)
+        jitter = StepJitter(
+            seed, self.start_spread, self.jump_share, self.band_jump_share, self.jump_max, min_step, self.band_gap
+        )
         return replace(plan, jitter=jitter)
 
 
@@ -175,6 +180,7 @@ class Predictability:
     mae: float  # mean absolute error in primas
     first_hit_rate: float  # our opening bid, predicted as the most common opening seen
     step_entropy_bits: float  # of the next step given what the rival conditions on, averaged
+    overall_hit_rate: float  # every bid, the opening one included
 
     def as_dict(self) -> dict[str, float | int]:
         return {k: (round(v, 3) if isinstance(v, float) else v) for k, v in self.__dict__.items()}
@@ -231,6 +237,7 @@ def predictability(
         mae=err / n if n else 0.0,
         first_hit_rate=first_hits / first_n if first_n else 1.0,
         step_entropy_bits=mean(entropies) if entropies else 0.0,
+        overall_hit_rate=(hits + first_hits) / (n + first_n) if n + first_n else 1.0,
     )
 
 
@@ -263,29 +270,36 @@ class Cell:
     level: str
     rule: Rule
     summary: Summary
-    lag_fill: float  # fill within 8 ticks when every round costs two ticks
+    lagged: Summary  # the same conversations when every round costs two ticks
     mean_bids: float
     predict: Predictability
 
-    def ratio(self, base: Cell) -> float:
-        return self.summary.mean_share / base.summary.mean_share if base.summary.mean_share else 0.0
+    def ratio(self, base: Cell, *, lagged: bool = False) -> float:
+        mine, theirs = (self.lagged, base.lagged) if lagged else (self.summary, base.summary)
+        return mine.mean_share / theirs.mean_share if theirs.mean_share else 0.0
+
+
+def replay_episodes(convs: Iterable[Conversation], dealer: str, price_class: str, at: str) -> list[Episode]:
+    """Every real buy conversation of this dealer and class, rebuilt with its own counters and patience
+    and its limit at the top (`hi`) or the bottom (`lo`) of its bracket (`ladder_replay.episode_from`)."""
+    mine = [c for c in convs if c.dealer == dealer and c.price_class == price_class and c.side == "buy"]
+    return [ep for c in mine if (ep := episode_from(c, at=at)) is not None]
 
 
 def evaluate(
     dealer: str,
     price_class: str,
     plan: BidPlan,
-    model: DealerModel,
+    eps: Sequence[Episode],
     levels: Sequence[Level],
     *,
     rules: Sequence[Rule] = ("w3", "capped"),
-    runs: int = 2000,
     seed: int = 0,
     within: int = 8,
     on_cell: Callable[[Cell], None] | None = None,
 ) -> list[Cell]:
-    """Every level against the same episodes (common random numbers), per dealer rule."""
-    eps = episodes(model, runs, seed)
+    """Every level against the same episodes (common random numbers), per dealer rule. `eps` is a
+    fitted model's draws (`episodes`) or the real threads replayed (`replay_episodes`)."""
     min_step = dealer_min_step(dealer, price_class)
     out = []
     for rule in rules:
@@ -301,7 +315,7 @@ def evaluate(
                 level.name,
                 rule,
                 summarise(results, within=within),
-                summarise(lagged, within=within).fill_within,
+                summarise(lagged, within=within),
                 mean(len(r.bids) for r in results),
                 predictability(seqs[:half], seqs[half:]),
             )
