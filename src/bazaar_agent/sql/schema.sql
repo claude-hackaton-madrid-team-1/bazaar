@@ -349,6 +349,23 @@ create table if not exists leaderboard_snapshots (
   read_at timestamptz not null default now(),
   primary key (world, tick, team));
 
+-- Other teams' set multipliers (AF1, `team_affinity.py`): what a team SAID in a team thread (untrusted words,
+-- parsed; `quote` is their scrubbed message, at most 200 characters) and what we INFERRED from the feed
+-- (`affinity.affinity_map`: the likeliest multiplier and its probability). One row per team, set and source.
+create table if not exists team_affinity (
+  team text not null, set_code text not null, multiplier numeric not null,
+  source text not null check (source in ('said','inferred')), confidence numeric, tick int not null,
+  thread_id bigint, quote text check (char_length(quote) <= 200), updated_at timestamptz not null default now(),
+  primary key (team, set_code, source));
+-- DataGrip and bazaar-live: per team and set, the stated multiplier beside the inferred one.
+create or replace view team_affinity_board as
+  select coalesce(s.team, i.team) as team, coalesce(s.set_code, i.set_code) as set_code,
+         s.multiplier as said, s.confidence as said_confidence, s.tick as said_tick, s.thread_id, s.quote,
+         i.multiplier as inferred, i.confidence as inferred_confidence, i.tick as inferred_tick
+  from (select * from team_affinity where source = 'said') s
+  full join (select * from team_affinity where source = 'inferred') i
+    on i.team = s.team and i.set_code = s.set_code;
+
 -- Rival board (bazaar-live's Rivals tab, DataGrip): one row per OTHER team, read-only, from what we already store:
 -- the leaderboard history, our latest /me, the catalog, the board (feed `offer.listed`, `offer.cancelled`), the tape,
 -- competitor_profiles and the rank watch's `rival_move` learnings. "They want": cards a team bid cash for (or asked for
