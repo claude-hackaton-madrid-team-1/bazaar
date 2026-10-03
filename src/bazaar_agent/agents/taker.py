@@ -601,6 +601,10 @@ class Taker:
             self.rec.decisions.settle(did, "expired")
             self.log(f"tick {tick} taker: the words took the rest of the tick; {conv.dealer} bid next tick")
             return
+        if stops := kill_switch(self.rules):  # it may have gone on while the words were written: hold
+            self.rec.decisions.settle(did, "rejected")
+            self.log(f"tick {tick} taker: kill switch on: holding bid on thread {conv.thread_id} ({'; '.join(stops)})")
+            return
         if (
             self.rec.send(
                 did,

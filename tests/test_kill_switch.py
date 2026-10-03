@@ -262,3 +262,18 @@ def test_sell_cancel_is_refused_while_the_kill_switch_is_on(switch, monkeypatch)
     result = CliRunner().invoke(cli.app, ["sell", "cancel", "7", "--live"])
     assert result.exit_code == 0, result.output
     assert team.sent == [("cancel", 7)]
+
+
+def test_the_switch_going_on_while_the_desk_writes_its_words_holds_the_bid(tmp_path, switch):
+    # The words may come from an LLM and take seconds: the switch is read again just before the send.
+    team, t, lines = _desk(tmp_path, switch)
+
+    def words_then_pause(request):
+        switch.paused(True)
+        return "Subo un poquito, ¿le parece?"
+
+    t.words_fn = words_then_pause
+    sent = len(team.sent)
+    t.on_tick(at(team, TICK + 1))
+    assert team.sent[sent:] == [] and set(t.convs) == {"abuela"}  # no bid, no walk: the thread waits
+    assert any("kill switch on: holding bid on thread 5000" in line for line in lines)
