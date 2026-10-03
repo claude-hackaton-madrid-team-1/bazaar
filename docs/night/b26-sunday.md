@@ -1,6 +1,6 @@
 # B26: new sets mid-game, and Sunday
 
-Night of 3–4 Oct 2026. Branch `night/b26-sunday`, draft PR #129 stacked on `night/b20-venue-path` (#118, on #71 at f29ffeb). Nothing here touched the live game. Sources: the schedule fixture (`tests/fixtures/api/get_api_schedule.anon.json`), the catalog fixture, B6's Saturday playbook (#102), W5's request budget (#78), W2b (#86), B11 (#103), B20 (#118).
+Night of 3–4 Oct 2026. Branch `night/b26-sunday`, draft PR #129 stacked on `night/b20-venue-path` (#118, on #71 at 9dea8bd). Nothing here touched the live game. Sources: the schedule fixture (`tests/fixtures/api/get_api_schedule.anon.json`), the catalog fixture, B6's Saturday playbook (#102), W5's request budget (#78), W2b (#86), B11 (#103), B20 (#118).
 
 ## 1. New sets mid-game (RET Saturday, CHA Sunday)
 
@@ -87,7 +87,7 @@ Each decision has a trigger to read on Saturday, and none of them changes anythi
 
 - `dealer_mints_unminted` in STRATEGY.md (`false` = today; a missing line also means false) and `strategy.supply_of`. With it on, a zero-minted card a dealer sells is a dealer buy and is **not scarce** (no `scarcity_first`, scarcity 0 in urgency), so plentiful new commons never crowd out cards that really are scarce. It also covers old-set cards nobody has pulled when a dealer sells their rarity (e.g. a rare at Chato).
 - `tests/test_new_sets.py`: 4 tests (a release through album and strategy, the dealer switch with its scarcity, a lagging catalog, the strategy file parsed with the switch on, off and absent; never the committed value, so flipping it keeps CI green).
-- This report. Gates: 2,006 passed, ruff, black and mypy clean. `/code-review` (high): 8 findings, all fixed (the test no longer pins the live value; dealer-minted cards are not scarce; the docs and the docstring name the switch; one branch instead of a double negative; the baseline asserted exactly).
+- This report. Gates: 2,088 passed, ruff, black and mypy clean. `/code-review` (high): 8 findings, all fixed (the test no longer pins the live value; dealer-minted cards are not scarce; the docs and the docstring name the switch; one branch instead of a double negative; the baseline asserted exactly).
 
 ## Risks
 
