@@ -1314,6 +1314,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | DA1 (new) | Duels and the team accept: a duel moves no cash and no card (organisers' talk, Sat 12:35), so it books no spend and meets no cash/spend/holdings rule; it takes the shared accept slot only on the tick it sends an accept; a refused runtime duel accept gives the slot back | 1 | 🔵 PR #201 |
 | [HA1](HA1-spec.md) (new) | Human approval for big trades: `human_approval_above` (60 P) refuses any card buy or sell at or above it without a `human_approvals` row covering card, side and price (fail closed, read once per tick like the breakers); one `approval_needed` decisions row per card, side and game hour; `bazaar approve` / `bazaar approvals`; duels and packs excluded; never loosens another cap | 1 | 🔵 PR (feat/human-approval) |
 | TS1 (new) | Tick stagger vs 429s on our one key (Sat ticks 646–650): `BAZAAR_TICK_OFFSET_S` capped at 10 s (already 40 % of the tick), declared `preserve()` on Railway; `duel run` re-reads a 429'd `/api/duels` once (server wait or 1.2 s, ≥ 8 s of budget left); offsets documented (duels 0, taker 2.5, maker 5, mcp 7.5), laptop CLI one at a time | 1 | 🔵 PR (fix/tick-offset-429) |
+| [BE1](BE1-spec.md) (new) | Market Test bench edge on main (port of Marius's #84): per-trader limit bands + maximum estimated true surplus, behind a guard (the exact plan unless the edge beats it by 10 estimated P) and `BAZAAR_BENCH_POLICY` = exact or edge on the maker (default exact, `preserve()`); proof `scripts/bench_edge_proof.py` | 2 | 🔵 PR (feat/bench-edge-main), shipped OFF |
 
 ### CLI commands (from `src/bazaar_agent/cli.py`)
 
@@ -1376,14 +1377,14 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-03] finding — bench edge: points favour less guard; no policy can beat the stall on every book (BE1)
+- [2026-10-03] finding — real Market Tests: 16 ticks, auto_baseline per session, our exact broker = the stall (BE1)
+- [2026-10-03] gotcha — a killed pytest leaves its docker Postgres session open, holding schema.sql's advisory lock
+- [2026-10-03] gotcha — `tests/test_readonly_user.py`'s fixture schema has its own `cards` table
 - [2026-10-03] finding — every service read at the tick boundary and the key answered 429 (Sat ticks 646–650)
+- [2026-10-03] gotcha — `test_duel_run_bluffs_in_the_text_only…` fails ~6% of runs on main too (secret bluff seed)
 - [2026-10-03] finding — Opus as the decider (BAZAAR_DECIDER=llm) answers in 6.2-9.1 s through the CLI (LD1)
-- [2026-10-03] finding — Jev's guardrail review keeps every rule; the official value blocks every cheap dealer buy (SG1, tick 668)
-- [2026-10-03] gotcha — a log line that says " refused " fails the simulator smoke
-- [2026-10-03] gotcha — a redeployed `duel run` stepped back on its own offers and spoke twice in one tick
-- [2026-10-03] finding — dealer threads come close and end at her price or not at all: the deals give the ladder ~0 (tick 491)
-- [2026-10-03] finding — our maker's asks lapse unsold: 20-tick life, top-of-market price, never repriced (tick 466)
-- [2026-10-03] finding — duels leave short merge windows; the watchdog replay found no trips on real rows
+- [2026-10-03] finding — with Omar's aggressive risk posture Jev still changes no guardrail (SG1 re-run, ~16:30)
 
 <!-- BAZAAR:STATUS:END -->
 

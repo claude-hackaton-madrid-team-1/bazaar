@@ -22,7 +22,7 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 - Round 3 starts Sunday ~11:34 (game hour 16.65) and lasts ~3.4 h. Sunday's cash (with the 150 P grant) is best kept for team trades with surplus and three negotiated deals per dealer level, not for packs: pack luck never scores.
 - Jev (questions/rules_audit.json):
   - Workshop (`workshop_build_noul`): no, duplicates are worth more as team trades than as Workshop inputs.
-  - Overnight build order (`overnight_first_build_choice`): undecided, leaning toward the Market Test edge broker (0.58) over the round-3 ladder tracker (0.36).
+  - Overnight build order (`overnight_first_build_choice`): undecided, leaning toward the Market Test edge broker (0.58) over the round-3 ladder tracker (0.36). The edge broker has since merged (#218, behind `BAZAAR_BENCH_POLICY`), so the open build is the ladder tracker.
 
 ## Strategies the runtime implements
 - complete_pages: buy missing page cards of our highest-affinity sets first; each missing card also carries its share of the page bonus.
