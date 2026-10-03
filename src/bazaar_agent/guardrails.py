@@ -72,6 +72,10 @@ class Guardrails(BaseModel):
     official_value_margin: float = Field(default=0.0, ge=0)
     max_packs_per_game_hour: int = 3
     sell_min_value_ratio: float = 1.0
+    relist_step_share: float = Field(default=0.05, ge=0, le=0.5)
+    relist_min_price_share: float = Field(default=0.6, ge=0, le=1)
+    relist_max_lapses: int = Field(default=4, ge=1, le=100)
+    relist_cooldown_ticks: int = Field(default=40, ge=0, le=2000)
     block_buying_held_cards: bool = True
     holdings_from_db: bool = True
     holdings_max_age_s: float = Field(default=5.0, ge=0, le=60)
@@ -197,6 +201,10 @@ ENFORCED_BY: dict[str, str] = {
     "official_value_margin": "guardrails.check (every card buy, official_values.OfficialValues: GET /api/me/value)",
     "max_packs_per_game_hour": "guardrails.check + ledger",
     "sell_min_value_ratio": "guardrails.check",
+    "relist_step_share": "agents.relist.relist_price (maker asks)",
+    "relist_min_price_share": "agents.relist.relist_floor (maker asks)",
+    "relist_max_lapses": "agents.relist.relist_price (maker asks)",
+    "relist_cooldown_ticks": "agents.relist.relist_price (maker asks)",
     "block_buying_held_cards": "guardrails.check (album from /me)",
     "holdings_from_db": "holdings.Holdings.me",
     "holdings_max_age_s": "holdings.Holdings.me (Postgres clock)",

@@ -51,6 +51,7 @@ from bazaar_agent.agents.maker_jev import (
     reprice_state,
 )
 from bazaar_agent.agents.market import OpenOffer, Side, best_venue, our_open_offers
+from bazaar_agent.agents.relist import MEMORY_TICKS, AskTrail, Relist, market_median, relist_price
 from bazaar_agent.agents.runtime import (
     JevAdvice,
     MarketFeed,
@@ -74,7 +75,7 @@ from bazaar_agent.agents.seller import (
     trade_book,
     unsettled_accepts,
 )
-from bazaar_agent.decisions import DecisionLog, Status
+from bazaar_agent.decisions import RELIST_REST, DecisionLog, Status
 from bazaar_agent.guardrails import (
     Action,
     Context,
@@ -89,7 +90,7 @@ from bazaar_agent.guardrails import (
     refund_row,
 )
 from bazaar_agent.holdings import Holdings
-from bazaar_agent.intel import book_values, settled_volume
+from bazaar_agent.intel import book_values, card_rarities, settled_volume, tape
 from bazaar_agent.learn.venues import VenueNotices
 from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
 from bazaar_agent.official_values import OfficialValues, over_cap
@@ -342,6 +343,7 @@ class Maker:
                 self.log(f"tick {clock.tick} maker: {line}")
             self.jev.begin_tick(mine)
             targets = [self.jev.remembered(t, params, self.rules) for t in targets]
+        targets = self._relisted(snap, targets, mine)
         held = Counter(str(a.get("ref")) for a in snap.me.get("assets") or [] if a.get("kind") == "card")
         margin = self.rules.official_value_margin
 
@@ -364,6 +366,81 @@ class Maker:
             f"offer(s), {run.listings_left} listing(s) left, {window.left():.1f} s left · "
             f"{'LIVE' if self.live else 'dry run'}"
             + (f" · {snap.holdings.line()}" if snap.holdings is not None else "")
+        )
+
+    # ------------------------------------------------------------ asks relisted after a lapse (agents.relist)
+
+    def _relisted(self, snap: Snapshot, targets: list[Target], mine: list[OpenOffer]) -> list[Target]:
+        """Each ask target at its relist price: a copy whose last ask lapsed unsold steps down, never the same
+        price twice in a row, and rests (no target, so nothing is posted) once it lapsed too often. Live only:
+        the history is our live decision rows (Postgres, else JSONL), so a restart keeps it."""
+        asks = [t for t in targets if t.side == "ask" and t.asset_id is not None]
+        if not self.live or not asks:
+            return targets
+        clock = snap.clock
+        trails = self._ask_trails(clock.tick)
+        open_prices = {o.asset_id: o.price for o in mine if o.side == "ask" and o.asset_id is not None}
+        values = {
+            int(a["id"]): a.get("your_value") for a in snap.me.get("assets") or [] if isinstance(a.get("id"), int)
+        }
+        prints, rarities = tape(snap.events), card_rarities(snap.catalog)
+        out = []
+        for t in targets:
+            if t.side != "ask" or t.asset_id is None:
+                out.append(t)
+                continue
+            trail = trails.get(t.asset_id, AskTrail(t.asset_id))
+            your_value = values.get(t.asset_id)
+            cost = max(
+                ask_floor(t.value, self.rules),
+                sell_floor(float(your_value), self.rules) if isinstance(your_value, int | float) else 0,
+            )
+            venue = best_venue(snap.venues, snap.us, t.price)
+            median = market_median(prints, venue.id, t.ref, t.rarity, rarities, clock.tick) if venue else None
+            r = relist_price(
+                t.price,
+                trail,
+                open_price=open_prices.get(t.asset_id),
+                cost_floor=cost,
+                median=median,
+                tick=clock.tick,
+                step_share=self.rules.relist_step_share,
+                min_share=self.rules.relist_min_price_share,
+                max_lapses=self.rules.relist_max_lapses,
+                cooldown_ticks=self.rules.relist_cooldown_ticks,
+            )
+            if r.rest_until is not None:
+                self._rest(clock.tick, t, r)
+            if r.price is None:
+                continue
+            out.append(t if r.price == t.price else replace(t, price=r.price, reason=f"{t.reason}; relist: {r.why}"))
+        return out
+
+    def _ask_trails(self, tick: int) -> dict[int, AskTrail]:
+        prices: dict[int, list[int]] = {}
+        since: dict[int, int] = {}
+        rests: dict[int, int] = {}
+        for _, kind, asset_id, value in self.rec.decisions.ask_rows("maker", tick - MEMORY_TICKS):
+            if kind == RELIST_REST:
+                rests[asset_id], since[asset_id] = value if value is not None else tick, 0
+            elif value is not None:
+                prices.setdefault(asset_id, []).append(value)
+                since[asset_id] = since.get(asset_id, 0) + 1
+        return {
+            a: AskTrail(a, tuple(prices.get(a, ())), since.get(a, 0), rests.get(a)) for a in set(prices) | set(rests)
+        }
+
+    def _rest(self, tick: int, t: Target, r: Relist) -> None:
+        self.rec.decide(
+            tick,
+            RELIST_REST,
+            f"rest ask {t.ref} #{t.asset_id}: {r.why}",
+            inputs={"asset_id": t.asset_id, "ref": t.ref, "until_tick": r.rest_until, "target": t.price},
+            reason=r.why,
+            guardrail="allowed",
+            chosen=True,
+            status="approved",
+            move={"rest": t.asset_id, "until_tick": r.rest_until},
         )
 
     def _sell_hooks(self, cand: Candidate) -> SellHooks:
