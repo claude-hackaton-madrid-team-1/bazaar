@@ -109,7 +109,13 @@ def test_jev_reads_both_cards_at_official_and_private_values_the_cash_and_the_hi
     d.converse(v, set())
     swap = jev.states[0]["swap"]
     assert swap["give"] == {"card": "LAT-03", "copies_held": 2, "official_value": 2.0, "private_value": 1.2}
-    assert swap["get"] == {"card": "LAV-02", "copies_held": 0, "official_value": 14.0, "private_value": 16.0}
+    assert swap["get"] == {
+        "card": "LAV-02",
+        "copies_held": 0,
+        "official_value": 14.0,
+        "private_value": 16.0,
+        "page": None,
+    }
     assert swap["cash"] == -1 and swap["fee"] == 0 and swap["kind"] == "propose"
     assert 0 < swap["their_share"] <= 0.6 and swap["our_gain"] > 0
     assert jev.states[0]["history"] == {"settled_with_team": 0, "proposal_step": 0}
@@ -294,3 +300,64 @@ def test_a_cancel_answered_settled_posts_no_new_offer_and_nets_nothing(tmp_path)
     d.converse(view([reply], tick=TICK + 1), set())
     assert not [s for s in team.sent if s[0] == "say"]
     assert d.ledger.spent_since(0.5, TEAM_SPEND) <= 40
+
+
+# ---------------------------------------------------------------- missing page cards first (Omar, Sat 3 Oct)
+
+
+def _swap(ref: str, expected_ours: float, team: str = THEM):
+    from dataclasses import replace as _replace
+
+    t = trade(team)
+    return _replace(t, refs=("LAT-03", ref), want={"cards": [ref]}, ours=expected_ours, p_fill=1.0)
+
+
+def test_the_page_closest_to_complete_is_asked_for_first_whatever_the_gain():
+    from bazaar_agent.agents.team_desk import PageNeed, TeamDesk
+
+    pages = {
+        "LAV": PageNeed("LAV", 8, 10, 1.6, 106.0),
+        "MAL": PageNeed("MAL", 8, 10, 1.1, 72.9),
+        "LAT": PageNeed("LAT", 2, 10, 0.5, 33.1),
+    }
+    plan = [_swap("LAT-04", 30.0), _swap("MAL-09", 20.0), _swap("LAV-10", 5.0), _swap("LAV-09", 9.0)]
+    ranked = sorted(plan, key=lambda t: TeamDesk._priority(t, pages))
+    assert [t.refs[1] for t in ranked] == ["LAV-09", "LAV-10", "MAL-09", "LAT-04"]
+
+
+def test_page_needs_reads_our_album_from_the_market():
+    from bazaar_agent.agents.team_desk import page_needs
+    from bazaar_agent.strategy import build_market
+    from tests.agent_fakes import CATALOG, ME
+
+    needs = page_needs(build_market(ME, CATALOG, [], []))
+    assert needs and all(n.have < n.of and n.bonus >= 0 for n in needs.values())
+
+
+def test_jev_reads_which_page_the_card_completes_and_its_bonus(tmp_path):
+    from bazaar_agent.agents.team_desk import PageNeed, _Plan
+
+    d, _ = desk(tmp_path, Team())
+    d._plan = _Plan(TICK, (trade(),), {"LAV-02": 16.0}, {"LAV": PageNeed("LAV", 9, 10, 1.6, 106.0)})
+    page = d.swap_state(view(), trade(), -1, 0, None, 0)["swap"]["get"]["page"]
+    assert page == {
+        "set": "LAV",
+        "have": 9,
+        "of": 10,
+        "missing_after": 0,
+        "completes_page": True,
+        "page_bonus": 106.0,
+        "affinity": 1.6,
+    }
+
+
+def test_the_card_scan_places_holders_the_feed_never_shows():
+    from bazaar_agent.trade_desk import scanned_copies
+
+    scan = [
+        {"id": 301, "ref": "LAV-09", "kind": "card", "owner": "t05"},
+        {"id": 302, "ref": "LAV-09", "kind": "card", "owner": "t07"},
+        {"id": 303, "ref": "LAV-10", "kind": "card", "owner": "t01"},  # ours: never a counterparty
+    ]
+    copies = scanned_copies(scan, [], {"id": "t01", "assets": []}, "t01")
+    assert copies["t05"]["LAV-09"] == 1 and copies["t07"]["LAV-09"] == 1 and "t01" not in copies

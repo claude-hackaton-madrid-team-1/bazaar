@@ -34,10 +34,10 @@ from bazaar_agent.agents.seller import Swap, open_commitments
 from bazaar_agent.agents.words import WordsFn, WordsRequest
 from bazaar_agent.decisions import Status
 from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, Verdict, check, refund_row
-from bazaar_agent.intel import TEAM_ID
+from bazaar_agent.intel import TEAM_ID, set_of
 from bazaar_agent.ledger_pg import LedgerUnavailable
 from bazaar_agent.sdk import BazaarError
-from bazaar_agent.strategy import StrategyParams, build_market
+from bazaar_agent.strategy import Market, StrategyParams, build_market, page_bonus_of, page_cards
 from bazaar_agent.swaps import (
     Ladder,
     SwapVerdict,
@@ -195,6 +195,7 @@ class DeskView:
     listing_cap: int = 12  # /api/clock limits.offers_per_team_per_tick, shared with the maker (a thread offer counts)
     max_tick_seconds: float = 60.0  # /api/clock: dates a refund in the hour of its spend (`refund_row`)
     jev: Callable[[dict[str, Any]], JevAdvice] = no_jev  # `team_swap_worth_it`, inside the taker's tick budget
+    scan: Sequence[dict[str, Any]] = ()  # the stored card scan: who holds the cards we miss (`bazaar supply scan`)
 
 
 @dataclass
@@ -202,6 +203,37 @@ class _Plan:
     tick: int
     trades: tuple[Trade, ...]
     worth: dict[str, float] = field(default_factory=dict)  # card ref -> one more copy to us
+    pages: dict[str, PageNeed] = field(default_factory=dict)  # set code -> how far our album page is
+
+
+@dataclass(frozen=True)
+class PageNeed:
+    """One album page as the desk ranks it: the fewer cards missing (then the higher our affinity), the sooner
+    its missing cards are asked for; the bonus is what completing it scores (`strategy.page_bonus_of`)."""
+
+    set_code: str
+    have: int
+    of: int
+    affinity: float
+    bonus: float
+
+    @property
+    def missing(self) -> int:
+        return self.of - self.have
+
+    def rank(self) -> tuple[int, float]:
+        return (self.missing, -self.affinity)
+
+
+def page_needs(m: Market) -> dict[str, PageNeed]:
+    """Every released page with a card still missing, from the market built on /api/me."""
+    out: dict[str, PageNeed] = {}
+    for code in m.released:
+        cards = page_cards(m, code)
+        have = sum(1 for c in cards if m.held.get(c.ref, 0) > 0)
+        if cards and have < len(cards):
+            out[code] = PageNeed(code, have, len(cards), m.affinity.get(code, 1.0), round(page_bonus_of(m, code), 1))
+    return out
 
 
 class TeamDesk:
@@ -693,6 +725,18 @@ class TeamDesk:
         verdict = judge(trade, cash, fee, self.rules, repeat=self.deals[trade.counterparty] > 0)
         total = verdict.ours + verdict.theirs
         plan = self._plan
+        need = None if plan is None else plan.pages.get(set_of(get_ref) or "")
+        page = None
+        if need is not None:  # the page the card we receive belongs to: its bonus is not in /api/me/value
+            page = {
+                "set": need.set_code,
+                "have": need.have,
+                "of": need.of,
+                "missing_after": need.missing - 1,
+                "completes_page": need.missing == 1,
+                "page_bonus": need.bonus,
+                "affinity": need.affinity,
+            }
         return {
             "swap": {
                 "give": {
@@ -706,6 +750,7 @@ class TeamDesk:
                     "copies_held": int(ctx.held.get(get_ref, 0)),
                     "official_value": official(get_ref, int(ctx.held.get(get_ref, 0))),
                     "private_value": None if plan is None else plan.worth.get(get_ref),
+                    "page": page,
                 },
                 "cash": cash,
                 "fee": fee,
@@ -981,15 +1026,25 @@ class TeamDesk:
             # is on, the cumulative `max_counterparty_share` in every guardrail check.
             pp = PlanParams(listings=0, threads=max(1, self.rules.team_threads_max_open * 2), max_share=1.0)
             spent = v.ctx(None).spent_last_hour
-            plan = build_plan(v.me, v.catalog, v.events, amap, v.params, self.rules, pp, rastro, v.offers, spent)
+            plan = build_plan(
+                v.me, v.catalog, v.events, amap, v.params, self.rules, pp, rastro, v.offers, spent, v.scan
+            )
             m = build_market(v.me, v.catalog, v.events, [])
             worth = {w.ref: w.worth for w in wanted_cards(m, v.params, self.rules, dealer_prices(v.events))}
+            pages = page_needs(m)
         except (BazaarError, LedgerUnavailable):
             raise  # a refused read or a ledger outage is the taker's to report (it holds the tick)
         except Exception as e:  # noqa: BLE001 — a plan that cannot be built means no swaps, never a dead tick
             self.log(f"tick {v.tick} team desk: no plan this tick ({type(e).__name__}: {e})")
             self._plan = _Plan(v.tick, ())
             return ()
-        trades = tuple(sorted(plan.threads, key=lambda t: (-t.expected, t.counterparty, t.refs)))
-        self._plan = _Plan(v.tick, trades, worth)
+        trades = tuple(sorted(plan.threads, key=lambda t: self._priority(t, pages)))
+        self._plan = _Plan(v.tick, trades, worth, pages)
         return trades
+
+    @staticmethod
+    def _priority(t: Trade, pages: Mapping[str, PageNeed]) -> tuple[Any, ...]:
+        """The missing cards of the page closest to complete come first (then our affinity for it), and only
+        then the best expected gain: completing a page is what scores (Omar, Sat 3 Oct)."""
+        page = pages.get(set_of(t.refs[1]) or "")
+        return (*(page.rank() if page is not None else (99, 0.0)), -t.expected, t.counterparty, t.refs)

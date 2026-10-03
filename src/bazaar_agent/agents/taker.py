@@ -703,6 +703,7 @@ class Taker:
             listing_cap=snap.clock.limits.offers_per_team_per_tick,
             max_tick_seconds=snap.clock.max_tick_seconds,
             jev=lambda state: self._ask_swap_jev(run, state),
+            scan=snap.scan,
         )
 
     def _ask_jev(self, run: _TickRun, state: dict[str, Any]) -> JevAdvice:

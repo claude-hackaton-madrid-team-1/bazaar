@@ -33,6 +33,7 @@ from bazaar_agent.agents.market import Venue
 from bazaar_agent.agents.seller import open_commitments, trade_book
 from bazaar_agent.guardrails import ANY_TEAM, Action, Context, Guardrails, TradeBook, check, counterparty_refusal
 from bazaar_agent.strategy import Market, StrategyParams, bonus_at_stake, build_market, buy_case
+from bazaar_agent.supply import asset_map, valid_scan
 
 Event = dict[str, Any]
 Kind = Literal["ask", "bid", "swap"]
@@ -85,6 +86,18 @@ def holdings(events: Iterable[Event]) -> dict[int, Copy]:
                 if isinstance(a, dict) and isinstance(a.get("id"), int) and intel.set_of(a.get("ref")):
                     owner[int(a["id"])] = Copy(int(a["id"]), str(a["ref"]), str(e["actor"]), tick)
     return owner
+
+
+def scanned_copies(
+    scan: Sequence[dict[str, Any]], events: Sequence[Event], me: dict[str, Any], us: str
+) -> dict[str, Counter[str]]:
+    """team -> card ref -> copies it holds, from the stored card scan (`bazaar supply scan`) brought up to date by
+    the feed (`supply.asset_map`): it places starting hands and pack pulls the feed alone never shows."""
+    out: dict[str, Counter[str]] = defaultdict(Counter)
+    for a in asset_map(valid_scan(scan), events, me).values():
+        if a.kind == "card" and a.holder and intel.TEAM_ID.match(a.holder) and a.holder != us:
+            out[a.holder][a.ref] += 1
+    return out
 
 
 def team_copies(owner: dict[int, Copy], us: str) -> dict[str, Counter[str]]:
@@ -826,13 +839,14 @@ def build_plan(
     venue: Venue | None = None,
     offers: Sequence[dict[str, Any]] = (),
     spent: int = 0,
+    scan: Sequence[dict[str, Any]] = (),
 ) -> TradePlan:
     """The plan, checked as GUARDRAILS.md is (`rules`), on top of our open `offers` and the `spent` the
     ledger booked this game hour. A trade the guardrails would refuse is replaced by the next best plan
     (up to 5 rounds); when the counterparty cap is off, `what_if` says how the plan would fare with it on."""
     pp = pp or PlanParams()
     m = build_market(me, catalog, events, [])
-    copies = team_copies(holdings(events), m.us)
+    copies = scanned_copies(scan, events, me, m.us) if scan else team_copies(holdings(events), m.us)
     book = intel.book_values(catalog)
     start = Start(tuple(offers), spent, intel.settled_volume(events, m.us, book), book)
     open_ = open_commitments(offers, m.us)
