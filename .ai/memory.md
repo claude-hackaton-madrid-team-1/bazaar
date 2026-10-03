@@ -1071,3 +1071,11 @@ refused rate_limited … nothing sent` (649 too), `tick 646: /api/duels refused 
 Fix (TS1): each tick loop wakes `BAZAAR_TICK_OFFSET_S` after the tick (≤ 10 s, ≤ 40 % of the tick), set by hand per
 service (duels 0, taker 2.5, maker 5, mcp 7.5; declared `preserve()` in `.railway/railway.py`); `duel run` re-reads a
 429'd `/api/duels` once (`sdk.read_once_more_after_429`). A new service or tick loop on the key needs its own offset.
+
+### [2026-10-03] finding — selling a team-bought copy costs its neg_points, even to a dealer (SAL-07, tick 947)
+SAL-07 (asset 438) came from t02 at tick 320 for 23 and completed Salamanca (/me your_value 118.6). Sold to Pilar
+for 29 (hand-run `dealer sell`, floor 20): /me `neg_points` 134.2 → 44.6 at tick 948 (−89.6 = 29 − 118.6), board
+`negotiating` 20.75 → 16.48 at its next update (tick 950, updates every 10 ticks): 0.048 score per neg_point. Buying
+it back from Abuela (21) restored the page, not the points. While we led in neg_points, gains moved the board ~0
+(ticks 376–386): k is relative to the other teams, so losses and gains are measured apart. `max_score_loss_per_move`
+(MI1) now refuses a sale estimated below −0.2 unless `bazaar approve <card> --sell --min <P>`; `bazaar impact`.

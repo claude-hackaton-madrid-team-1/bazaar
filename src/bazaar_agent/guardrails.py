@@ -23,6 +23,7 @@ from typing import Any, Literal, Protocol, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator, model_validator
 
+from bazaar_agent import move_impact
 from bazaar_agent.approvals import ApprovalBook
 from bazaar_agent.config import REPO_ROOT
 from bazaar_agent.intel import TEAM_ID
@@ -179,6 +180,9 @@ class Guardrails(BaseModel):
     deploy_guard_bench_ticks: int = Field(default=10, ge=0, le=200)
     breaker_read_timeout_s: float = Field(default=1.0, gt=0, le=5)
     human_approval_above: int = Field(default=0, ge=0)  # 0: off (GUARDRAILS.md turns it on)
+    max_score_loss_per_move: float = Field(default=0.0, ge=0)  # 0: off (GUARDRAILS.md turns it on)
+    score_per_neg_point_fallback: float = Field(default=0.053, gt=0, le=1)
+    dealer_ladder_score: float = Field(default=0.05, ge=0, le=1)
     live_watchdog_enabled: bool = False
     watchdog_window_ticks: int = Field(default=120, ge=1, le=2000)
     watchdog_swap_cash_per_hour: int = Field(default=40, ge=0)
@@ -309,6 +313,9 @@ ENFORCED_BY: dict[str, str] = {
     "deploy_guard_bench_ticks": "deploy_guard.verdict (`bazaar deploy-guard`, scripts/merge_safe.sh)",
     "breaker_read_timeout_s": "guardrails.check → breakers.BreakerBoard.tripped (once per tick, fail open)",
     "human_approval_above": "guardrails.check → approvals.ApprovalBoard.read (once per tick, fail closed)",
+    "max_score_loss_per_move": "guardrails.check (every sale) → move_impact.sell_impact + impact_board (fail closed)",
+    "score_per_neg_point_fallback": "move_impact.slope (k when our snapshots measured none)",
+    "dealer_ladder_score": "move_impact.estimate (every dealer deal)",
     "live_watchdog_enabled": "agents.taker → watchdog.run (after the tick's sends)",
     "watchdog_window_ticks": "watchdog.run (every rule's window)",
     "watchdog_swap_cash_per_hour": "watchdog.swap_rules (trips team_swap)",
@@ -633,6 +640,7 @@ class Action:
     days_weight: float | None = None  # two-issue duels: `your_days_weight`
     gives_value: float = 0.0  # a swap: our copy given, net of their cash; the official value cap adds it to `price`
     scope: str | None = None  # the circuit breaker this write answers to (`breaker_scope`); None: by kind
+    asset: int | None = None  # a sale: the asset id of the copy that leaves (None: the worst copy of `item` we hold)
 
 
 @dataclass(frozen=True)
@@ -713,6 +721,10 @@ class Context:
     breakers: frozenset[str] | None = None
     # Human approvals (`approvals.py`). None: read this process's board for `tick` (once per tick, fail closed).
     approvals: ApprovalBook | None = None
+    # Our copies and complete pages from /api/me (`context_from`): each copy's your_value for the score impact guard.
+    cards: move_impact.OurCards | None = None
+    # How we got each copy and k (`impact_board`). None: read this process's board for `tick` (fail closed).
+    impact: move_impact.Facts | None = None
 
 
 # What a stored or answered /me (`holdings.without_secrets`) keeps of `starter_broker_key`: that it was there.
@@ -776,6 +788,7 @@ def context_from(
         has_venue=runs_venue(me),
         stops=kill_switch(rules),
         values=values,
+        cards=move_impact.our_cards(me),
     )
 
 
@@ -838,6 +851,8 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
     v.extend(_breaker_violations(action, ctx, rules))
     if buying and not v and not ctx.ranking:  # last, so /api/me/value is read only for a buy every rule allows
         v.extend(_official_value_violations(action, ctx, rules))
+    if not v:  # after every other rule: the score a sale could cost us (the SAL-07 incident, move_impact)
+        v.extend(_impact_violations(action, ctx, rules))
     if not v:  # after every other rule: a human is asked only about a trade nothing else refuses
         v.extend(_approval_violations(action, ctx, rules))
     return Verdict(not v, tuple(v), halted)
@@ -918,6 +933,64 @@ def _approval_violations(action: Action, ctx: Context, rules: Guardrails) -> lis
     )
     unread = "" if book is not None else f" {approvals.UNREAD}"
     return [f"needs human approval: {action.item} {side} {shown}{unread}"]
+
+
+def _impact_violations(action: Action, ctx: Context, rules: Guardrails) -> list[str]:
+    """`max_score_loss_per_move`: a sale (a board ask, a bid we take, a dealer sell, the copy a swap gives) whose
+    estimated score change (`move_impact.sell_impact`) is below minus this needs a human approval of that card, side
+    sell, at that price or more. Fails closed: unread facts price the copy as bought from a team (k at its fallback),
+    and a copy with no value refuses."""
+    if rules.max_score_loss_per_move <= 0 or action.kind not in SELLING or action.price is None or ctx.ranking:
+        return []
+    if action.rarity == "pack" or is_pack(action.item):
+        return []
+    from bazaar_agent import approvals, impact_board
+
+    facts = ctx.impact
+    if facts is None:
+        facts = impact_board.board(rules.breaker_read_timeout_s).read(ctx.tick)
+    dealer = action.kind == "dealer_sell" or action.scope == "dealer_sell"
+    who = None if dealer else (action.counterparty if move_impact.is_team(action.counterparty) else ANY_TEAM)
+    impact = move_impact.sell_impact(
+        ctx.cards,
+        action.item,
+        action.rarity,
+        action.price,
+        who,
+        facts,
+        rules.score_per_neg_point_fallback,
+        rules.dealer_ladder_score,
+        action.asset,
+        action.your_value,
+    )
+    if impact.score is not None and impact.score >= -rules.max_score_loss_per_move:
+        return []
+    board = approvals.board(rules.breaker_read_timeout_s)
+    book = ctx.approvals if ctx.approvals is not None else board.read(ctx.tick)
+    if book is not None and book.covers(action.item, "sell", action.price, ctx.tick):
+        return []
+    board.needed(
+        {
+            "card": action.item,
+            "side": "sell",
+            "price": action.price,
+            "tick": ctx.tick,
+            "counterparty": action.counterparty,
+            "our_value": impact.value,
+            "kind": action.kind,
+            "score_impact": None if impact.score is None else round(impact.score, 2),
+            "reason": impact.reason,
+        },
+        int(ctx.t_hours),
+    )
+    cost = (
+        "cannot be estimated" if impact.score is None else f"{impact.score:+.2f} < -{rules.max_score_loss_per_move:g}"
+    )
+    unread = "" if book is not None else f" {approvals.UNREAD}"
+    return [
+        f"score impact {cost} (max_score_loss_per_move: {impact.reason}); "
+        f"needs human approval: {action.item} sell {action.price}{unread}"
+    ]
 
 
 def _official_value_violations(action: Action, ctx: Context, rules: Guardrails) -> list[str]:

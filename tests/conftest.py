@@ -105,6 +105,25 @@ def human_approval_off(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def score_impact_off(request, monkeypatch):
+    """`max_score_loss_per_move` (GUARDRAILS.md) reads our settlements and score history from Postgres and fails closed:
+    the tests that predate it sell at their own prices. A test marked `score_impact` runs the real rule; every test
+    reads an empty impact board (no Postgres connect)."""
+    from bazaar_agent import impact_board
+
+    old = impact_board.install(impact_board.ImpactBoard(None))
+    if request.node.get_closest_marker("score_impact") is None:
+        from bazaar_agent import guardrails as gr
+
+        monkeypatch.setattr(gr, "_impact_violations", lambda action, ctx, rules: [])
+    yield
+    if old is None:
+        impact_board._BOARD.pop("board", None)
+    else:
+        impact_board.install(old)
+
+
+@pytest.fixture(autouse=True)
 def jev_decider_by_default(monkeypatch):
     """A BAZAAR_DECIDER=llm exported on a laptop or service must never send the suite's judge() calls to
     Claude: every test starts on Jev with a fresh per-process LLM decider."""

@@ -565,6 +565,14 @@ may accept one offer"). Files: `runtime/actions.py` (`_duel`), `agents/runtime.p
 - Step 3 — duel and maker budget gates use `needed_budget_s`; `BAZAAR_DECIDER` preserve() in Railway IaC. ·
   **Acceptance:** full gate + sim smoke with the switch unset. The coordinator sets `llm` on Railway after merge.
 
+### MI1 — Move impact: score cost of a sale, swap or buy, and a guard on it ([spec](MI1-spec.md))
+- Step 1 — `move_impact.py` (pure: origins from the tape, k from our snapshots, the estimate) · **Acceptance:**
+  tests/test_move_impact.py (incident replay −4.7 ± 0.5).
+- Step 2 — `impact_board.py` + `guardrails.check()` rule `max_score_loss_per_move` (approval override, fail closed)
+  and `asset=` on every sale path · **Acceptance:** tests/test_impact_guard.py.
+- Step 3 — `bazaar impact` CLI and `score_impact` in the team desk / dealer sell Jev states · **Acceptance:**
+  tests/test_impact_cli.py, tests/test_impact_state.py; full gate + sim smoke.
+
 ## Parallel-work notes
 
 File-disjoint slices that teammates or sub-agents can build at the same time once 0.4 (scaffold)

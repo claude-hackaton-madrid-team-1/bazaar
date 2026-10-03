@@ -28,6 +28,7 @@ from functools import partial
 from typing import Any
 
 from bazaar_agent import affinity as af
+from bazaar_agent import impact_board
 from bazaar_agent.agents.market import Venue
 from bazaar_agent.agents.runtime import JevAdvice, Recorder, no_jev
 from bazaar_agent.agents.seller import Swap, open_commitments
@@ -721,7 +722,8 @@ class TeamDesk:
         self, v: DeskView, trade: Trade, cash: int, fee: int, thread: int | None, step: int, kind: str = "propose"
     ) -> dict[str, Any]:
         """What Jev reads: both cards at official and private values, the cash leg, the fee we pay (an accept),
-        both gains at our values and their share, and the history with this team."""
+        both gains at our values and their share, the score guard's estimate of the copy we give, and the
+        history with this team."""
         give_ref, get_ref = trade.refs[0], trade.refs[1]
         ctx = v.ctx(thread)
         mine: dict[str, Any] = next((a for a in v.me.get("assets") or [] if a.get("id") == trade.asset_id), {})
@@ -767,6 +769,7 @@ class TeamDesk:
                 "their_gain": round(verdict.theirs, 2),
                 "their_share": round(verdict.theirs / total, 3) if total > 0 else None,
                 "kind": kind,  # propose: ours, they accept and pay the fee; accept: theirs, we pay it
+                "score_impact": self._score_impact(v, trade, cash - fee),  # net of our fee, as in `guard_accept`
             },
             "history": {"settled_with_team": self.deals[trade.counterparty], "proposal_step": step},
             "cash_above_floor": ctx.cash - self.rules.cash_floor,
@@ -781,6 +784,31 @@ class TeamDesk:
         if need.missing == 1 and official is not None and book is not None:
             return {"page_bonus": round(max(0.0, official - book * need.affinity), 1), "page_bonus_source": "official"}
         return {"page_bonus": need.bonus, "page_bonus_source": "model"}
+
+    def _score_impact(self, v: DeskView, trade: Trade, cash: int) -> dict[str, Any] | None:
+        """The score guard's estimate (`impact_board.sell_state`) of our copy `trade.asset_id` leaving at what the
+        guard sees it leave for: the sale `Swap.actions()` checks, at `cash` (net of any fee we pay). None when the
+        swap cannot be priced or the estimate fails: a state builder never costs the swap its tick."""
+        try:
+            swap = self._swap(v, trade, cash)
+            if swap is None:
+                return None
+            sale = next((a for a in swap.actions() if a.kind == "sell"), None)
+            if sale is None or sale.price is None:
+                return None
+            return impact_board.sell_state(
+                v.me,
+                sale.item,
+                sale.rarity,
+                sale.price,
+                trade.counterparty,
+                self.rules,
+                v.tick,
+                asset=trade.asset_id,
+                value=sale.your_value,
+            )
+        except Exception:  # noqa: BLE001 — the estimate only informs Jev; the guard still checks the send
+            return None
 
     def _jev_refused(
         self, v: DeskView, kind: str, trade: Trade, thread: int | None, why: str, advice: JevAdvice | None
