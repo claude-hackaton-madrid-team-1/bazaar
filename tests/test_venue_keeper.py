@@ -562,7 +562,8 @@ def test_our_venue_is_announced_once_then_at_most_once_per_game_hour(tmp_path):
     ran(k, 501, 7.5)
     assert len(broker.notes) == 2
     note = broker.notes[0]
-    assert note.startswith("Team 1 market (v09) is open: board venue, 0 % fee") and len(note) <= vn.ANNOUNCE_MAX_CHARS
+    assert note.startswith("Team 1 market (v09): 0 % fee.") and len(note) <= vn.ANNOUNCE_MAX_CHARS
+    assert "El Rastro costs the side that accepts 2 P (5 % + 1 P/card); here 0." in note  # the live house row
     executions = [e["sdk_method"] for e in rows(tmp_path, "executions.jsonl")]
     assert executions.count("broker_announce") == 2
     assert [d["status"] for d in rows(tmp_path) if d.get("kind") == "venue_announce"] == ["approved", "approved"]
@@ -599,3 +600,24 @@ def test_without_the_maker_setting_the_keeper_never_announces(tmp_path):
     k = keeper(tmp_path, Team(), store={("", "v09"): (KEY, 300)}, broker=broker)
     ran(k, 400, 6.5)
     assert broker.notes == []
+
+
+def test_the_notice_prices_a_sale_on_the_house_market_from_its_live_fees_and_says_only_what_the_broker_does():
+    [rastro] = venues_from({"venues": [RASTRO]}, 400)
+    note = vk.announcement(vk.PLAN, "v19", rastro).text
+    assert note == (
+        "Team 1 market (v19): 0 % fee. A 20 P sale on El Rastro costs the side that accepts 2 P (5 % + 1 P/card);"
+        " here 0. Asks and bids welcome: our broker pairs crossing bids and asks every tick, at the midpoint."
+    )
+    assert len(note) <= vn.ANNOUNCE_MAX_CHARS
+    # the example follows the live fee: 10 % + 2 P/card on 20 P is 4 P
+    [dear] = venues_from({"venues": [{**RASTRO, "fee_bps": 1000, "fee_per_card": 2}]}, 400)
+    assert "costs the side that accepts 4 P (10 % + 2 P/card)" in vk.announcement(vk.PLAN, "v19", dear).text
+    # no house row, or a house no dearer than us: no comparison, just our fee and what the broker does
+    generic = vk.announcement(vk.PLAN, "v19").text
+    assert generic == (
+        "Team 1 market (v19): 0 % fee. Asks and bids welcome: our broker pairs crossing bids and asks every tick,"
+        " at the midpoint."
+    )
+    [free] = venues_from({"venues": [{**RASTRO, "fee_bps": 0, "fee_per_card": 0}]}, 400)
+    assert vk.announcement(vk.PLAN, "v19", free).text == generic

@@ -39,7 +39,7 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 - `scarce_minted_max` = 5 — a card with at most this many minted copies is treated as scarce.
 - `min_buy_surplus` = 2 — only propose buys whose value to us beats the expected price by at least this many primas.
 - `sell_need_share` = 0.6 — ask a buyer this share of what the card is worth to them (book × 1.6 for a team that chases the set).
-- `sell_min_surplus` = 5 — only propose sells that beat our own value of the card by at least this many primas.
+- `sell_min_surplus` = 5 — only propose sells that beat our own value of the card by at least this many primas (sells to a dealer use `dealer_sell_min_surplus`, GUARDRAILS.md).
 - `sell_spare_slots` = 8 — sell_spares: besides sell_to_need, offer up to this many more spare copies (duplicates, or cards of sets with affinity at most 1) to anyone, at our value (page bonus included) + `sell_min_surplus`, when the buyer's need and the tape sit below that or nobody is seen chasing the set; never a protected card (`protect_page_sets`), never below our value. 0 = off (only sell_to_need). Sells still show at most `max_moves`.
 - `rare_fallback_price` = 70 — expected price of a rare when the tape has none for that card.
 - `pack_price_estimate` = 17 — expected price of a `sobre_barrio` (Abuela's learned floor).

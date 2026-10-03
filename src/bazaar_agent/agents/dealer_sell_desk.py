@@ -46,19 +46,24 @@ WALK_WORDS = "Muchas gracias por su tiempo, {n}. Otro día seguro que nos entend
 
 def plan_for(fill: Fill | None, floor: int, rules: Guardrails) -> AskPlan:
     """Open above the highest bid this dealer gave any team for this rarity (`dealer_sell_open_above_top` ×
-    it) and reach its typical fill in about `dealer_sell_rounds` steps. Nothing seen: open at twice the floor."""
+    it), but at most `dealer_sell_open_max_over_median` × its median fill (one outlier deal must not open us
+    far above what it ever pays and burn ticks stepping down), never below our floor; then reach its median
+    fill in about `dealer_sell_rounds` steps. Nothing seen: open at twice the floor."""
     rounds = rules.dealer_sell_rounds
     if fill is None:
         start = max(floor + 2, math.ceil(UNKNOWN_FILL_START * floor))
         return AskPlan(start, max(1, (start - floor) // rounds), floor)
-    start = max(floor, math.ceil(fill.top * rules.dealer_sell_open_above_top))
-    target = max(floor, fill.expected)
+    above_top = math.ceil(fill.top * rules.dealer_sell_open_above_top - 1e-9)
+    cap = math.ceil(fill.typical * rules.dealer_sell_open_max_over_median - 1e-9)
+    start = max(floor, min(above_top, cap))
+    target = max(floor, fill.typical)
     return AskPlan(start, max(1, round((start - target) / rounds)), floor)
 
 
 def sell_floor(value: float, your_value: float, min_surplus: float, rules: Guardrails) -> int:
     """The lowest price we ever sell this copy at: what we lose (your_value + the page bonus at stake) +
-    `sell_min_surplus`, and never below `your_value × sell_min_value_ratio`."""
+    `min_surplus` (the desk passes `dealer_sell_min_surplus`), and never below `your_value ×
+    sell_min_value_ratio`. With `min_surplus` ≥ 0 it is never below what we lose."""
     return max(
         1,
         math.ceil(value + min_surplus - 1e-9),
@@ -123,7 +128,7 @@ def candidates(
         if not _spare(m, card) or only_copy(ref, card.rarity, free.get(ref, 0)):
             continue
         ours = float(value) + bonus_at_stake(m, card, params)
-        floor = sell_floor(ours, float(value), params.sell_min_surplus, rules)
+        floor = sell_floor(ours, float(value), rules.dealer_sell_min_surplus, rules)
         for t in market.buyers(me, card.rarity, card.set_code, m.released):
             fill = market.fills.get((t.id, card.rarity))
             if fill is None or t.id in busy_ids or (ref, t.id) in seen or floor > fill.top:
@@ -357,9 +362,11 @@ class SellTalk:
 class SellDesk:
     """Inside the maker, behind `dealer_sell_enabled`: at most one sell thread at a time, one step per tick,
     at most `dealer_sell_max_per_game_hour` openings per game hour and each dealer's own
-    `deals_per_team_per_hour` (our sells, this process). The dealers and their sell curves come from `load`
-    (Postgres), read again every `REFRESH_TICKS`; when it answers None, from `/api/dealers` and the feed
-    window. Dry run: one WOULD-open decision per copy and dealer, nothing sent."""
+    `deals_per_team_per_hour` (our sells, this process). After each thread the dealer stays free for
+    `dealer_sell_dealer_gap_ticks`, and a card that walked with a dealer waits `dealer_sell_retry_game_hours`.
+    The dealers and their sell curves come from `load` (Postgres), read again every `REFRESH_TICKS`; when it
+    answers None, from `/api/dealers` and the feed window. Dry run: one WOULD-open decision per copy and
+    dealer, nothing sent."""
 
     def __init__(
         self,
@@ -378,6 +385,26 @@ class SellDesk:
         self.market: SellMarket | None = None
         self._market_tick: int | None = None
         self._said: set[tuple[int, str]] = set()
+        self.ended_at: dict[str, int] = {}  # dealer → the tick our last sell thread with it ended
+        self.walked: dict[tuple[str, str], tuple[float, int]] = {}  # (dealer, card) → (game hour, floor): no deal
+
+    def _ended(self, talk: SellTalk, clock: Any) -> None:
+        """Book a finished thread: the dealer stays free for `dealer_sell_dealer_gap_ticks` (the taker may buy
+        from it: one open conversation per dealer per team), and a no-deal blocks that card (any copy of it)
+        with that dealer for `dealer_sell_retry_game_hours` (its next thread would walk the same way)."""
+        c = talk.cand
+        self.ended_at[c.dealer] = int(clock.tick)
+        if talk.status != "deal":
+            self.walked[(c.dealer, c.ref)] = (float(clock.t_hours), c.floor)
+
+    def _retry_ok(self, c: Candidate, clock: Any) -> bool:
+        """A card that walked with this dealer comes back after `dealer_sell_retry_game_hours`, or sooner if
+        our floor for it dropped below the one that walked."""
+        seen = self.walked.get((c.dealer, c.ref))
+        if seen is None:
+            return True
+        when, floor = seen
+        return clock.t_hours - when >= self.rules.dealer_sell_retry_game_hours or c.floor < floor
 
     def market_for(self, snap: Any) -> SellMarket:
         tick = snap.clock.tick
@@ -396,6 +423,7 @@ class SellDesk:
             if self.talk.done:
                 c = self.talk.cand
                 self.log(f"tick {clock.tick} dealer_sell: {c.ref} with {c.dealer}: {self.talk.status}")
+                self._ended(self.talk, clock)
                 self.talk = None
             return
         self.opened_at = [(h, d) for h, d in self.opened_at if h > clock.t_hours - 1.0]
@@ -407,9 +435,12 @@ class SellDesk:
         for t in market.traders:
             if t.deals_per_hour is not None and sum(d == t.id for _, d in self.opened_at) >= t.deals_per_hour:
                 busy.add(t.id)
+        gap = self.rules.dealer_sell_dealer_gap_ticks
+        busy |= {d for d, tick in self.ended_at.items() if clock.tick - tick < gap}  # the dealer's turn for others
         found = candidates(
             snap.me, snap.catalog, market, params, self.rules, busy=busy, locked=locked, events=snap.events
         )
+        found = [c for c in found if self._retry_ok(c, clock)]
         if not found:
             return
         c = found[0]
@@ -434,6 +465,7 @@ class SellDesk:
         self.opened_at.append((clock.t_hours, c.dealer))
         self.talk.step(clock, snap.me)
         if self.talk.done:
+            self._ended(self.talk, clock)
             self.talk = None
 
 
