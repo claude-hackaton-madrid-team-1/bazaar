@@ -884,6 +884,7 @@ feed + /me per tick ─► collector ─► intel (book, tape, dealer curves, te
 
 | PR | Title | Branch |
 |---|---|---|
+| [#79](../../pull/79) | feat(trade-desk): rival affinity map, per-counterparty cap, 09:00 dry-run trade plan (W4) | `night/w4-trade-desk` |
 | [#78](../../pull/78) | night(W5+W6): score simulator, red-team injection tests, request budget, morning summary | `night/w5w6-score-redteam-morning` |
 | [#77](../../pull/77) | feat(sim): realistic Market Test bench (arrivals, firm/impatient traders, relaxing quotes, stall replica, oracle) | `night/w1a-bench-sim` |
 | [#75](../../pull/75) | ci: the simulator smoke is the merge gate, and Test on the simulator in the README | `ogarciarevett/sim-merge-gate` |
