@@ -152,9 +152,26 @@ def _counter_above(neg: SellNegotiation, bid: int) -> Move:
     return Move("bid", price, reason=f"counter above her unraised bid {bid}")
 
 
-def decide_sell(neg: SellNegotiation, bid: int | None, offer_id: int | None, final: bool, final_min: int = 0) -> Move:
+TRICKSTER_KINDS = frozenset({"trickster"})  # `/api/dealers` kinds whose "final" is no limit (Los Pícaros: bad faith)
+
+
+def is_trickster(kind: str | None) -> bool:
+    return str(kind or "").strip().lower() in TRICKSTER_KINDS
+
+
+def decide_sell(
+    neg: SellNegotiation,
+    bid: int | None,
+    offer_id: int | None,
+    final: bool,
+    final_min: int = 0,
+    kind: str = "dealer",
+) -> Move:
     """The next move, given the dealer's newest open bid (None when none stands). A "bid" move is OUR ask.
-    `final_min`: a FINAL below it walks even above our floor (`dealer_sell_final_min_first_ask_share`)."""
+    `final_min`: a FINAL below it walks even above our floor (`dealer_sell_final_min_first_ask_share`).
+    `kind` (`/api/dealers`): a trickster's FINAL is no limit, so it reads as an ordinary bid (never taken, nor
+    walked from, because it says final)."""
+    final = final and not is_trickster(kind)
     neg.see_bid(bid, offer_id)
     if final and bid is not None and bid < final_min:
         return Move("walk", reason=f"her final {bid} is below {final_min} (share of our first ask)")
@@ -333,13 +350,15 @@ def negotiate_sell(
     on_deal: DealHook | None = None,
     on_move: MoveHook | None = None,
     on_thread: Callable[[dict[str, Any]], None] | None = None,
+    kind: str = "dealer",
 ) -> Outcome:
     """Open one sell thread and play it out, one message per tick (`run_per_tick`). Returns when it closes
     or times out (then the thread is closed). The kill switch holds (nothing sent, the tick does not count),
     `guard` may deny an ask or an accept (the move becomes a walk), `Hold` from it or from `reserve` holds the
     tick, `inspect` (S1) may refuse an accept (no accept this tick, never a walk), and `reserve` claims the
     team's accept slot: a taken slot sends nothing this tick. `on_thread` (the inspector's would-flag log) sees
-    each tick's thread first; it never changes the move and its failures are logged, not raised."""
+    each tick's thread first; it never changes the move and its failures are logged, not raised. `kind`: the
+    dealer's `/api/dealers` kind (a trickster's final is read as an ordinary bid, `decide_sell`)."""
     from bazaar_agent.sdk import BazaarError
     from bazaar_agent.ticks import Clock, action_budget_s, run_per_tick
 
@@ -404,7 +423,7 @@ def negotiate_sell(
             return
         bid, offer_id, final = latest_dealer_bid(thread, dealer, asset_id)
         see_bids(neg, thread, dealer, asset_id)
-        move = decide_sell(neg, bid, offer_id, final)
+        move = decide_sell(neg, bid, offer_id, final, kind=kind)
         if action_budget_s(clock) <= 0:
             log(f"tick {clock.tick}: no budget left in this tick, deciding next tick")
             return

@@ -96,6 +96,8 @@ from bazaar_agent.agents.seller import (
 )
 from bazaar_agent.agents.strategy_gate import LADDER_PROBE, AskFn, StrategyGate
 from bazaar_agent.agents.tactics import private_numbers
+from bazaar_agent.agents.taller import LEVEL_ID as TALLER_LEVEL
+from bazaar_agent.agents.taller import action_item, craft, free_counts, pulled, rank_triples
 from bazaar_agent.agents.team_desk import NO_JEV_BUDGET, TEAM_SPEND, DeskView, SwapAccept, TeamDesk
 from bazaar_agent.agents.trickster import forgiving_plan, is_forgiving
 from bazaar_agent.agents.trickster import note as forgiving_note
@@ -567,6 +569,9 @@ class Taker:
         self.jev_cache: VerdictCache[JevAdvice] = VerdictCache(rules.jev_cache_ticks)
         # The live watchdog (GUARDRAILS.md "Live guard"): reads the decisions' Postgres after the sends, trips breakers.
         self.watchdog: Any = Watchdog(getattr(decisions, "_connect", None), log)
+        self._crafts: list[float] = []  # game hours of our Workshop crafts (`max_taller_per_game_hour`, this process)
+        self._taller_notes: set[tuple[str, str]] = set()  # (triple, verdict) already recorded and not sent
+        self._taller_rest_until = 0  # a refused craft: no other try before this tick
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
 
@@ -699,6 +704,7 @@ class Taker:
 
         self._team_desk("converse", converse)
         self._open_pack(run, market)
+        self._taller(run)
         if self.hub is not None:
             self.hub.view(threads=[conversation_view(c) for c in self.convs.values()])
         if self.outcome_learner is not None:  # after the tick's sends; never waits for the pass
@@ -951,6 +957,68 @@ class Taker:
         pulled = [str(c.get("ref")) for c in (body or {}).get("cards") or [] if isinstance(c, dict)]
         if pulled:
             self.log(f"tick {tick} taker: opened {choice.pack.pack} #{choice.pack.asset_id}: {', '.join(pulled)}")
+
+    # ------------------------------------------------------------ (d) the Workshop (taller, SA1)
+
+    def _taller(self, run: _TickRun) -> None:
+        """At most one Workshop craft a tick (`agents/taller.py`), behind `taller_enabled`, and only once the news
+        sentinel's last `/api/levels` read shows the level active (`level_watch`: no request of ours). Free spares
+        only: copies an open offer of ours gives, or a sell of this or the last tick may still take, are never in.
+        A triple kept back is recorded once; the next tick re-reads /me (album first)."""
+        clock = run.snap.clock
+        if not self.rules.taller_enabled or self.news is None or self.news.levels.active(TALLER_LEVEL) is not True:
+            return
+        if clock.tick < self._taller_rest_until:
+            return
+        self._crafts = [h for h in self._crafts if h > clock.t_hours - 1.0]
+        sold = {
+            int(item[5:])
+            for t in (clock.tick - 1, clock.tick)
+            for item in self.ledger.accept_items(t)
+            if item.startswith("sell:") and item[5:].isdigit()
+        }
+        busy = set(open_commitments(run.offers, run.snap.us).listed) | sold
+        triples = rank_triples(run.snap.me, run.snap.catalog, run.snap.dealers, busy)
+        if not triples:
+            return
+        t = triples[0]
+        ctx = replace(self._ctx(run), sellable=free_counts(run.snap.me, busy), taller_last_hour=len(self._crafts))
+        verdict = check(Action("taller", action_item(t), t.rarity, assets=tuple(t.asset_ids)), ctx, self.rules)
+        status: Status = "approved" if verdict.allowed else "rejected"
+        if status == "approved" and not run.window.open():
+            status = "expired"
+        note = (action_item(t), str(verdict))
+        if (status != "approved" or not self.live) and note in self._taller_notes:
+            return  # a triple kept back (or a dry run) is said once, not every tick
+        self._taller_notes.add(note)
+        did = self.rec.decide(
+            clock.tick,
+            "taller",
+            f"Workshop: {', '.join(f'{s.ref} #{s.asset_id}' for s in t.spares)} → 1 {t.to_rarity} · {verdict}",
+            inputs={
+                "assets": t.asset_ids,
+                "refs": t.refs,
+                "rarity": t.rarity,
+                "to": t.to_rarity,
+                "cost": t.cost,
+                "fills": list(t.fills),
+                "buyer": t.buyer,
+                "buyer_level": t.buyer_level,
+            },
+            reason=t.reason(),
+            guardrail=str(verdict),
+            chosen=status == "approved",
+            status=status,
+            move={"taller": {"assets": t.asset_ids}},
+        )
+        if status != "approved" or not self.live:
+            return
+        body = self.rec.send(did, clock.tick, "taller", {"assets": t.asset_ids}, lambda: craft(self.team, t.asset_ids))
+        if body is None and not self.rec.maybe_landed:  # refused (locked, not_owner, ...): it cost nothing
+            self._taller_rest_until = clock.tick + 10
+            return
+        self._crafts.append(clock.t_hours)  # a craft that may have landed counts toward the hour (fail safe)
+        self.log(f"tick {clock.tick} taker: Workshop crafted {', '.join(t.refs)} into {pulled(body)}")
 
     # ------------------------------------------------------------ (b) the dealer desk
 

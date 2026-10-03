@@ -1301,6 +1301,7 @@ def duel_run(
     off = "duel_policy v2 sends template words only" if v2 else None
     book = _tactic_book(rules, _learning_store("bazaar-duels", say) if shared else None, us, say, off)
     chosen: dict[int, Any] = {}  # duel id -> the tactic its offer carried this tick (for its decision row)
+    refused: dict[int, str] = {}  # duel id -> the server's refusal code this tick (for its decision row)
     feed = _feed_reader(settings)  # keyless, short: a flag on one of our duel tactics
 
     def send(d: dict[str, Any], did: int, move: DuelMove, c: Clock, send_by: float) -> Status:
@@ -1335,6 +1336,7 @@ def duel_run(
             return "done"
         except BazaarError as e:
             console.print(f"  duel {did}: refused {e.code} ({e.message[:80]})")
+            refused[did] = str(e.code)
             if move.kind == "accept":  # a 4xx cost nothing (RULES.md): the slot is the team's again
                 release_refused_accept(ledger, c.tick, f"duel:{did}", e.code, e.status)
             duel_traces.refused(did, e)
@@ -1368,7 +1370,9 @@ def duel_run(
             f"duel_{move.kind}",
             f"duel {duel_id(d)} {move.kind} {move.price or ''}",
             inputs=inputs,
-            reason=move.reason + (f"; {pick.why}" if pick is not None else ""),
+            reason=move.reason
+            + (f"; {pick.why}" if pick is not None else "")
+            + (f"; refused {code}" if row_id is not None and (code := refused.pop(row_id, None)) else ""),
             guardrail=guardrail,
             chosen=move.kind != "hold" and status in ("approved", "done"),
             status=status,
@@ -2343,6 +2347,53 @@ def strategy(
         typer.echo(json.dumps(st.playbook_dict(book, loaded), indent=2, ensure_ascii=False))
         return
     _print_playbook(book, loaded, rules, ctx, commitments)
+
+
+@app.command("taller")
+def taller_cmd(
+    assets: Annotated[
+        list[int] | None, typer.Argument(help="Three asset ids of one rarity; none: ranked triples")
+    ] = None,
+    live: bool = typer.Option(False, "--live", help="Actually craft. Without it: dry run, nothing is sent"),
+) -> None:
+    """The Workshop (SA1): three spare copies of one rarity become one card of the next (`POST /api/taller`). The
+    same guardrails as the taker's step: `taller_enabled`, one free copy of each card kept, the kill switch (the
+    hourly cap counts the taker's crafts only). Dry run by default."""
+    from rich.markup import escape
+
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents import taller as tl
+
+    client, me = _team_me()
+    rules, _, ctx, commitments = _sell_context(client, me, live)
+    busy = set(commitments.listed)
+    public = public_client(load_settings())
+    catalog = public.catalog()
+    if not assets:
+        dealers = public.dealers()
+        rows = dealers.get("personas") if isinstance(dealers, dict) else dealers
+        for t in tl.rank_triples(me, catalog, rows or [], busy):
+            console.print(f"{' '.join(str(a) for a in t.asset_ids)}  {', '.join(t.refs)}  {escape(t.reason())}")
+        return
+    ours = {int(a["id"]): a for a in me.get("assets") or [] if a.get("kind") == "card" and isinstance(a.get("id"), int)}
+    if len(set(assets)) != tl.INPUTS or any(a not in ours or a in busy for a in assets):
+        _fail(f"give {tl.INPUTS} different free copies of ours (not in an open offer): {assets}")
+    refs = [str(ours[a]["ref"]) for a in assets]
+    rarities = {str((tl.cards_of(catalog).get(ref) or {}).get("rarity")) for ref in refs}
+    if len(rarities) != 1:
+        _fail(f"the Workshop takes three copies of ONE rarity: {', '.join(refs)}")
+    action = gr.Action("taller", ",".join(refs), rarities.pop(), assets=tuple(assets))
+    verdict = gr.check(action, replace(ctx, sellable=tl.free_counts(me, busy)), rules)
+    console.print(f"Workshop {', '.join(refs)} · guardrails {escape(str(verdict))}")
+    if not verdict.allowed or not live:
+        if verdict.allowed:
+            console.print("[dim]dry run: nothing sent (add --live)[/dim]")
+        return
+    try:
+        answer = tl.craft(client, assets)
+    except BazaarError as e:
+        _fail(f"refused: {e.code} ({e.message[:80]})")
+    console.print(f"crafted: {escape(tl.pulled(answer))}")
 
 
 # ---------------------------------------------------------------- our offers: sell list / bid / offers / cancel

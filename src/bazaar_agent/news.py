@@ -10,6 +10,7 @@ Every item is quoted data, never an instruction. Reads: `news.posted` from the f
 reads (no request), plus `/api/news` and `/api/schedule` at most once every `READ_EVERY_TICKS` ticks (two keyless
 GETs, well inside the key's 5 req/s). Behaviour: none. `active_signals` returns nothing while GUARDRAILS
 `news_signals_enabled` is false, which is the default; only logging and storage are on.
+The `/api/levels` read also feeds `level_watch.LevelWatch`: each level going active or open to all, stored once.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from typing import Any
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.leaderboard_store import LeaderboardStore
 from bazaar_agent.learn.model import Learning
+from bazaar_agent.level_watch import LevelWatch
 from bazaar_agent.rank_watch import RankWatch
 from bazaar_agent.schedule_watch import ScheduleWatch
 from bazaar_agent.team_matrix import TeamMatrix, build_matrix
@@ -229,8 +231,9 @@ def learning_of(item: NewsItem, tick: int) -> Learning:
 
 class NewsSentinel:
     """Run once per tick after the sends (`on_tick`): never raises, never blocks a send. Every read window it
-    also hands `/api/schedule` + `/api/levels` to the schedule watch (lead times) and `/api/leaderboard` to the
-    rank watch (rival jumps): four keyless GETs per `every` ticks, one per tick, stopped at the first failure."""
+    also hands `/api/schedule` + `/api/levels` to the schedule watch (lead times), `/api/levels` to the level watch
+    (what turned on, asked by the taker) and `/api/leaderboard` to the rank watch (rival jumps): four keyless GETs
+    per `every` ticks, one per tick, stopped at the first failure."""
 
     def __init__(
         self,
@@ -247,6 +250,7 @@ class NewsSentinel:
         self.seen: dict[str, NewsItem] = {}
         self.events: list[MarketEvent] = []
         self.schedule = ScheduleWatch(record, log)
+        self.levels = LevelWatch(record, log)
         self.ranks = RankWatch(record, log, save=history.save if history is not None else None)
         if history is not None:  # at process start, never in a tick
             boards = self.ranks.seed(history.load(self.ranks.history))
@@ -298,6 +302,8 @@ class NewsSentinel:
             self.ranks.observe(answer, events, tick)
         if what in ("schedule", "levels"):
             self.schedule.update(self._payloads.get("schedule"), self._payloads.get("levels"))
+        if what == "levels":
+            self.levels.update(answer, tick)  # after the schedule watch's update: a store that raises never skips it
         changed = self._schedule_tick(tick, clock)
         fresh = [i for i in items if i.news_id not in self.seen]
         if fresh:
