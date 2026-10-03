@@ -277,3 +277,36 @@ def test_the_switch_going_on_while_the_desk_writes_its_words_holds_the_bid(tmp_p
     t.on_tick(at(team, TICK + 1))
     assert team.sent[sent:] == [] and set(t.convs) == {"abuela"}  # no bid, no walk: the thread waits
     assert any("kill switch on: holding bid on thread 5000" in line for line in lines)
+
+
+def test_negotiate_reads_the_switch_again_after_writing_the_words():
+    # The bid's words may come from an LLM: a pause that lands while they are written holds that bid.
+    client = FakeDealerClient(asks=[12, 10, 9])
+    state: dict[str, int | None] = {"until": None}
+    lines: list[str] = []
+
+    def tick() -> int:
+        return 100 + client.reads // client.reads_per_tick
+
+    def kill_switch():
+        until = state["until"]
+        return ("pause file .local/PAUSE exists",) if until is not None and tick() < until else ()
+
+    def words(request):
+        if request.price == 7 and state["until"] is None:
+            state["until"] = tick() + 2  # the pause lands while the second bid's words are written
+        return f"¿{request.price}, señora?"
+
+    out = negotiate(
+        client,
+        "abuela",
+        {"buy": {"card": "LAV-03"}},
+        BidPlan(6, 1, 10),
+        log=lines.append,
+        sleep=lambda _: None,
+        kill_switch=kill_switch,
+        words_fn=words,
+        max_ticks=6,
+    )
+    assert any("before sending bid: kill switch on: holding" in line for line in lines)
+    assert client.sent == [6, 7, 8] and not client.closed and (out.status, out.price) == ("deal", 9)
