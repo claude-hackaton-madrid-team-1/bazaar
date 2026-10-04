@@ -8,6 +8,14 @@ from bazaar_agent import telemetry as tm
 SECRET = "tk-team1-very-secret-0042"
 
 
+def pytest_configure(config):
+    # here, not in pyproject.toml: pyproject.toml is in the Railway watchPatterns (a change redeploys the maker)
+    config.addinivalue_line(
+        "markers",
+        "bench_books_db: the maker's real bench_books Postgres wiring; JSONL only elsewhere (no_bench_books_db)",
+    )
+
+
 @pytest.fixture
 def spans():
     """Tracing on, into memory: every finished span is in the returned exporter. No network."""
@@ -76,6 +84,23 @@ def official_value_cap_off(request, monkeypatch):
     from bazaar_agent import guardrails as gr
 
     monkeypatch.setattr(gr, "_official_value_violations", lambda action, ctx, rules: [])
+
+
+@pytest.fixture(autouse=True)
+def no_bench_books_db(request, monkeypatch):
+    """The maker's broker writes each Market Test book to DATABASE_URL (`VenueKeeper._bench_books`), and a teammate's
+    DATABASE_URL may be the shared team DB: a keeper test's bench ("real", run "b7") would land on the dashboard's
+    /venue. The suite keeps the JSONL only. A test marked `bench_books_db` gets the real wiring (with its own fake
+    `db.connect`)."""
+    if request.node.get_closest_marker("bench_books_db") is not None:
+        return
+    from bazaar_agent.agents import venue_keeper
+    from bazaar_agent.agents.bench_capture import BenchBooks
+
+    def jsonl_only(self, venue):
+        return BenchBooks(None, self.stats_dir, self.log, venue=venue)
+
+    monkeypatch.setattr(venue_keeper.VenueKeeper, "_bench_books", jsonl_only)
 
 
 @pytest.fixture(autouse=True)

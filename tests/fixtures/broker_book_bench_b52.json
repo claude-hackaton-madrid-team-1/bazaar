@@ -1,0 +1,82 @@
+{
+  "venue": "v19",
+  "status": "open",
+  "fee_bps": 0,
+  "fee_per_card": 0,
+  "offers": [],
+  "bench_offers": [
+    {
+      "id": "b52-2",
+      "bench": true,
+      "maker": "bench",
+      "give": {
+        "cash": 42,
+        "assets": [],
+        "types": []
+      },
+      "want": {
+        "cash": 0,
+        "assets": [],
+        "types": [
+          "bench:cromo"
+        ]
+      },
+      "expires_tick": 697
+    },
+    {
+      "id": "b52-7",
+      "bench": true,
+      "maker": "bench",
+      "give": {
+        "cash": 35,
+        "assets": [],
+        "types": []
+      },
+      "want": {
+        "cash": 0,
+        "assets": [],
+        "types": [
+          "bench:cromo"
+        ]
+      },
+      "expires_tick": 697
+    },
+    {
+      "id": "b52-8",
+      "bench": true,
+      "maker": "bench",
+      "give": {
+        "cash": 26,
+        "assets": [],
+        "types": []
+      },
+      "want": {
+        "cash": 0,
+        "assets": [],
+        "types": [
+          "bench:cromo"
+        ]
+      },
+      "expires_tick": 697
+    },
+    {
+      "id": "b52-10",
+      "bench": true,
+      "maker": "bench",
+      "give": {
+        "cash": 0,
+        "assets": [],
+        "types": [
+          "bench:cromo"
+        ]
+      },
+      "want": {
+        "cash": 62,
+        "assets": [],
+        "types": []
+      },
+      "expires_tick": 697
+    }
+  ],
+  "recent": []
+}
