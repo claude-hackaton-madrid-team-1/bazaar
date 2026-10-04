@@ -3097,16 +3097,18 @@ def _affinity_book(kw: dict[str, Any], shared: bool) -> Any:
 
 
 def _egg_hunter(kw: dict[str, Any], shared: bool) -> Any:
-    """The easter-egg hunt (`agents/egg_hunt.py`): its tried set in the shared Postgres (`egg_hunt_tried`) when
-    there is one, else a JSONL file next to the decisions. Built always; it does nothing until GUARDRAILS.md
-    `egg_hunt_enabled` and env BAZAAR_EGG_HUNT both turn it on (the env is re-read every tick)."""
+    """The easter-egg hunt (`agents/egg_hunt.py`): its tried set in the shared Postgres (`egg_hunt_tried`, read
+    and written on a background thread) when there is one, else a JSONL file next to the decisions. Built always;
+    it does nothing until GUARDRAILS.md `egg_hunt_enabled` and env BAZAAR_EGG_HUNT both turn it on (the env is
+    re-read every tick)."""
     from bazaar_agent import db
     from bazaar_agent.agents import egg_hunt
 
     log = kw["log"]
     store: Any
     if shared:
-        store = egg_hunt.PgStore(lambda: db.connect(app="bazaar-taker-eggs", connect_timeout_s=3), log)
+        pg = egg_hunt.PgStore(lambda: db.connect(app="bazaar-taker-eggs", connect_timeout_s=3), log)
+        store = egg_hunt.BackgroundStore(pg, log)  # the Postgres reads and writes never run inside a 15 s tick
     else:
         store = egg_hunt.FileStore(kw["decisions"].dir / egg_hunt.TRIED_FILE)
     return egg_hunt.EggHunter(store, log)

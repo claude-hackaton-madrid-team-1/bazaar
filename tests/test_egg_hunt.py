@@ -4,13 +4,14 @@ taker carrying a phrase on a bid it sends anyway (dry run, kill switch, no accep
 from __future__ import annotations
 
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from bazaar_agent.agents import egg_hunt as eh
-from bazaar_agent.agents.egg_hunt import EggHunter, FileStore, PgStore, Tried
+from bazaar_agent.agents.egg_hunt import BackgroundStore, EggHunter, FileStore, PgStore, Tried
 from bazaar_agent.agents.taker import Taker, TakerConfig
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.llm.chooser import injection_flags
@@ -484,3 +485,53 @@ def test_the_taker_hands_every_thread_it_reads_to_the_hunter(tmp_path: Path) -> 
     team.now = clock(tick=TICK + 1)
     t.on_tick(team.now)
     assert eggs.backoff["abuela"][1] == "a warning in the reply"
+
+
+# ---------------------------------------------------------------- the store off the tick
+
+
+class SlowStore:
+    """A Postgres that takes `delay` seconds per call and can be down."""
+
+    def __init__(self, rows: list[Tried] | None = None, delay: float = 0.3) -> None:
+        self.rows, self.delay, self.up, self.saved = list(rows or []), delay, True, []  # type: ignore[var-annotated]
+
+    def load(self) -> list[Tried]:
+        time.sleep(self.delay)
+        return list(self.rows)
+
+    def save(self, rows: Any, tick: int) -> bool:
+        time.sleep(self.delay)
+        if self.up:
+            self.saved += list(rows)
+        return self.up
+
+
+def test_a_slow_postgres_never_blocks_the_tick_and_the_hunt_waits_for_the_tried_set() -> None:
+    tried = Tried("abuela", "la chulapa dorada", "x", 1, 1, "sent")
+    store = BackgroundStore(SlowStore([tried]), lambda s: None, retry_s=0.01)
+    h = EggHunter(store, lambda s: None, mode_fn=lambda: "live")
+    r = rules()
+    start = time.monotonic()
+    assert weave(h, r) is None  # the set is still being read: nothing woven, nothing repeated
+    assert time.monotonic() - start < 0.1
+    assert store.drain(2)
+    w = weave(h, r, tick=101)
+    assert w is not None and w.candidate.key != "la chulapa dorada"  # what the last process tried stays tried
+    start = time.monotonic()
+    h.sent(w, 101, 1, None)
+    h.flush(101)
+    assert time.monotonic() - start < 0.1  # the write is queued, not waited for
+    assert store.drain(2) and [row.key for row in store.inner.saved] == [w.candidate.key]  # type: ignore[attr-defined]
+
+
+def test_a_background_write_that_fails_is_retried_with_its_rows() -> None:
+    inner = SlowStore(delay=0)
+    inner.up = False
+    store = BackgroundStore(inner, lambda s: None, retry_s=0.01)
+    store.load()  # starts the worker
+    store.save([Tried("abuela", "k", "x", 1, 1, "sent")], 1)
+    time.sleep(0.05)
+    assert inner.saved == []
+    inner.up = True
+    assert store.drain(2) and [r.key for r in inner.saved] == ["k"]

@@ -33,7 +33,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import queue
 import re
+import threading
+import time
 import unicodedata
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -245,7 +248,7 @@ class Tried:
 
 
 class TriedStore(Protocol):
-    def load(self) -> list[Tried]: ...
+    def load(self) -> list[Tried] | None: ...  # None: not read yet (`BackgroundStore`)
 
     def save(self, rows: Sequence[Tried], tick: int) -> bool: ...
 
@@ -348,6 +351,70 @@ class PgStore:
         return True
 
 
+class BackgroundStore:
+    """The tried set's I/O off the tick (Sunday's ticks are 15 s): one daemon thread reads `inner` once, then writes
+    every batch in order, retrying a failed one every `retry_s` seconds with its rows kept. `load` never blocks (None
+    until the read is done, and the hunt waits for it: a phrase is never repeated because the set was not read yet);
+    `save` only queues. A batch still queued when the process dies is lost: at worst those phrases are said again."""
+
+    def __init__(
+        self,
+        inner: TriedStore,
+        log: Callable[[str], None],
+        retry_s: float = 5.0,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self.inner, self.log, self.retry_s, self.sleep = inner, log, retry_s, sleep
+        self._rows: list[Tried] | None = None
+        self._queue: queue.Queue[list[Tried]] = queue.Queue()
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+
+    def _start(self) -> None:
+        with self._lock:
+            if self._thread is None:
+                self._thread = threading.Thread(target=self._run, name="egg-hunt-store", daemon=True)
+                self._thread.start()
+
+    def load(self) -> list[Tried] | None:
+        self._start()
+        return self._rows
+
+    def save(self, rows: Sequence[Tried], tick: int) -> bool:
+        self._start()
+        self._queue.put(list(rows))
+        return True
+
+    def drain(self, timeout: float = 5.0) -> bool:
+        """Every queued batch written (tests, and a clean shutdown): False after `timeout` seconds."""
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if self._rows is not None and self._queue.unfinished_tasks == 0:
+                return True
+            time.sleep(0.01)
+        return False
+
+    def _run(self) -> None:
+        try:
+            rows = self.inner.load()
+        except Exception as e:  # noqa: BLE001 — no tried set is "nothing tried yet"
+            self.log(f"egg_hunt: tried set not loaded ({type(e).__name__}); starting empty")
+            rows = []
+        self._rows = list(rows or [])
+        while True:
+            batch = self._queue.get()
+            tries = 0
+            while True:
+                try:
+                    if self.inner.save(batch, tries * RETRY_EVERY):
+                        break
+                except Exception as e:  # noqa: BLE001
+                    self.log(f"egg_hunt: store write failed ({type(e).__name__}); retrying")
+                tries += 1
+                self.sleep(self.retry_s)
+            self._queue.task_done()
+
+
 # ---------------------------------------------------------------- the hunter
 
 
@@ -395,8 +462,11 @@ class EggHunter:
     def mode(self, rules: Any) -> Mode:
         mode = self.mode_fn() if getattr(rules, "egg_hunt_enabled", False) else "off"
         if mode != "off" and not self._loaded:
+            rows = self.store.load()
+            if rows is None:  # still being read off the tick: no phrase until we know what was tried
+                return "off"
             self._loaded = True
-            for row in self.store.load():
+            for row in rows:
                 self.tried.setdefault((row.dealer, row.key), row)
         return mode
 

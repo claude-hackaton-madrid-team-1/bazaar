@@ -129,6 +129,18 @@ boundary (still one per tick for the team, and the 8-tick gap per dealer).
 
 Key budget: **+0 requests** (ride mode). Duels, taker and maker keep the whole key. Thread slots: **+0**.
 
+### Tick cost at 15 s (measured, `scratchpad` benchmark on this laptop)
+
+| Step | Where | Cost |
+|---|---|---|
+| `observe` (feed window, threads, catalogue) | in the tick, before the sends | **1.4 ms** typical (20 new events); 35 ms worst case (a cold 500-event window right after a restart) |
+| `weave` (rank, vet, append the question) | in `_desk_send`, before the `say` | **0.2 ms** |
+| tried-set read (once) and writes (≤ 3 per dealer-hour) | **background thread** (`BackgroundStore`) | 0 ms in the tick; the hunt waits (sends nothing) until the read is done, so a restart never repeats a phrase |
+
+The weave itself stays synchronous on purpose: the phrase is part of the bid's own text. Sending it as a separate,
+asynchronous message would cost a request and would collide with the bid (one message per conversation per tick).
+Only the Postgres I/O, which could take up to 3 s to connect plus 1.5 s per statement, is moved off the tick.
+
 ## 5. Detection (no request)
 
 After each tick's reads, `EggHunter.observe` reads what the taker already has: `egg.found` (persona, team),
