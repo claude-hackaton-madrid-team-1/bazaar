@@ -989,6 +989,7 @@ def dealer_sell(
         dealer_refusal,
         negotiate_sell,
         only_copy,
+        page_complete,
         sell_topic,
     )
     from bazaar_agent.agents.runtime import Recorder
@@ -1002,7 +1003,8 @@ def dealer_sell(
     client, me = _team_me()  # album first: the copy, its your_value and how many we hold, from /api/me
     mine = open_commitments(_my_offers(client), str(me.get("id") or ""))  # copies our asks give
     try:
-        asset = copy_to_sell(me, ref, mine.listed, mine.unnamed_listed)
+        page_done = page_complete(me, ref, rules)  # False: an incomplete page's single copy may be sold
+        asset = copy_to_sell(me, ref, mine.listed, mine.unnamed_listed, page_done)
         your_value = float(asset["your_value"])
         check_floor(floor, your_value)
         plan = AskPlan(start, step, floor)
@@ -1026,8 +1028,9 @@ def dealer_sell(
 
     def committed(c: Clock, thread_id: int | None = None) -> gr.Context:
         """/me + the shared ledger + every open offer of ours except this thread's own ask."""
-        nonlocal your_value, unavailable_asset
+        nonlocal your_value, unavailable_asset, page_done
         me_now = client.me()
+        page_done = page_complete(me_now, ref, rules)  # a page completed mid-thread keeps its copy again
         current = next((a for a in me_now.get("assets", []) if a.get("id") == asset_id), None)
         if current is not None:
             your_value = float(current["your_value"])
@@ -1054,7 +1057,7 @@ def dealer_sell(
         verdict = gr.check(action(kind, price), ctx, rules)
         if unavailable_asset:
             return gr.Verdict(False, (*verdict.violations, "selected copy is missing or already promised"))
-        if only_copy(ref, rarity, (ctx.sellable or {}).get(ref, 0)):
+        if only_copy(ref, rarity, (ctx.sellable or {}).get(ref, 0), page_done):
             why = f"{ref}: the last copy not on an open offer of ours (sellable {(ctx.sellable or {}).get(ref, 0)})"
             return gr.Verdict(False, (*verdict.violations, why))
         return verdict

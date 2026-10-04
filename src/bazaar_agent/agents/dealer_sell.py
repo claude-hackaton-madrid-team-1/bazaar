@@ -300,18 +300,23 @@ def dealer_refusal(dealer_id: str, personas: list[Any], me: Mapping[str, Any], c
 
 
 def copy_to_sell(
-    me: Mapping[str, Any], ref: str, listed: frozenset[int] = frozenset(), unnamed: int = 0
+    me: Mapping[str, Any],
+    ref: str,
+    listed: frozenset[int] = frozenset(),
+    unnamed: int = 0,
+    page_complete: bool | None = None,
 ) -> dict[str, Any]:
     """The copy of `ref` we lose least by selling, from /api/me, among the copies none of our open offers
     gives (`listed` asset ids; `unnamed`: listed assets whose card we cannot tell, counted against every card).
     Refused: no free copy, no `your_value` (no floor), or the last uncommitted copy of a page card (selling it
-    while an ask of ours fills would open a hole in the album)."""
+    while an ask of ours fills would open a hole in the album) unless its page is known incomplete
+    (`page_complete` False: `page_complete()` under `protect_complete_pages_only`)."""
     cards = [a for a in me.get("assets") or [] if isinstance(a, dict) and a.get("kind", "card") == "card"]
     copies = [a for a in cards if a.get("ref") == ref and isinstance(a.get("id"), int)]
     if not copies:
         raise SellRefused(f"we hold no card {ref!r} (check `uv run bazaar status`)")
     free = [a for a in copies if a["id"] not in listed]
-    if only_copy(ref, copies[0].get("rarity"), len(free) - unnamed):
+    if only_copy(ref, copies[0].get("rarity"), len(free) - unnamed, page_complete):
         raise SellRefused(
             f"{ref}: {len(free) - unnamed} free copies (not on our offers); never sell the last one of a page card"
         )
@@ -321,9 +326,28 @@ def copy_to_sell(
     return min(valued, key=lambda a: (float(a["your_value"]), -int(a["id"])))
 
 
-def only_copy(ref: str, rarity: Any, sellable: int) -> bool:
-    """`sellable` copies of `ref` not committed to an offer of ours: one or none of a page card is never sold."""
+def only_copy(ref: str, rarity: Any, sellable: int, page_complete: bool | None = None) -> bool:
+    """`sellable` copies of `ref` not committed to an offer of ours: one or none of a page card is never sold.
+    `page_complete` False (its page is known incomplete, `page_complete()`): the single free copy may go too, as
+    `protect_complete_pages_only` lets every other sale (Sun 4 Oct: Pilar, Chato and Banco buy no common, so
+    without it no sale could ever fill their ladder levels); none free is still refused."""
+    if page_complete is False:
+        return sellable < 1
     return sellable <= 1 and str(rarity or "").lower() not in OFF_PAGE_RARITIES
+
+
+def page_complete(me: Mapping[str, Any], ref: str, rules: Any) -> bool | None:
+    """Whether `ref`'s page is complete in /me's album, under `protect_complete_pages_only` only. None (protect, as
+    before) when that rule is off, the album is unread or the set is not one of its pages: fail closed."""
+    if not getattr(rules, "protect_complete_pages_only", False):
+        return None
+    album = me.get("album")
+    pages = album.get("pages") if isinstance(album, Mapping) else None
+    code = ref.split("-", 1)[0].strip().upper()
+    for p in pages if isinstance(pages, list) else []:
+        if isinstance(p, Mapping) and str(p.get("set") or "").upper() == code:
+            return p.get("complete") is True
+    return None
 
 
 def check_floor(floor: int, your_value: float) -> None:

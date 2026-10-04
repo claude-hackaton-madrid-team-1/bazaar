@@ -13,6 +13,8 @@ from bazaar_agent.agents.dealer_sell import (
     decide_sell,
     latest_dealer_bid,
     negotiate_sell,
+    only_copy,
+    page_complete,
     sell_offer_problem,
     sell_topic,
 )
@@ -101,6 +103,32 @@ def test_only_copy_of_a_page_card_is_refused_and_the_cheapest_duplicate_is_picke
     blind = {"assets": [{"id": i, "kind": "card", "ref": "X-1", "rarity": "common"} for i in (1, 2)]}
     with pytest.raises(SellRefused, match="your_value"):
         copy_to_sell(blind, "X-1")
+
+
+def test_an_incomplete_pages_single_copy_may_be_sold_under_protect_complete_pages_only():
+    from bazaar_agent.guardrails import Guardrails
+
+    album = {"pages": [{"set": "RET", "complete": False}, {"set": "SAL", "complete": True}]}
+    me = {
+        "album": album,
+        "assets": [
+            {"id": 1, "kind": "card", "ref": "RET-08", "rarity": "uncommon", "your_value": 17.5},
+            {"id": 2, "kind": "card", "ref": "SAL-10", "rarity": "rare", "your_value": 177.0},
+        ],
+    }
+    on = Guardrails(protect_complete_pages_only=True)
+    assert page_complete(me, "RET-08", on) is False and page_complete(me, "SAL-10", on) is True
+    assert copy_to_sell(me, "RET-08", page_complete=page_complete(me, "RET-08", on))["id"] == 1
+    with pytest.raises(SellRefused, match="never sell the last one"):  # a complete page keeps its copy
+        copy_to_sell(me, "SAL-10", page_complete=page_complete(me, "SAL-10", on))
+    with pytest.raises(SellRefused, match="never sell the last one"):  # listed by an ask of ours: none free
+        copy_to_sell(me, "RET-08", frozenset({1}), page_complete=False)
+    # fail closed: rule off, album unread or a set off the album protects as before
+    assert page_complete(me, "RET-08", Guardrails(protect_complete_pages_only=False)) is None
+    assert page_complete({"assets": me["assets"]}, "RET-08", on) is None
+    assert page_complete(me, "CHA-02", on) is None
+    assert only_copy("RET-08", "uncommon", 1) and only_copy("RET-08", "uncommon", 1, True)
+    assert not only_copy("RET-08", "uncommon", 1, False) and only_copy("RET-08", "uncommon", 0, False)
 
 
 def test_floor_must_cover_the_copys_your_value():
@@ -394,3 +422,21 @@ def test_only_copy_guard_reads_the_sellable_count():
 def test_an_opening_bid_at_or_above_our_start_is_countered_above_it_not_walked():
     move = decide_sell(SellNegotiation(AskPlan(10, 1, 6)), 12, 99, False)
     assert (move.kind, move.price) == ("bid", 13)
+
+
+def test_cli_dry_run_sells_an_incomplete_pages_single_copy_and_keeps_a_complete_ones(sell_cli, monkeypatch):
+    import sys
+
+    module = sys.modules[__name__]
+    album = {"pages": [{"set": "SAL", "complete": False}]}
+    monkeypatch.setattr(module, "ME", {**ME, "album": album})
+    from bazaar_agent import cli
+
+    client = type("C", (), {"my_offers": lambda self: {"offers": []}})()
+    monkeypatch.setattr(cli, "_team_me", lambda: (client, module.ME))
+    ok = sell_cli("SAL-10", "--start", "90", "--min", "40", "--dealer", "abuela")
+    out = " ".join(ok.output.split())  # past the only-copy rule: Abuela's menu buys no rare, refused there
+    assert ok.exit_code == 1 and "never sell the last one" not in out and "abuela" in out
+    monkeypatch.setattr(module, "ME", {**ME, "album": {"pages": [{"set": "SAL", "complete": True}]}})
+    kept = sell_cli("SAL-10", "--start", "90", "--min", "40")
+    assert kept.exit_code == 1 and "never sell the last one" in " ".join(kept.output.split())
