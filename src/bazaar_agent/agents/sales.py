@@ -12,6 +12,7 @@ from typing import Any
 from bazaar_agent import telemetry as tm
 from bazaar_agent.agents.market import our_open_offers
 from bazaar_agent.agents.runtime import Snapshot, TickWindow
+from bazaar_agent.agents.sales_invite import SalesInvite
 from bazaar_agent.agents.sales_outreach import SalesOutreach
 from bazaar_agent.agents.sales_promotion import SalesPromotion
 from bazaar_agent.agents.seller import offers_in, unsettled_accepts
@@ -34,11 +35,13 @@ class Sales(Taker):
         self.outreach = SalesOutreach(
             self.team, self.rules, self.ledger, self.rec, self.log, self.live, words=self.words_fn
         )
+        self.invite = SalesInvite(self.team, self.rules, self.ledger, self.rec, self.log, self.live)
         self.promotion = SalesPromotion(self.team, self.public, self.rules, self.ledger, self.rec, self.live)
         if self.thread_store is not None:
             self.promotion.sent_words = self.thread_store.sent
             self.team_desk.sent_words = self.thread_store.sent
             self.outreach.sent_words = self.thread_store.sent
+            self.invite.sent_words = self.thread_store.sent
 
     def on_tick(self, clock: Clock) -> None:
         with tm.span("sales.tick", values={"game.tick": clock.tick, "agent": "sales"}):
@@ -74,7 +77,9 @@ class Sales(Taker):
         if window.open():
             offered = self.outreach.on_tick(run.team_view or view, self.team_desk.matrix)
             if not offered:
-                self.promotion.on_tick(run.team_view or view, self.team_desk.matrix)
+                promoted = self.promotion.on_tick(run.team_view or view, self.team_desk.matrix)
+                if not promoted:
+                    self.invite.on_tick(run.team_view or view)
         for payload in self.team_desk.payloads():
             self._keep(payload, snap)
         self.log(f"tick {clock.tick} sales: {len(proposals)} candidates, {len(run.accepted)} accepted")
