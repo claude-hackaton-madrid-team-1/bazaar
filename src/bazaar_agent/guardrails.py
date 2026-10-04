@@ -1281,7 +1281,8 @@ def ladder_tolerance(action: Action, ctx: Context, rules: Guardrails) -> float:
     """How far over the official value this buy may go: `dealer_ladder_value_tolerance` for a taker buy from a
     dealer (open, bid or accept) whose level has an empty ladder slot this round, never for an epic or legendary
     (`off_page_min_surplus` is Marius's hard rule) nor a team trade; else 0. A dealer deal scores on the ladder (a
-    share of the dealer's own range), and a dealer buy never moved our neg_points on Saturday (dealing.md §1)."""
+    share of the dealer's own range); whether a dealer buy above our value costs neg_points was never observed (no
+    Saturday buy was above it), so each such buy may also cost up to the tolerance in neg_points."""
     if rules.dealer_ladder_value_tolerance <= 0 or action.dealer is None or action.counterparty is not None:
         return 0.0
     if action.kind not in ("buy", "bid", "accept_buy") or str(action.rarity or "").lower() in OFF_PAGE_RARITIES:
