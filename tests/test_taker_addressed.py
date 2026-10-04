@@ -94,6 +94,15 @@ def test_off_leaves_them_unread_as_before(tmp_path):
     assert team.sent == [] and addressed_rows(tmp_path) == []
 
 
+def test_profitable_addressed_ask_is_not_held_for_our_unfilled_lower_bid(tmp_path):
+    team = Team(offers=[bid(77, "LAV-02", 8), to_us(ask(31, "LAV-02", 10), maker="t02")])
+    t, _ = taker(tmp_path, team)
+    t.on_tick(clock(tick_seconds=15, next_tick_in=15))
+    assert team.sent == [("accept", 31, None), ("cancel", 77)]
+    (row,) = [r for r in rows(tmp_path) if r.get("kind") == "accept_ask" and r.get("chosen")]
+    assert row["inputs"]["maker"] == "t02" and row["inputs"]["addressed_to_us"] is True
+
+
 def test_a_bad_ask_addressed_to_us_is_rejected_with_its_reason_once(tmp_path):
     # 17 + fee 2 = 19 leaves 1.8 < min_buy_surplus 2; LAV-01 we already hold.
     team = Team(offers=[to_us(ask(31, "LAV-02", 17)), to_us(ask(32, "LAV-01", 2, asset=905))])

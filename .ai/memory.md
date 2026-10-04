@@ -1468,3 +1468,15 @@ Omar explicitly prioritised buying/opening packs for team resale over private ho
 
 ### [2026-10-04] build-error — PL1 fixtures
 Initial regressions used a tuple for string-config protect_page_sets and omitted settle.tick → corrected fixtures to typed contract. Accept test showed only final22, correctly rejected as unchanged opening → supply initial30 then final22 on increasing ticks. Ruff found a long diagnostic string and unordered test import → split literal and sort imports.
+
+### [2026-10-04] finding — TT2 unfilled bids blocked executable asks
+
+At ticks 1813–1814, live taker skipped RET-07 asks at 14 P because our own unfilled bid was 11–12 P. `ask_candidates` treated our proposed price as an executable alternative. TT2 removes that veto, keeps all cash/exposure commitments until cancellation, and excludes only the exact still-open replacement bid's hoped-for card from synthetic holdings. Accepted/queued bids and actual holdings still block another copy.
+
+### [2026-10-04] gotcha — pack replenishment is not holding-value investment
+
+Coordinator's guarded pack negotiation 2670 at ticks 1804–1809 offered 17→20 P; Abuela stayed at 22 P, so no pack was bought. Another CLI attempt around tick 1820 failed `thread_exists` because the live taker owned Abuela's conversation; do not race it. Tick1810 private pack EV was13.3 P. Tick1820 public bid hints covered8/30 mintable commons and9/18uncommons, with gross quoted mean1.30 and5.611 P respectively: Barrio's quoted immediate resale expectation was4.98 P before fees/expiry/protection, not a fill guarantee. Omar clarified that packs replenish inventory for positive-score team sales, not private holding EV or cash ROI; PL1 owns that changed acquisition objective under explicit pack/cash limits.
+
+### [2026-10-04] build-error — TT2 focused test selection and pending holdings
+
+Initial focused commands named nonexistent test_taker_targets.py (and earlier review test_taller_publication.py); no tests ran in those commands. Re-ran actual tracked test files. Keeping the full bid commitment initially also counted its hoped-for card as already held; exclude only that exact still-open bid's expected card while retaining cash/exposure and all real/settling holdings.

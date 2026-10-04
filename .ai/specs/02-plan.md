@@ -800,3 +800,9 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 - Enable explicit inventory acquisition within the observed22P pack ceiling and existing quotas.
 - Keep holding EV diagnostic, open packs for guarded resale and rank expected tradable pulls.
 - Verify buy→settle→open→fresh holdings→duplicate listing; obtain independent reviews and final main+PR gate.
+
+### TT2 — Executable asks over unfilled bids ([spec](TT2-spec.md))
+
+- Stop treating an unfilled cheaper bid as an executable alternative to a profitable ask.
+- Retain full pending cash/exposure and settling-card protection until confirmed cancellation.
+- Verify actual public/addressed taker paths, independent review and CI before guarded rollout.
