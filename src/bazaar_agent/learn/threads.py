@@ -1,4 +1,4 @@
-"""Our own dealer and team threads, as our agents already read them, kept in Postgres `threads` + `messages` (N12 part 3).
+"""Our own dealer and team threads kept in Postgres from existing reads and acknowledged sends.
 
 The public feed carries every dealer message and its structured offer, but not what only our own thread
 responses carry: `closed_reason` (`cooloff` + `until_tick`, `persona_quota`, `sold_out`, ...), the status a

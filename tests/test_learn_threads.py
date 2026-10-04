@@ -274,3 +274,38 @@ def test_sent_words_require_valid_acknowledgement_identity():
 def test_inbound_team_thread_keeps_actual_counterparty():
     seen = Seen({"id": 44, "kind": "team", "team": "t15", "with": "t01", "messages": []}, "t01", 100, {})
     assert thread_row(seen)[:3] == (44, "t15", "team")
+
+
+@pytest.mark.integration
+def test_acknowledged_team_message_persists_and_fills_existing_missing_text(database_url, schema):  # noqa: F811
+    from bazaar_agent import db
+
+    with open_in(database_url, schema) as conn:
+        db.init_schema(conn)
+    store = ThreadStore(lambda: open_in(database_url, schema))
+    payload = {
+        "id": 44,
+        "kind": "team",
+        "team": "t01",
+        "with": "t15",
+        "status": "open",
+        "messages": [{"id": 9001, "sender": "t01", "tick": 100, "text": None}],
+    }
+    store.saw(payload, "t01", 100)
+    assert store.flush(100) == 1
+    store.sent(44, "t15", "t01", 100, 9001, "Propuesta exacta adjunta.", {"give": {"assets": [3]}, "want": {"cash": 9}})
+    assert store.flush(100) == 1
+    with open_in(database_url, schema) as conn:
+        assert conn.execute("select kind, counterpart, ours from threads where id=44").fetchone() == (
+            "team",
+            "t15",
+            True,
+        )
+        assert conn.execute("select id, thread_id, sender, text, ours from messages where id=9001").fetchone() == (
+            9001,
+            44,
+            "t01",
+            "Propuesta exacta adjunta.",
+            True,
+        )
+    store.close()
