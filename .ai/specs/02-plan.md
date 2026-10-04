@@ -767,3 +767,10 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 - Fix confirmed dealer budget waste and restart-safe, once-only bid refunds without changing hard limits or duel strategy.
 - Correct stale operational guidance and record actual deployment/validation evidence.
 - Run focused regressions and the final gate, obtain independent review, and use a safe live rollout if code changes are required.
+
+### AT1 — Remove amount approval and hourly trading ceilings ([spec](AT1-spec.md))
+
+- Apply Omar's explicit override: disable the amount threshold and global hourly cap with zero values.
+- Keep zero-cap planning bounded by available uncommitted cash; preserve positive-cap behavior.
+- Audit runtime call paths and review safety in parallel; validate disabled approval-service access.
+- Update operating guidance, run the full gate and create a separate PR.

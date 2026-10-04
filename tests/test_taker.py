@@ -779,3 +779,13 @@ def test_a_flag_denied_first_and_sent_later_is_booked_on_a_new_approved_row(tmp_
     assert "kill switch" in flag_rows[0]["guardrail"]
     (execution,) = [e for e in rows(tmp_path, "executions.jsonl") if e.get("sdk_method") == "flag"]
     assert execution["decision_id"] == flag_rows[1]["id"]  # booked on the approved row
+
+
+def test_disabled_hourly_cap_allows_dealer_opening_after_large_spend(tmp_path):
+    team = FakeTeam()
+    t, _, ledger = taker(
+        tmp_path, team, FakePublic(), live=True, config=TakerConfig(max_dealer_threads=1), max_spend_per_game_hour=0
+    )
+    ledger.record("spend", TICK - 1, 1.4, 10_000, "earlier")
+    t.on_tick(clock())
+    assert any(sent[0] == "open_thread" for sent in team.sent)

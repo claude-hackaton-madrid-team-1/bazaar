@@ -2389,7 +2389,7 @@ def _print_playbook(book: Any, loaded: Any, rules: Any, ctx: Any, commitments: A
     console.print(
         f"tick {book.tick} · cash {book.cash} ({commitments.cash} promised by our open offers), "
         f"{max(0, ctx.cash - gr.effective_cash_floor(rules, ctx))} above {gr.floor_text(rules, ctx)} · "
-        f"spent last game hour {ctx.spent_last_hour}/{rules.max_spend_per_game_hour} · "
+        f"spent last game hour {ctx.spent_last_hour}/{rules.max_spend_per_game_hour or 'no hourly cap'} · "
         f"pack slots this game hour: used {slots.used}, "
         f"left {slots.left} of {slots.limit} ({quotas}) · each move is checked alone: all of them may not fit"
     )

@@ -1426,3 +1426,9 @@ LF1 coordinator correction tick1592: ledger431 kept price-160 and adopted ledger
 
 ### [2026-10-04] build-error
 LF1 full gate: two continuation fixtures expected18P opening despite new planner correctly choosing8P common → open with adequate cash, then lower cash for the continuation assertion;19passed. Local PG fixture connection timed out before test body → isolated holdings rerun26passed. Refund integration initially used /dev/null as envfile → use regular emptyfile;5PGpassed. Read-only audit queried nonexistent snapshot.ts → use actual schema. Repair runner passed SecretStr to psycopg before connecting → unwrap in memory without logging; guarded correction then verified. Railway query from unlinked worktree → use linked original checkout and explicit environment/service.
+
+### [2026-10-04] finding
+AT1: Omar explicitly removed amount-based human approval and the global250P/hour purchase cap so automatic trading does not wait for humans. Set human_approval_above=0 and max_spend_per_game_hour=0; use finite available-cash planning when capdisabled. Preserve commitments, solecopies, sell/value/impact protections and game tick/requestlimits. This replaces prior60P amountapproval requirement; it does not authorize unreviewed operator proposals or remove separate team-swap budgets. Independent changedmodule run318passed; finalfullgate inPR.
+
+### [2026-10-04] build-error
+AT1: legacy restart fixtures used hourlycap0 as 'disable trading', conflicting with requested zero/off semantics → use an empty dealer catalog to preserve their no-new-thread scenario. Initial focused tests had two expected config assertion failures until GUARDRAILS0/0 landed; final318passed. Review caught an overbroad comment replacement on three unrelated rules → restore their original zero/off notes.

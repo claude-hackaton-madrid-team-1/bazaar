@@ -60,7 +60,7 @@ Omar's HARD RULES (Sat 3 Oct ~18:28 we sold our only SAL-07 and fell from score 
 
 - Never sell or swap away our only copy of a page card (`protect_page_sets` lists EVERY set); sell only true duplicates.
 - Never sell below our floor: `sell_min_value_ratio` x the server's `your_value` of that copy.
-- A card buy or sell priced at 60 P or more needs human approval (`human_approval_above`; `uv run bazaar approve`); it fails closed.
+- Omar disabled amount-based approval and the global hourly purchase cap on Sun 4 Oct: `human_approval_above = 0`, `max_spend_per_game_hour = 0`. Automated trades still require available uncommitted cash and all value, inventory and tick guards.
 - No override flag, breaker reset, kill-switch bypass or approval trick to force a sale past any of the three rules above.
 
 ## Reading the market (no key needed)

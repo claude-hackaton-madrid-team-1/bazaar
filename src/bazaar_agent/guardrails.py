@@ -98,7 +98,7 @@ class Guardrails(BaseModel):
     trading_enabled: bool = True
     pause_file: str = ".local/PAUSE"
     cash_floor: int = 270
-    max_spend_per_game_hour: int = 150
+    max_spend_per_game_hour: int = Field(default=150, ge=0)  # 0: no hourly cap; cash limits still apply
     max_price_common: int = 12
     max_price_uncommon: int = 26
     max_price_rare: int = 80
@@ -230,7 +230,7 @@ class Guardrails(BaseModel):
     deploy_guard_duel_ticks: int = Field(default=4, ge=0, le=100)
     deploy_guard_bench_ticks: int = Field(default=10, ge=0, le=200)
     breaker_read_timeout_s: float = Field(default=1.0, gt=0, le=5)
-    human_approval_above: int = Field(default=0, ge=0)  # 0: off (GUARDRAILS.md turns it on)
+    human_approval_above: int = Field(default=0, ge=0)  # 0: amount-based approval is off
     max_score_loss_per_move: float = Field(default=0.0, ge=0)  # 0: off (GUARDRAILS.md turns it on)
     score_per_neg_point_fallback: float = Field(default=0.053, gt=0, le=1)
     dealer_ladder_score: float = Field(default=0.05, ge=0, le=1)
@@ -296,6 +296,12 @@ class Guardrails(BaseModel):
         code = ref.split("-", 1)[0].strip().upper() if "-" in ref else ""
         page_card = str(rarity or "").strip().lower() not in OFF_PAGE_RARITIES
         return copies <= 1 and page_card and code in set_codes(self.protect_page_sets) and not self.excepted(ref)
+
+    def spend_room(self, cash_available: int, spent_last_hour: int) -> int:
+        """Cash available for a new commitment, bounded by a positive hourly cap when enabled."""
+        if self.max_spend_per_game_hour > 0:
+            cash_available = min(cash_available, self.max_spend_per_game_hour - spent_last_hour)
+        return max(0, cash_available)
 
     def max_price_for(self, rarity: str | None) -> int | None:
         return {
@@ -1003,7 +1009,7 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
             v.append(f"price {action.price} > {lifted or f'max_price_{action.rarity} {cap}'}")
         if ctx.cash - action.price < effective_cash_floor(rules, ctx):
             v.append(f"cash {ctx.cash} - {action.price} < {floor_text(rules, ctx)}")
-        if ctx.spent_last_hour + action.price > rules.max_spend_per_game_hour:
+        if rules.max_spend_per_game_hour > 0 and ctx.spent_last_hour + action.price > rules.max_spend_per_game_hour:
             v.append(
                 f"spend {ctx.spent_last_hour} + {action.price} > max_spend_per_game_hour "
                 f"{rules.max_spend_per_game_hour}"

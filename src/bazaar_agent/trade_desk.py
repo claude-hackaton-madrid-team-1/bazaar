@@ -823,7 +823,7 @@ def verify(plan: TradePlan, pp: PlanParams, rules: Guardrails) -> tuple[str, ...
     cash_out = sum(t.price for t in plan.listings if t.kind == "bid") + sum(max(0, -t.price) for t in plan.threads)
     if cash_out > plan.cash_room:
         problems.append(f"bids promise {cash_out} > {plan.cash_room} above cash_floor")
-    if cash_out > rules.max_spend_per_game_hour:
+    if rules.max_spend_per_game_hour > 0 and cash_out > rules.max_spend_per_game_hour:
         problems.append(f"bids promise {cash_out} > max_spend_per_game_hour {rules.max_spend_per_game_hour}")
     return tuple(problems)
 
@@ -851,8 +851,7 @@ def build_plan(
     book = intel.book_values(catalog)
     start = Start(tuple(offers), spent, intel.settled_volume(events, m.us, book), book)
     open_ = open_commitments(offers, m.us)
-    cash_room = min(m.cash - open_.cash - rules.cash_floor, rules.max_spend_per_game_hour - spent - open_.thread_cash)
-    cash_room = max(0, cash_room)
+    cash_room = rules.spend_room(m.cash - open_.cash - rules.cash_floor, spent + open_.thread_cash)
     if pp.cash_budget is not None:  # the cash above the floor is shared with the dealer ladder
         cash_room = min(cash_room, pp.cash_budget)
     ours, wanted = our_copies(m, me, params, rules), wanted_cards(m, params, rules, dealer_prices(events))

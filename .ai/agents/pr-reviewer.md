@@ -43,9 +43,10 @@ call a write endpoint of the game, or run `railway` commands that change anythin
      Postgres ledger, the kill switch (`trading_enabled`, `.local/PAUSE`), dry run unless `BAZAAR_LIVE=1`.
      Nothing may SET `BAZAAR_LIVE` in code or in `.railway/railway.py` (only `preserve()`).
    - Omar's HARD RULES (Sat 3 Oct incident: our only SAL-07 was sold, score 28.25 to 23.98): any diff that sells or swaps
-     away a page's last copy (`protect_page_sets`), sells below the floor (`sell_min_value_ratio` x `your_value`), skips
-     human approval at 60 P or more (`human_approval_above`), or adds an override flag, breaker reset or kill-switch
-     bypass path is a P0.
+     away a page's last copy (`protect_page_sets`), sells below the floor (`sell_min_value_ratio` x `your_value`), or adds
+     an override flag, breaker reset or kill-switch bypass path is a P0. Omar explicitly disabled the amount-based
+     approval threshold and global hourly spend cap on Sun 4 Oct; their zero settings are intentional. Positive
+     configured caps must still work, and disabling these gates must preserve cash and pending commitments.
    - Tick discipline and budget: loops driven by `/api/clock`; at most 5 req/s (bursts 20) and 6 live
      streams for ALL our processes together; a `429` waits for the named tick, never a retry loop.
    - Secrets: no key, token, password or URL with credentials printed, logged, committed, sent to a span,
