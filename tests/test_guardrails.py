@@ -272,7 +272,10 @@ def test_dealer_final_lift_still_meets_cash_floor_and_hourly_spend():
         gr.parse_guardrails("- `dealer_final_lift` = 0.9 — too much")
 
 
-def duel_check(kind="duel_offer", price=105, limit=100, role="seller", days=None, weight=None, rules=REAL.rules):
+WORST = REAL.rules.model_copy(update={"duel_days_signed_roles": "none"})  # the worst case, whatever GUARDRAILS.md sets
+
+
+def duel_check(kind="duel_offer", price=105, limit=100, role="seller", days=None, weight=None, rules=WORST):
     action = gr.Action(kind, "9", None, price, limit=limit, role=role, days=days, days_weight=weight)
     return gr.check(action, ctx(), rules)
 
@@ -300,7 +303,7 @@ def test_a_duel_move_outside_our_limit_is_denied():
 
 def test_under_v2_a_duel_move_outside_our_limit_is_still_denied():
     """v2 lets 0 days through without a weight (they cost nothing under either sign, B2c); everything else holds."""
-    v2 = REAL.rules.model_copy(update={"duel_policy": "v2"})
+    v2 = WORST.model_copy(update={"duel_policy": "v2"})
     assert duel_check(rules=v2).allowed and duel_check(role="buyer", price=95, rules=v2).allowed
     for kind in ("duel_offer", "duel_accept"):
         assert "duel_inside_limit" in str(duel_check(kind, price=100, rules=v2))  # on the limit: no surplus

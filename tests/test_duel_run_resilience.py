@@ -144,7 +144,7 @@ def test_a_switch_that_cannot_be_copied_skips_the_latch_and_still_plays(duel_cli
     # #165 security review P3-2: the rollback copy ran outside the protection; a pathological value (a 500-deep
     # nested `days_meaning`) broke `deepcopy` with RecursionError and every later tick failed.
     cli, client, _, _ = duel_cli
-    with_rules(cli, monkeypatch, duel_policy="v2", duel_days_auto=True)
+    with_rules(cli, monkeypatch, duel_policy="v2", duel_days_auto=True, duel_days_signed_roles="none")
     client.payload = [{**ENDGAME, "session": 1}]
     confirmed = dd.DaysSwitch(verdict="signed", path=tmp_path / "x.json", texts=[1], scored=[[1, 9, 5]], session=1)
     assert confirmed.signed(True)  # corroborated in this very session: only a cleared session turns it off
@@ -230,7 +230,7 @@ def test_a_rolled_back_latch_never_carries_signed_into_a_new_session(duel_cli, m
     # #165 review P2: the rollback restored the old switch with its old `session`, so session 1's corroborated sign
     # signed session 2's duels (policy and guard) on a tick whose latch save failed.
     cli, client, _, _ = duel_cli
-    with_rules(cli, monkeypatch, duel_policy="v2", duel_days_auto=True)
+    with_rules(cli, monkeypatch, duel_policy="v2", duel_days_auto=True, duel_days_signed_roles="none")
     client.payload = [{**ENDGAME, "session": 2}]
     confirmed = dd.DaysSwitch(
         verdict="signed", path=tmp_path / "x.json", texts=[1], scored=[[1, 9, 5]], session=1, role="seller", formed=1
