@@ -640,6 +640,11 @@ snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_
   `max_taller_per_game_hour`, keep one free copy, score impact), the taker step and `bazaar taller` ·
   **Acceptance:** tests/test_taller.py; full gate + sim smoke.
 
+- Step 4 (#244 review follow-up) — merge current main, preserve TL1 shared accounting and fresh/busy checks;
+  reserve craft assets before sending, release only on definite refusal, interlock dealer sells, and validate
+  duplicate/unread copies and dealer-thread inputs. **Acceptance:** tests/test_taller.py, tests/test_taller_harden.py,
+  and the full gate, with the Postgres suite run once serially.
+
 ### SX1 — One sell exception to the last-copy rule: LAT-10 (Omar, Sat 3 Oct ~20:20) ([spec](SX1-spec.md))
 - Step 1 — `protect_page_exceptions` in `guardrails.py` (validator, `protects()`, `ENFORCED_BY`) and GUARDRAILS.md
   · **Acceptance:** tests/test_page_exceptions.py, committed-file tests in tests/test_new_pages.py and
