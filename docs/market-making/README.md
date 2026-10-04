@@ -182,6 +182,7 @@ No private values (card values, limits, cash) here or anywhere in this folder.
 | [market-making-dossier.md](reports/market-making-dossier.md) | The Sunday-morning dossier (PR #293): scoring, sessions 1–8, session 8 deep-dive, organic, pitch draft |
 | [bench-baseline.md](reports/bench-baseline.md) | Did session 7 beat the baseline (no); the 22.5 / 7.5 fit; the dashboard bug; session 8 read after it ended |
 | [bench-sim.md](reports/bench-sim.md) | Calibrated simulator, policy tournament, real-book replays, #292 `lookahead`; §7 the v2 addendum |
+| [bench-v3.md](reports/bench-v3.md) | Session 9 into the harness: b155 replay, broker downtime, three points readings, what-we-did vs the stall, every policy rerun |
 | [bench-search.md](reports/bench-search.md) | `lookahead_safe` / `lookahead_bold`, head-to-head with #292, paired sign tests |
 | [bench-books.md](reports/bench-books.md) | Why `bench_books` was empty on Sunday morning (recorder shipped after Saturday's last bench) |
 | [bench-books/e2e_local_pg.py](reports/bench-books/e2e_local_pg.py) | Replays captured broker books through the real recorder into a throwaway local Postgres |

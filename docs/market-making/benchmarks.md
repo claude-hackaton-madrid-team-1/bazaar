@@ -207,6 +207,10 @@ cal_normal20 E linear / zero-below: `lookahead` 0.642 / 0.577, `slack1` 0.656 / 
 Full table: [reports/bench-sim.md §7](reports/bench-sim.md). The code is a `src/**` change (maker, taker and duels
 redeploy on merge), so it stays on its branch; only its report section was brought here.
 
+**v3 (session 9, [reports/bench-v3.md](reports/bench-v3.md))**: `bench_tournament.py` adds `--miss` (read downtime), `--fit RUN`,
+`--whatwedid RUN`, three points readings and the b155 replay; `scripts/bench_lookahead_v2_plugin.py` loads v2's `slack` from
+`af794985` via `--plugin` without touching src. Every policy rerun on 4 worlds, 12 robust worlds and b120/b137/b155.
+
 ## 11. The real books replayed (b120 = session 7, b137 = session 8, session 9)
 
 E[points] linear / zero-below, 300 posterior draws per book. **In-sample**: the priors were fitted on these same two
