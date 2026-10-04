@@ -102,6 +102,7 @@ from bazaar_agent.holdings import Holdings
 from bazaar_agent.intel import book_values, card_rarities, listed_makers, settled_volume, tape
 from bazaar_agent.learn.venues import VenueNotices
 from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable, trade_lock
+from bazaar_agent.move_impact import our_cards
 from bazaar_agent.official_values import OfficialValues, over_cap
 from bazaar_agent.rate_budget import maker_post_attempts
 from bazaar_agent.sdk import BazaarError
@@ -164,15 +165,16 @@ def targets_from(book: Playbook) -> list[Target]:
 
 
 def _leave_desk_copy(targets: Iterable[Target], me: dict[str, Any], rules: Guardrails) -> list[Target]:
-    """Keep one page copy, without reserving stock for a dormant swap strategy.
+    """Keep the page copies protected by the current album policy.
 
     Actual standing and uncertain offers are checked again under the publication lock.
     """
     held = Counter(str(a.get("ref")) for a in me.get("assets") or [])
+    complete = our_cards(me).complete if me.get("album") else None
     kept: list[Target] = []
     for target in targets:
         if target.side == "ask":
-            if held[target.ref] <= 1 and rules.protects(target.ref, target.rarity, 1):
+            if held[target.ref] <= 1 and rules.protects(target.ref, target.rarity, 1, complete):
                 continue
             held[target.ref] -= 1
         kept.append(target)

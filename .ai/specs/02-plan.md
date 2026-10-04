@@ -814,3 +814,9 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 - Focused 107 ranking/team tests passed after withdrawing message reordering; independent review/full gate and rollout pending coordinator.
 
 - TR1 pack follow-up: cap30 permits observed final24; pack snapshot reads promised asset IDs without reconciling durable reservations. Pack/supply50 and config12 tests pass.
+
+## SI1 — Proactive supply follows complete-page protection
+
+- Spec: [SI1-spec.md](SI1-spec.md).
+- Reuse the existing album protection context in strategy and maker supply filters; preserve fresh guards, prices, reservations and listing budgets.
+- Focused79 tests pass; independent review, full gate and guarded rollout remain coordinator stages.

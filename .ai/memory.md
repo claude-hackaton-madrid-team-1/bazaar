@@ -1501,3 +1501,9 @@ Review found pack opening passed a stale snapshot to publication reconciliation,
 
 ### [2026-10-04] build-error — TR1 local Postgres setup timeout
 Full gate at00ceb581 ran5715passing tests with95%coverage but one holdings fixture could not connect to localhost5433 before its10s timeout. No product assertion failed. Reran the entire holdings DB module against127.0.0.1: `26 passed in15.03s`; Depot full CI passed at the same code head. No runtime code change for this transient local connection failure.
+
+### [2026-10-04] finding — SI1: duplicate count is not sellable inventory
+Tick1943 real inventory contained49 copies, four complete pages (40 retained copies), eight incomplete-page singletons and one spare LAV04 already offered. With protect_complete_pages_only=true, the eight singles can be eligible at safe prices; saying only the duplicate was sellable was wrong. Strategy.sell_moves and maker._leave_desk_copy omitted album context and blocked these proactive listings. They now use the guard's existing complete-page context. No price/floor/protection/rate changes; production fills unverified.
+
+### [2026-10-04] build-error — SI1 fixture API and formatting
+New tests initially referenced nonexistent Target.your_value and Ledger.mark_hands_off; corrected to Target.value and the existing hands-off listing row. Ruff found import order and a long docstring; sorted imports and wrapped prose. Focused79 tests and changed-source mypy then passed.
