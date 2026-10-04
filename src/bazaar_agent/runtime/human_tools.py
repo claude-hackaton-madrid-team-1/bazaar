@@ -6,7 +6,7 @@ An approval (`approvals.py`, HA1) is the human's veto over our own agents, so no
 - only the remote server (`runtime.mcp_server`) serves them, and only on a request that carries
   `X-Approver-Token` equal to BAZAAR_APPROVER_TOKEN, a second secret beside the bearer token. Unset, too weak or
   equal to the bearer token, the tools are not even listed (fail closed); the bearer alone never shows them. An
-  approver request sees ONLY these three tools, so counterparty text never shares a context with `approve`.
+  approver request sees ONLY these human tools, so counterparty text never shares a context with `approve`.
 
 Every input is validated (a card of the catalog, a price in [1, 1000], a ttl in [1, 480] ticks), and an approval the
 agents could never use is refused. A buy approval of an off-page card (an epic or legendary) is also an ORDER: with
@@ -393,10 +393,18 @@ def withdraw(b: Backend, store: ApprovalStore, args: RevokeArgs, secrets: Iterab
 
 
 def human_specs(store: ApprovalStore, secrets: Iterable[str] = ()) -> tuple[ToolSpec, ...]:
-    """The three human tools on `store`. Never added to `tools.TOOLS`: the desk must not see them. `secrets` are
+    """The human tools on `store`. Never added to `tools.TOOLS`: the desk must not see them. `secrets` are
     cut out of a stored reason (the answers are scrubbed by `tools.call`)."""
+    from bazaar_agent.runtime import operator as op
+
     held = tuple(secrets)
     return (
+        ToolSpec("operator_review", "HUMAN ONLY. Read immutable proposal terms and dispatch state.",
+                 op.ProposalId, False, lambda b, a: op.review(b, a)),
+        ToolSpec("operator_approve", "HUMAN ONLY. Approve exactly the stored terms, without sending.",
+                 op.ProposalId, True, lambda b, a: op.approve(b, a)),
+        ToolSpec("operator_execute", "HUMAN ONLY. Revalidate and dispatch an approved proposal at most once.",
+                 op.ProposalId, True, lambda b, a: op.execute(b, a)),
         ToolSpec("approvals", "HUMAN ONLY. Big trades waiting for a human (the last 2 game hours): card, side, price, "
                  "why the guardrail asked, our and the official value, album impact (a page's last copy?), the cap no "
                  "approval lifts, who asked; and the active approvals.", ApprovalsArgs, False,

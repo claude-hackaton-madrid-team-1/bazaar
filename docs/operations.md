@@ -268,3 +268,37 @@ a deployment during a duel or Market Test.
 | Repeated rate limits | Duplicate workers/monitors and stagger settings; one team shares the budget |
 | Model calls fail | Credential presence, decider budgets and runtime settings; inspect scrubbed logs |
 | Documentation becomes stale | Regenerate from canonical sources as described in the README |
+
+## Exact operator proposals
+
+The authenticated Bazaar Live approvals page uses the existing separate human authority.
+`operator_snapshot` reads score components, freshness, recent decision evidence and commitments.
+`operator_propose` stores a typed action and immutable terms without a game write.
+Only the human MCP endpoint exposes `operator_review`, `operator_approve` and `operator_execute`.
+Approval expires in game ticks; execution rereads state and rejects changed terms. An approved
+proposal is claimed once before dispatch. An unknown result is reviewed and reconciled, never
+blindly retried or silently treated as a settlement.
+
+Supported typed actions include existing cash listings/bids/cancellation, accepting a one-card
+cash offer, opening/closing a team conversation, a team message, and a structured team cash offer.
+The UI displays exact terms before the separate confirmation click. Dictation only fills editable
+text. No microphone phrase authorizes a write. Existing autonomous tools retain their own guards.
+
+For rollout, the coordinator pauses every writer, including local CLIs, and waits for a safe
+deploy window. Apply the normal idempotent schema setup (`uv run bazaar db init`) to create
+`operator_proposals`, `bench_evidence` and the new ledger event kinds. Upgrade all writer services
+before resuming: older workers do not understand publication reservations. Then enable the Live
+operator UI and verify a dry-run proposal before live use. Missing durable storage fails operator
+dispatch closed. Keep the current model/provider credentials; no new services are required.
+The legacy manual Workshop CLI is outside the shared publication transaction; pause autonomous
+writers before using it. The taker's automatic Workshop path participates in the shared lock
+and reserves its exact inputs before sending.
+
+An uncertain publication keeps its cash or asset reserved until evidence reconciles it. A known
+refusal releases it; elapsed time alone does not. The snapshot exposes these pending promises.
+On 15-second ticks the maker attempts at most four new publications, derived from the base request
+budget. Optional desks, Workshop and operator calls still share the limiter and deadline; the
+base-loop capacity estimate is not a guarantee that every optional action fits.
+
+Our team cannot trade on its own venue. Team conversations and our cash orders use other venues;
+we invite other teams to use our market with each other.

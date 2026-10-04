@@ -1376,3 +1376,26 @@ documented command now explicitly selects the local development database. No run
 The generated architecture still used Saturday's eyebrow and a wrong Sunday hour anchor in its template.
 Move both texts into the status JSON; the single keyless schedule read confirms h16.65 = Sunday 09:00 CEST.
 Keep h14.65/h15 tests explicitly UNVERIFIED at opening. A Sunday-focused axis avoids overlapping event labels.
+
+### [2026-10-04] build-error — operator dispatch and shared publication ledger
+- Shared publication promises initially failed the existing `ledger_kind_check` (only spend/accept/listing). Added an idempotent migration for pending/confirm/release and operator message slots; verified migration twice in disposable local PostgreSQL schemas. No production migration or game write performed.
+- Adding pre-send reservations changed the late-bookkeeping failure tests: their fake failed before dispatch. Fakes now distinguish the pre-send reservation from post-send accounting, preserving both fail-closed dispatch and accurate sent outcomes.
+- Operator proposals bind exact terms, actual `/me` team, endpoint hash and round. Human-only confirmation cannot bypass page-copy/floor guards; ambiguous responses remain claimed and block new operator sends until a unique new exact offer proves publication. Missing offers never prove failure. New decision provenance records unknowns explicitly; legacy rows are not retroactively labelled.
+
+### [2026-10-04] build-error — SR1 integration and presentation
+- Fresh-read reservation tests exposed fake clients retaining cancelled offers; fixed the fakes to mirror confirmed cancellation. Human-approval regressions need the `human_approval` marker because unrelated tests disable that guard.
+- Independent review found operator accepts could reuse a listed asset, own-venue listings lacked a shared check, and definitive HTTP rejection became permanent uncertainty. Added pre-send accept promises, venue validation and separate refusal/unknown outcomes; unknown writes still never retry blindly.
+- Live operator integration initially sent the human credential to read-only tools, dropped monetary preview terms, and rejected successful responses without `reason`. Corrected the credential boundary, displayed/bound full terms, and preserved a neutral submitted status (not settlement).
+- Presentation export needed the bundled runtime module path and explicit local fontconfig; otherwise PDF substituted a serif font. Native PDF renders now match the editable sans-serif slides. Finalizer receipts need unique paths; a local `html.py` shadowed the stdlib and was renamed. Browser QA found one undersized text box; increased its height.
+- Black and Ruff disagreed on nested conditional formatting; replaced the nested expressions with small explicit assignments. A requested runtime test filename did not exist; reran the actual runtime test modules.
+
+### [2026-10-04] build-error — fresh safety reads and Sunday request budget
+- Mandatory fresh holdings/offers under publication locks add two reads per maker attempt and taker accept. The old 71-call ceiling was stale: the base paths need 97 requests with twelve maker posts. Derive the maker attempt cap from the existing 5 req/s budget and clock tick duration: four at 15 seconds, twelve at 30 seconds. Count rejected attempts too; optional desk, Workshop, dealer-sale and operator calls still depend on the shared limiter and tick deadline, not this partial capacity estimate.
+- Flatten reruns now leave confirmed cancellations alone; private decision assertions include explicit provenance. Operator snapshots expose unresolved publication promises before ordinary offers, using fresh holdings under the same lock and never sending a game write. Focused runtime/integration validation: 103 passed; Ruff, Black and mypy passed for the touched runtime modules.
+
+### [2026-10-04] build-error — SR1 final publication regressions
+- Definitive HTTP refusals can release a promise, but HTTP 408 remains uncertain. Maker, team desk, taker and CLI now retain those reservations; tests cover 400/408/503 and unknown outcomes.
+- A private cash acceptance previously reserved spend for only two ticks. It now reserves the gross debit until the exact incoming asset is observed; held dealer conversations retain their promised copy too.
+- Final integration exposed an outdated ledger assertion expecting only accept/spend. The new pre-send publication row is intentional; the test now verifies all three and still proves no repeated accept after recovery.
+- Automatic Workshop crafting now holds the shared publication lock, merges pending copies, and reserves all three inputs before dispatch. Definitive rejection releases them; uncertain results keep them until holdings prove consumption. The existing craft accounting event is zero-value spend, not listing.
+- Black/Ruff disagreed on a multiline pytest fixture parameter's noqa placement; moved the suppression to the actual parameter. Legacy manual Workshop commands still require autonomous writers paused.

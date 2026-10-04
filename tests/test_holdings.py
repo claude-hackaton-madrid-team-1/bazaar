@@ -478,7 +478,7 @@ def test_the_taker_decides_from_the_holdings_and_re_reads_after_a_live_accept(tm
     t.on_tick(clock())
     assert team.sent == [("accept", 2)] and spy.reads == [100] and spy.catalogs == [100]
     assert spy.deals == ["accept of offer 2"]
-    assert team.reads.count("me") == 2  # the spy's two reads (the tick's, the one after the deal), no other
+    assert team.reads.count("me") == 3  # tick snapshot, fresh guard under publication lock, after the deal
     assert any("/me from db (tick 100, 0.4 s old, epoch 3, read by maker)" in line for line in lines)
     assert any("accept of offer 2: /me live (after accept of offer 2)" in line for line in lines)
 

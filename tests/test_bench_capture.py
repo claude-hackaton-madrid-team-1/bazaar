@@ -6,7 +6,7 @@ from copy import deepcopy
 
 import psycopg
 
-from bazaar_agent.agents.bench_capture import FILE_NAME, BenchBooks, rows_for, run_of, side_and_quote
+from bazaar_agent.agents.bench_capture import EVIDENCE_FILE, FILE_NAME, BenchBooks, rows_for, run_of, side_and_quote
 from tests.agent_fakes import clock
 from tests.test_broker_agent import FakeBroker, agent
 from tests.test_matcher import bench_buy, bench_sell
@@ -118,6 +118,41 @@ def test_the_worker_thread_writes_off_the_tick(tmp_path):
 
 def test_no_file_dir_no_database_is_a_noop():
     BenchBooks(None, None).record(1, [SELL])
+
+
+def test_evidence_preserves_full_payload_in_file_and_database(tmp_path):
+    sink = []
+    books = BenchBooks(lambda: FakeConn(sink), tmp_path, venue="v19", inline=True)
+    payload = {"settlement": {"sell": "b35-17", "details": "x" * 1500}}
+    books.evidence(450, "settlement", payload)
+    saved = json.loads((tmp_path / EVIDENCE_FILE).read_text())
+    assert saved["kind"] == "settlement" and saved["payload"] == payload
+    assert sink[0][0:4] == ("real", "v19", 450, "settlement")
+    assert sink[0][-1].obj == payload
+
+
+def test_exact_broker_captures_settlement_empty_book_and_official_session_result(tmp_path):
+    broker = FakeBroker(bench=[bench_sell("b1-1", 20), bench_buy("b1-2", 40)])
+    result = {
+        "id": 17,
+        "type": "bench.finished",
+        "tick": 8,
+        "payload": {"session": 1, "venue": "v19", "efficiency": 0.854, "auto_baseline": 0.854},
+    }
+    a = agent(tmp_path, broker, live=True, allow_venue_open=True)
+    a.on_tick(clock(7))
+    settlement = {"sell": "b1-1", "buy": "b1-2", "price": 30, "detail": "x" * 1500}
+    original = broker.book
+    broker.book = lambda: {**original(), "settlements": [settlement]}
+    a.on_tick(clock(8), events=[result])
+    a.on_tick(clock(9), events=[result])
+    evidence = [json.loads(line) for line in (tmp_path / "agents" / EVIDENCE_FILE).read_text().splitlines()]
+    assert [row["payload"]["offers"] for row in evidence if row["kind"] == "book"][-1] == []
+    assert [row["payload"] for row in evidence if row["kind"] == "settlement"] == [{"settlement": settlement}]
+    assert [row["payload"] for row in evidence if row["kind"] == "session"] == [result]
+    response = next(row["payload"] for row in evidence if row["kind"] == "match_response")
+    assert response["request"] == {"sell": "b1-1", "buy": "b1-2", "price": 30}
+    assert response["state"] == "queued_or_acknowledged"
 
 
 def test_the_broker_records_the_book_it_read_without_a_second_request(tmp_path):

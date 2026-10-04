@@ -753,9 +753,10 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 - Parallel slices: README and its generator; architecture and its generator; independent source audit.
 - Status: implementation and local verification complete; evidence in DOC1-spec.md. Awaiting PR merge and post-merge hosted architecture publication.
 
-### SR1 — Sunday scoring, operator control and final presentation ([spec](SR1-spec.md))
+### SR1 — Sunday scoring and operator control ([spec](SR1-spec.md))
 
 - Build gameplay/bench, backend control/evidence, and Live interaction in parallel with disjoint ownership.
-- Build the five-slide presentation against verified source and real images; integrate runtime/UI contracts.
+- Integrate runtime/UI contracts. Presentation work was withdrawn by Omar and is excluded from this PR.
 - Run focused checks, integrated gates and independent review; record evidence and push feature branches.
 - Preserve current duel policy, model/auth, shared budgets and coordinator-only safe deployment.
+- Status: six retained implementation criteria verified; full backend suite 5535 passed, 95% coverage. Live PR 58 has green Depot CI. Evidence, limitations and rollout steps are in [SR1-report.md](SR1-report.md); coordinator deployment remains pending.

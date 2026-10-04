@@ -31,7 +31,7 @@
     p { margin: 0 0 1rem; }
     .section-intro { color: var(--muted); max-width: 820px; }
     .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
-    .flow { grid-template-columns: repeat(4, minmax(0, 1fr)); list-style: none; padding: 0; margin: 1.3rem 0 0; }
+    .flow { grid-template-columns: repeat(3, minmax(0, 1fr)); list-style: none; padding: 0; margin: 1.3rem 0 0; }
     .card { border: 1px solid var(--line); background: var(--paper); border-radius: 10px; padding: 1.4rem; min-width: 0; }
     .card p { font-size: .9rem; }
     .step { display: block; color: var(--green); font: 600 1.7rem/1.1 ui-monospace, monospace; margin-bottom: 1.5rem; }
@@ -77,7 +77,7 @@
 <main id="main" class="wrap">
   <section id="flow" aria-labelledby="flow-title">
     <div class="section-label">01 / The trading loop</div>
-    <h2 id="flow-title">Read → decide → check → act</h2>
+    <h2 id="flow-title">State + memory → decide → guard → act → learn</h2>
     <p class="section-intro">The organisers’ API owns the clock, inventory and settlement. Workers respond to game ticks; they share one team key and one action budget.</p>
     <ol class="grid flow">$flow</ol>
     <p class="feedback">↩ Outcomes return through the game feed and fresh inventory reads, updating memory for the next decision.</p>

@@ -768,12 +768,14 @@ def standard_hooks(
             ctx = replace(context(), accepts_this_tick=0)
         except LedgerUnavailable as e:
             raise Hold(f"{e}; no write without the shared ledger (fail closed)") from None
+        copy = ctx.cards.copy(cand.asset_id) if ctx.cards is not None else None
+        value = copy.your_value if copy is not None else cand.your_value
         action = Action(
             action_kind(kind),
             cand.ref,
             cand.rarity,
             price,
-            your_value=cand.your_value,
+            your_value=value,
             scope="dealer_sell",
             asset=cand.asset_id,  # the score impact rule prices this copy, not the worst copy of the card
         )

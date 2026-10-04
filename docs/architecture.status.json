@@ -15,6 +15,20 @@
       ]
     },
     {
+      "title": "Retrieve relevant memory",
+      "body": "Current state queries scoped lessons. BM25 and vector similarity are fused, then a local cross-encoder reranks the result. Expired or unrelated lessons are excluded; recall has a deadline.",
+      "sources": [
+        {
+          "label": "Hybrid recall",
+          "href": "../src/bazaar_agent/learn/recall.py"
+        },
+        {
+          "label": "Local models",
+          "href": "../src/bazaar_agent/learn/embed.py"
+        }
+      ]
+    },
+    {
       "title": "Choose a move",
       "body": "Taker and maker policies rank trades and manage conversations. Duel policies negotiate their own price and delivery terms. Jev or the configured LLM supplies advisory verdicts.",
       "sources": [
@@ -63,6 +77,20 @@
           "href": "../vendor/bazaar-kit/RULES.md"
         }
       ]
+    },
+    {
+      "title": "Evaluate and learn",
+      "body": "Observed outcomes feed mechanism-specific evaluations and lessons. Dealer, duel, team-trade and market evidence stay separate. A lesson can inform the next decision but cannot override a guardrail.",
+      "sources": [
+        {
+          "label": "Evaluations",
+          "href": "../src/bazaar_agent/evals/"
+        },
+        {
+          "label": "Learning",
+          "href": "../src/bazaar_agent/learn/"
+        }
+      ]
     }
   ],
   "intelligence": [
@@ -82,7 +110,7 @@
     },
     {
       "title": "Interactive desk + MCP",
-      "body": "The Claude Agent SDK desk routes operator requests to strategist, buyer, seller and duelist roles. CLI and authenticated MCP tools use the same Python actions and guardrails; writes default to dry run.",
+      "body": "The deployed Claude Agent SDK desk routes operator requests to specialists. Authenticated MCP tools share guarded Python actions. Exact operator proposals are reviewed, separately approved and revalidated before dispatch; unknown outcomes remain claimed for reconciliation.",
       "sources": [
         {
           "label": "Desk",
@@ -95,12 +123,16 @@
         {
           "label": "MCP server",
           "href": "../src/bazaar_agent/runtime/mcp_server.py"
+        },
+        {
+          "label": "Operator proposals",
+          "href": "../src/bazaar_agent/runtime/operator.py"
         }
       ]
     },
     {
       "title": "Feed learning + recall",
-      "body": "Feed and thread readers extract counterparty behaviour and outcomes. Optional LLM interpretation and local embeddings add context for future decisions; learning scopes keep duels and trading separate.",
+      "body": "Feed and outcome readers record scoped evidence. Hybrid retrieval combines BM25 and pgvector with rank fusion and local cross-encoder reranking. Recall feeds state into the next decision; measured outcomes remain distinct from predicted value.",
       "sources": [
         {
           "label": "Learner",

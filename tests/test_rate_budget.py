@@ -39,19 +39,32 @@ def test_a_steady_tick_of_every_service_fits_the_key_today(tick_seconds):
 
 @pytest.mark.parametrize("tick_seconds", [rb.SATURDAY_TICK_S, rb.SUNDAY_TICK_S])
 def test_every_loop_at_its_ceiling_stays_under_5_per_second_but_bursts_past_20(tick_seconds):
-    plan = rb.saturday_plan()
+    plan = rb.saturday_plan(tick_seconds=tick_seconds)
     table = rb.budget_table(tick_seconds, plan)
-    assert table.total("team") == 71 and table.rps("team") <= rb.RATE_PER_KEY
+    assert table.total("team") == (73 if tick_seconds == 15 else 97)
+    assert table.rps("team") <= rb.RATE_PER_KEY
     verdict = rb.check(plan, tick_seconds)
     assert not verdict.ok and all("tick boundary" in p for p in verdict.problems)  # sustained is fine
     assert rb.check(plan, tick_seconds, offsets=rb.PROPOSED_STAGGER).ok  # a stagger absorbs it
 
 
 def test_sunday_has_no_room_for_extra_dealer_processes_on_top_of_the_ceiling():
-    plan = rb.saturday_plan(dealer_children=3)
+    plan = rb.saturday_plan(dealer_children=3, tick_seconds=rb.SUNDAY_TICK_S)
     assert rb.budget_table(rb.SATURDAY_TICK_S, plan).rps("team") <= rb.RATE_PER_KEY
     problems = rb.check(plan, rb.SUNDAY_TICK_S, offsets=rb.PROPOSED_STAGGER).problems
-    assert any("sustained 5.73 req/s" in p for p in problems)
+    assert any("sustained 5.87 req/s" in p for p in problems)
+
+
+@pytest.mark.parametrize(("seconds", "expected"), [(5, 0), (15, 4), (30, 12), (60, 12)])
+def test_maker_attempts_leave_room_for_the_other_services(seconds, expected):
+    assert rb.maker_post_attempts(seconds) == expected
+    assert rb.maker_post_attempts(seconds, server_limit=2) == min(expected, 2)
+
+
+def test_uncapped_twelve_posts_exceed_the_sunday_shared_budget():
+    plan = rb.saturday_plan(tick_seconds=30)
+    assert rb.budget_table(15, plan).total("team") == 97
+    assert any("sustained 6.47 req/s" in p for p in rb.check(plan, 15).problems)
 
 
 def test_a_second_laptop_running_taker_and_maker_breaks_the_boundary_burst():
@@ -109,7 +122,8 @@ def test_the_taker_stays_inside_its_budget_on_a_busy_tick(tmp_path):
     counted_loop(tally.wrap(team, "team").clock, taker.on_tick)
     assert [s[0] for s in team.sent] == ["open_thread", "accept", "cancel", "say"]  # one dealer to talk to
     budget = rb.taker(dealer_threads=1, venues=2)
-    assert tally.total("team") == 10 and budget.team == 11  # + a clock re-read after a lost reservation
+    assert tally.total("team") == 12 and budget.team == 13  # + a clock re-read after a lost reservation
+    assert tally.calls[("team", "me")] == 2 and tally.calls[("team", "my_offers")] == 2
     assert tally.total("public") <= budget.public
     assert tally.total("team") <= rb.taker().team
 
@@ -230,8 +244,8 @@ def test_the_budget_command_prints_the_table_and_the_verdict_offline():
 def test_operator_tools_on_top_of_a_sunday_ceiling_break_the_key_but_not_on_saturday():
     from bazaar_agent import rate_budget as rb
 
-    sunday = rb.saturday_plan() + [rb.operator(0.5, rb.SUNDAY_TICK_S)]
-    assert rb.budget_table(rb.SUNDAY_TICK_S, sunday).rps("team") == pytest.approx(79 / 15)
+    sunday = rb.saturday_plan(tick_seconds=15) + [rb.operator(0.5, rb.SUNDAY_TICK_S)]
+    assert rb.budget_table(rb.SUNDAY_TICK_S, sunday).rps("team") == pytest.approx(81 / 15)
     assert not rb.check(sunday, rb.SUNDAY_TICK_S, offsets=rb.PROPOSED_STAGGER).ok
     saturday = rb.saturday_plan() + [rb.operator(1.0, rb.SATURDAY_TICK_S)]
     assert rb.check(saturday, rb.SATURDAY_TICK_S, offsets=rb.PROPOSED_STAGGER).ok
@@ -240,11 +254,11 @@ def test_operator_tools_on_top_of_a_sunday_ceiling_break_the_key_but_not_on_satu
 def test_the_stagger_needs_slow_calls_and_a_shared_broker_bucket_breaks_sunday():
     from bazaar_agent import rate_budget as rb
 
-    plan = rb.saturday_plan()
+    plan = rb.saturday_plan(tick_seconds=15)
     runs = {lat: rb.burst(plan, offsets=rb.PROPOSED_STAGGER, latency_s=lat, retries=2) for lat in (0.15, 0.10, 0.05)}
     assert {lat: (r.refused, r.failed) for lat, r in runs.items()} == {0.15: (0, 0), 0.10: (2, 0), 0.05: (10, 0)}
     shared = rb.check(plan, rb.SUNDAY_TICK_S, broker_shares_team_bucket=True)
-    assert not shared.ok and "5.87 req/s" in shared.problems[0]
+    assert not shared.ok and "6.00 req/s" in shared.problems[0]
     assert rb.flatten().team == 32
 
 
@@ -252,21 +266,25 @@ def test_today_s_team_client_loses_every_refused_call_at_the_edge_unless_the_loo
     """sdk.TeamBazaar (B18) never re-sends a 429: a refused call waits for the next tick. At the ceiling the
     simultaneous wake-up loses 11 of 64 team-key calls; the proposed stagger loses none (1 with three extra
     `dealer buy` processes)."""
-    ceiling = rb.burst(rb.saturday_plan(), retries=rb.TEAM_RESENDS)
+    ceiling = rb.burst(rb.saturday_plan(tick_seconds=15), retries=rb.TEAM_RESENDS)
     assert (ceiling.calls, ceiling.sent, ceiling.refused, ceiling.failed) == (64, 64, 11, 11)
-    assert rb.burst(rb.saturday_plan(), offsets=rb.PROPOSED_STAGGER, retries=rb.TEAM_RESENDS).failed == 0
-    crowded = rb.burst(rb.saturday_plan(dealer_children=3), offsets=rb.PROPOSED_STAGGER, retries=rb.TEAM_RESENDS)
+    assert rb.burst(rb.saturday_plan(tick_seconds=15), offsets=rb.PROPOSED_STAGGER, retries=rb.TEAM_RESENDS).failed == 0
+    crowded = rb.burst(
+        rb.saturday_plan(dealer_children=3, tick_seconds=15), offsets=rb.PROPOSED_STAGGER, retries=rb.TEAM_RESENDS
+    )
     assert (crowded.calls, crowded.failed) == (79, 1)
 
 
 def test_the_sdk_re_sends_a_refused_call_which_spreads_the_edge_but_can_still_lose_it():
     """r2 bite X6, the vendored SDK's client (the broker's; the team's before B18): it re-sends a 429 twice
     (0.25 s × attempt), GETs and POSTs alike. A call lost after its last retry may be the tick's one accept."""
-    ceiling = rb.burst(rb.saturday_plan(), retries=rb.SDK_RETRIES)
+    ceiling = rb.burst(rb.saturday_plan(tick_seconds=15), retries=rb.SDK_RETRIES)
     assert (ceiling.calls, ceiling.sent, ceiling.refused, ceiling.failed) == (64, 71, 7, 0)
-    crowded = rb.burst(rb.saturday_plan(dealer_children=3), retries=rb.SDK_RETRIES)
+    crowded = rb.burst(rb.saturday_plan(dealer_children=3, tick_seconds=15), retries=rb.SDK_RETRIES)
     assert (crowded.calls, crowded.sent, crowded.failed) == (79, 110, 2)
     two = rb.burst(rb.with_copies(rb.steady_plan(), {"taker": 2, "maker": 2}), retries=rb.SDK_RETRIES)
     assert two.failed == 1
-    staggered = rb.burst(rb.saturday_plan(dealer_children=3), offsets=rb.PROPOSED_STAGGER, retries=rb.SDK_RETRIES)
+    staggered = rb.burst(
+        rb.saturday_plan(dealer_children=3, tick_seconds=15), offsets=rb.PROPOSED_STAGGER, retries=rb.SDK_RETRIES
+    )
     assert staggered.failed == 0
