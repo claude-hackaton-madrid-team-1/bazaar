@@ -726,6 +726,8 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
   append the finding, regenerate docs/status, run `bazaar rules` and Ruff, then commit and open a PR.
 - Acceptance: Sunday anchor/times match the schedule; pre-opening tests remain UNVERIFIED; generated docs
   are current; requested checks pass. Evidence and Honest Implementation Report are in the PR body.
+- Architecture follow-up: refresh the JSON status, Sunday events and readiness lists; move the template's
+  eyebrow and clock note into the JSON; regenerate, check rendering/escaping and Ruff, then open a PR.
 
 ### SS1 — Sunday simulator and PR #269 corrections ([spec](SS1-spec.md))
 - Merge current `origin/main`, preserving both memory append histories and regenerating README status.

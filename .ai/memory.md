@@ -1372,3 +1372,7 @@ live in `docs/operations.md`. Historical reports stay in their original sources.
 Ruff disagreed with Black on f-string quote choices; Ruff's formatting passes both tools.
 Review also caught a bare coverage command that could inherit the shared game database: the
 documented command now explicitly selects the local development database. No runtime policy changed.
+### [2026-10-04] gotcha — ST1 architecture Sunday refresh
+The generated architecture still used Saturday's eyebrow and a wrong Sunday hour anchor in its template.
+Move both texts into the status JSON; the single keyless schedule read confirms h16.65 = Sunday 09:00 CEST.
+Keep h14.65/h15 tests explicitly UNVERIFIED at opening. A Sunday-focused axis avoids overlapping event labels.
