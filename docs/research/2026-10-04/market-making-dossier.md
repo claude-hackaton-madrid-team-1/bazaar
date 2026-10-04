@@ -29,7 +29,8 @@ the same pairs the stall crosses, and the server refuses any pair whose quotes d
 recorded the real books (`bench_books`, sessions 7–8), fitted a simulator to them, and built a `lookahead` broker that
 plans over 128 sampled futures; in the calibrated world it scores E[bench_points] 0.64 vs 0.50 (P above the stall
 0.29, P below 0.14), and on a replay of session 8's real book it would have held one cheap seller for a better buyer
-and scored 0.90 in expectation (SIM §4–5; on drawn hidden limits and lives: that seller's real life is unobserved, so this is a model estimate, §4). It ships for session 9 (~12:37, the last bench) via PR #292 +
+and scored 0.90 in expectation (SIM §4–5; on drawn hidden limits and lives: that seller's real life is unobserved, so this is a model estimate; the buyer it waited for did arrive and left
+unmatched, but the replay's stall level is 0.12 below the server's, so the size of the edge is not trustworthy, §4.3–4.4). It ships for session 9 (~12:37, the last bench) via PR #292 +
 `BAZAAR_BENCH_POLICY=lookahead`, if merged in the window. Organic flow on v19 has been **0 trades all weekend** (PROBE
 §2.3, BASE Q4): routers post on older venues and no buyer ever sat on v19.
 
@@ -82,7 +83,7 @@ bid − ask over our matched pairs.
 | 5 | b87 | 1161 (h11) | v19, env `edge` but every pair carries the exact reason | 6 | 0.886 | 0.5 | tie | PROBE §2.2, BBS TL;DR 6 |
 | 6 | – | 1401 (h13) | v19, exact (the h13 hand probe was never sent) | 4 | 0.854 | 0.5 | tie | PROBE §2.2 |
 | 7 | b120 | 1690 (Sun 10:16, "hard", unscheduled) | v19, exact + one-shot match probe (refused) | 7 (quoted 178) | 0.967 | 0.5 | tie; all 18 teams +11.2 ± 0.1 Sunday-round market = 0.5 | BASE Q2, Q5 |
-| 8 | b137 | 1774 (Sun 10:37) | v19, exact | 4 (quoted 99) | 0.895 | 0.5 | tie; 16 teams 0.5, t07 and t08 ~0 | BASE "Session 8" |
+| 8 | b137 | 1774 (Sun 10:37) | v19, exact | 4 (quoted 97) | 0.895 | 0.5 | tie; 16 teams 0.5, t07 and t08 ~0 | BASE "Session 8" |
 | 9 | – | ~2254 (Sun ~12:37, t 17.0, last) | v19, `lookahead` if PR #292 merges, else exact | – | – | – | pending | SIM §5 |
 
 Notes:
@@ -112,33 +113,129 @@ gains < 1 % and is often negative (SIM §2).
 
 ## 4. Session 8 deep-dive (b137, tick 1774, 10:37 local)
 
-*V1 from the reports; the real-data tables from Postgres follow in the next revision.*
+Real data, read-only (`DB` below = Postgres SELECTs by this session on 4 Oct ~11:15: `bench_books`, `decisions`,
+`executions`, `bench_evidence`, `me_snapshots`, `leaderboard_snapshots`, `feed_events`, `tape`; plus `railway logs`
+of the session-8 maker deployment `1cf14708`, 141 lines).
 
-- **Book:** 10 buyers, 10 sellers (20 offers, 59 `bench_books` rows), `expires_tick` 1790 on every offer, so the run
-  is ticks 1774–1789 (SIM §1). Sellers in two bumps: opening asks 27–54 or 71–129; buyers open far below their limit
-  (b137-3 rises 42 → 64 over 4 ticks, b137-7 36 → 55 over 5); only 1 of 16 traders seen ≥ 2 ticks was firm (SIM §1).
-- **Ours (`exact`):** 4 pairs, quoted surplus 99, at ticks 1779, 1783 (×2), 1786; `/me` efficiency 0.895,
-  bench_points 0.5 (BASE "Session 8").
-- **What the stall would do:** the same 4 pairs (exact = stall by construction; every exact-family policy scores 0.500
-  on the b137 replay, SIM §4).
-- **What lookahead would do:** at t1783 exact crosses b137-12 (ask 32) × b137-5 (bid 46) and b137-18 (27) × b137-3
-  (65); lookahead keeps seller 12 for the bidders still to come: b137-2 (bid 68) and b137-6 (bid 69) arrived the next
-  tick, with 8 of 10 buyers seen. That is the +7.6 % efficiency on b137 (SIM §4).
-- **Why the replay says 0.899, and how much to trust it:** the replay draws hidden limits, lives and relax shares
-  (300 draws) that reproduce every recorded quote path, then runs every policy and the stall on the same draws (SIM
-  §4). lookahead: efficiency 0.852 vs stall 0.778, P(above) 0.823, P(below) 0.170 → E 0.899 under the "1.0 above,
-  0.5·E/Es below" rule. The gain rests on seller b137-12 still being there at tick 1784; it was matched the tick it
-  arrived, so its real life is **unobserved** and drawn from the prior (P(life ≥ 2) = 0.875). The prior was fitted on
-  b120 and b137, so the replay is in-sample (REV-LA MED 2). Under a zero-below rule the b137 replay is ≈ 0.83 (REV-LA).
-  bench-search's own planner gets 0.789 on the same book (more cautious; SEARCH).
-- **Oracle:** 0.920 efficiency vs the stall's 0.778 (+14.2 %) on the replay (SIM §4).
-- **Everyone else:** 16 teams' board market moved +0.02…0.04 over ticks 1782 → 1802 (= 0.5 again); t07 10.71 → 9.37
-  and t08 9.06 → 7.73 = bench ~0 (t07 swapped its stall v11 for board v29 at tick 1758 with no broker ready; t08's
-  board v06 matched nothing). The top-3 mean = the stall level; nobody beat the stall (BASE "Session 8").
+### 4.1 The book
+
+`bench_books` run b137: **10 buyers (b137-0…9), 10 sellers (b137-10…19)**, 59 rows, ticks 1775–1788, fee 0 bps / 0 P,
+`expires_tick` 1790 on every offer; the tick-1789 book is empty. Hidden limits are **not** recorded anywhere: the only
+bench feed event is `bench.started`, and `bench_evidence` holds only session, book, match_response and probe_response
+(DB). Quote paths (`string_agg(tick||':'||quote)` per offer):
+
+| Offer | Side | Seen (ticks) | Quote path (P) | End |
+|---|---|---|---|---|
+| 4 | buy | 1778–79 | 42 → 54 | **left unmatched** |
+| 0 | buy | 1779 | 90 | matched by us t1779 |
+| 1 | buy | 1780–82 | 50 → 55 → 60 | left |
+| 3 | buy | 1780–83 | 55 → 58 → 62 → 65 | matched t1783 |
+| 5 | buy | 1782–83 | 46 → 46 (firm) | matched t1783 |
+| 8 | buy | 1782–84 | 30 → 32 → 35 | left |
+| 7 | buy | 1783–88 | 36 → 40 → 43 → 47 → 51 → 55 | to the end |
+| 2 | buy | 1784–85 | 68 → 74 | **left unmatched** |
+| 6 | buy | 1784–86 | 69 → 75 → 81 | matched t1786 |
+| 9 | buy | 1785–88 | 61 → 63 → 65 → 66 | to the end |
+| 14 | sell | 1775–76 | 71 → 65 | left |
+| 10 | sell | 1776–80 | 107 → 104 → 100 → 96 → 93 | left |
+| 13 | sell | 1776–81 | 129 → 123 → 118 → 112 → 106 → 101 | left |
+| 11 | sell | 1777–80 | 115 → 111 → 106 → 101 | left |
+| 15 | sell | 1778–79 | 100 → 90 | **left unmatched** |
+| 17 | sell | 1779 | 54 | matched t1779 |
+| 12 | sell | 1783 | 32 | matched t1783 |
+| 18 | sell | 1783 | 27 | matched t1783 |
+| 16 | sell | 1784–86 | 83 → 78 → 72 | matched t1786 |
+| 19 | sell | 1784–87 | 116 → 111 → 105 → 100 | left |
+
+Asks fall ~4–10 P a tick, bids rise ~2–12 P a tick; asks come in two groups (27–71 and 83–129). For the 8 matched
+offers the last tick seen is cut by our match, not a departure.
+
+### 4.2 Our matches, the stall's, and the server's answer
+
+| Tick | Sell (ask) | Buy (bid) | Price | Quoted surplus | Server |
+|---|---|---|---|---|---|
+| 1779 | 17 (54) | 0 (90) | 72 | 36 | queued, settles 1780 |
+| 1783 | 18 (27) | 3 (65) | 46 | 38 | queued, settles 1784 |
+| 1783 | 12 (32) | 5 (46) | 39 | 14 | queued, settles 1784 |
+| 1786 | 16 (72) | 6 (81) | 76 | 9 | queued, settles 1787 |
+
+Source: `decisions` broker_match ids 4434, 4440, 4441, 4447 (status done), `executions`, `bench_evidence`
+match_response; the maker log reads "bench 36 / 52 / 9 … 0 refused, 0 denied, 0 dropped" (DB, Railway).
+**Quoted surplus is 97**, not the 99 in BASE (the per-tick log lines sum to 97).
+
+**The stall** (kit `starter_broker.py` `bench_plan`: each tick, lowest ask against highest bid while they cross, at the
+midpoint), replayed on the recorded quotes: **the same 4 pairs, ticks and prices, 97 quoted surplus.** So the stall's
+real efficiency on b137 is our 0.895. The same replay on b120 gives the stall our 7 matches and 178 (DB).
+
+`/me` (`me_snapshots`, t01): tick 1706 bench_points 0.5 / efficiency 0.967; tick 1790 (after session 8) 0.5 / **0.895**;
+`mm_points` 0.0 throughout; `market` 8.44, rank 9 (DB).
+
+### 4.3 What `exact` left on the table (real quotes only)
+
+Only two ticks offered any choice among quote-crossing pairs; nothing else crossed all session (DB):
+
+| Tick | What crossed | What exact (= stall) did | Alternative | Real-data evidence | Quoted-surplus bound |
+|---|---|---|---|---|---|
+| 1779 | sellers 17 (54), 15 (90); buyers 0 (90), 4 (54) | 17 × 0 | 17 × 4 **and** 15 × 0 (two pairs, both at 0 quoted surplus) | 4 and 15 both left unmatched after 1779 | 0 quoted; true gain = v4 − c15, sign unknowable (bench-search's posterior puts it below 0: SEARCH) |
+| 1783 | sellers 18 (27), 12 (32); buyers 3 (65), 5 (46), 7 (36), 8 (32) | 18 × 3, 12 × 5 | hold seller 12 one tick for buyer 2 (bid 68 at 1784) | buyer 2 arrived at 1784, bid 68 → 74, **left unmatched at 1785**: no ask ≤ 74 was ever on the book again (16 asked 83/78, 19 asked 116/111). Firm buyer 5 (46) had no other partner either | 12 × 2 = 36 quoted vs 12 × 5 = 14: **+22 quoted**, if seller 12 was still there at 1784 |
+
+That second row is the whole of lookahead's b137 case (SIM §4). Two of its three links are now facts: buyer 2 arrived
+the next tick and left unmatched, and no other seller could have matched it. The third, whether seller 12 would have
+waited one tick, is **unknowable**: we matched 12 the tick it appeared. (In true-limit terms the swap gains v2 − v5;
+buyer 2's bid already sat at 68–74 against buyer 5's firm 46.)
+
+### 4.4 The replay's 0.899, explained and checked
+
+`bench_tournament.py --replay` (`load_real`, `posterior_trader`, `replay_rows`) rejection-samples each recorded
+offer's hidden limit, life and relax rate from the `cal_normal20` priors so that it reproduces the recorded quote path,
+then re-runs the session in the simulator (200–300 draws). Once a policy deviates from what we did, the book it sees is
+simulated, not recorded. **So 0.899 is a mean over sampled limits, not a real-data result.** Re-run by this session's
+subagent (`--replay b120 b137 --draws 200`, the bench-sim worktree as found, with uncommitted edits):
+
+| Replay | Policy | Efficiency | Stall | P(above) | E[points] |
+|---|---|---|---|---|---|
+| b137 | stall / exact | 0.777 | 0.777 | 0 | 0.500 |
+| b137 | lookahead | 0.853 | 0.777 | 0.815 | **0.894** (SIM: 0.899) |
+| b137 | who_oracle | 0.715 | 0.777 | 0.045 | 0.483 |
+| b137 | oracle | 0.921 | 0.777 | 0.99 | 0.995 |
+| b120 | lookahead | 0.925 | 0.937 | 0.015 | 0.501 |
+
+Caveats, in order of weight:
+1. **The level is off.** The replay gives the stall 0.777 on b137, the server 0.895 (b120: 0.937 vs 0.967). The
+   replay puts more hidden gain in the book than the server counts (or the server's denominator is time-aware, SIM
+   §1). The b137 gap (0.118) is larger than lookahead's claimed edge (+0.076), so the *size* of the edge is not
+   trustworthy; its *sign* rests on §4.3's +22 quoted.
+2. **In-sample:** the priors were fitted on b120 and b137 (REV-LA MED 2).
+3. **`who_oracle` below the stall on b137** (knows every drawn limit, never holds, yet 0.715 < 0.777) is unexplained;
+   SEARCH's account is that taking more pairs now can spend a trader a later, better pair needed. Not chased.
+4. bench-search's more cautious planner gets 0.789 on the same book (SEARCH); under a zero-below rule REV-LA puts
+   bench-sim's at ≈ 0.83.
+
+### 4.5 Everyone else
+
+`leaderboard_snapshots` (world real) `market` over ticks 1782 → 1802 (read 08:43Z → 08:46Z), which brackets session 8:
+
+| Teams | Δ market | Reading |
+|---|---|---|
+| t01, t02, t04, t11, t15, t18, t03, t13 | +0.04 | drift, same as neighbouring windows → 0.5 |
+| t05, t14, t17 | +0.02 | 0.5 |
+| t09, t16 | +0.01 | 0.5 |
+| t06 / t10 | 0.00 / −0.02 | 0.5 |
+| **t07** | **−1.34** | ~0 bench: replaced stall v11 with board v29 at tick 1758 (BASE) |
+| **t08** | **−1.33** | ~0 bench: board v06 matched nothing (BASE) |
+| t12 | −0.22 | organic drift (BASE) or a below-stall session (~0.4); not separable |
+
+Scale check: in the session-7 window (1702 → 1722) all 18 teams rose +2.37 to +2.43 when bench points first booked
+for Sunday, ≈ 4.8 board market points per 1.0 bench point; a 0.5 → 0.25 drop in the round mean then predicts ≈ −1.2,
+which fits ~0 for t07 and t08 (≈ 0.1–0.15 of their drop unexplained) (DB). **No team jumped above its drift: nobody
+beat the stall, so the top-3 mean = the stall level.** This assumes every venue gets identical relax and departure
+draws (the rules say "the same synthetic book").
 
 ## 5. Organic market making (the 7.5)
 
-- **v19: 0 trades, 0 traders, 0 pairs all weekend** (`/api/venues`; PROBE §2.3; BASE Q4). Saturday it drew only 15
+- **v19: 0 trades, 0 traders, 0 pairs all weekend** (`/api/venues`; PROBE §2.3; BASE Q4). Re-checked at ~11:15: 15
+  `offer.listed` on v19 ever, all asks; 0 settlements in `feed_events` and in `tape`; `/me` venue trades, volume,
+  pairs, traders and value_created all 0; `mm_points` 0.0 (DB). Saturday it drew only 15
   outside listings (13 asks from t15 at ticks 373–381, 2 from t04 at 550 and 612), all single-card asks expiring in
   6–10 ticks, and no bidder ever came.
 - **Why 0:** other teams' routers post on venues that opened early (v07, v02, v21, v01; v19 opened at tick 262) or on
@@ -190,8 +287,8 @@ Judges' share is 40 %; market making is a scored criterion. No private values be
    lives 2–6 ticks) that reproduces the real quote paths; in it, an all-knowing broker beats the stall by +8–10 %,
    all of it from timing.
 5. **We shipped a lookahead broker** that plans over 128 sampled futures each tick: E[bench points] 0.64 vs 0.50 in
-   the calibrated world, P(above the stall) 0.29, and on the real session-8 book it would have held one cheap seller
-   for a better buyer one tick later.
+   the calibrated world, P(above the stall) 0.29. On the real session-8 book it would have held one cheap seller for
+   a better buyer who arrived one tick later and, under the stall's rule, left unmatched (+22 P of quoted surplus).
 
 **Chart-worthy table**
 
