@@ -839,3 +839,8 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 ### SALES1 — autonomous sales worker and live voice
 
 See [SALES1](SALES1-spec.md). In progress: team outreach ownership, Opus 5.5, OTel, Railway service, live conversations and alliance announcements.
+
+## SC1 — score-first strategy guidance
+- Spec: [SC1-spec.md](SC1-spec.md).
+- Runtime advisers and strategy docs distinguish team surplus, ladder, duels and market points from album inventory estimates.
+- Live strategy shows these scoring mechanisms before album context. Focused backend and frontend checks pass; coordinator review/deployment pending.
