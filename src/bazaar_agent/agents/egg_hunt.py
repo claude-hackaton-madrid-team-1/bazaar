@@ -73,6 +73,7 @@ SOURCE_WEIGHT: dict[str, float] = {"field": 1.0, "hint": 0.8, "lore": 0.5}
 SEEDS: dict[str, tuple[tuple[str, Source, float], ...]] = {
     "abuela": (
         ("la chulapa dorada", "field", 1.0),  # E1 "Sharp ear": 11 teams
+        ("the golden chulapa", "field", 0.9),  # E1 as Pilar's hint words it (English)
         ("sile nole repe me falta", "field", 0.8),  # E4 "Castizo": 4 teams (the card-swap chant)
         ("un chotis en una baldosa", "field", 0.7),  # E4 (danced on one tile)
         ("el cocido con sus tres vuelcos", "field", 0.6),  # E5 her duplicate card: 3 teams (maybe capped)
@@ -239,6 +240,7 @@ class Tried:
     thread: int = 0
     found_tick: int | None = None
     phrase: str = ""  # private: the store only, never a log line
+    event: int = 0  # the `egg.found` feed event of a find (a replayed feed window never counts it twice)
 
 
 class TriedStore(Protocol):
@@ -280,15 +282,15 @@ create table if not exists egg_hunt_tried (
   world text not null default 'real', dealer text not null, phrase_key text not null, phrase_id text not null,
   phrase text not null default '', tick int not null, game_hour int not null, status text not null
   check (status in ('sent','found')), thread_id bigint not null default 0, found_tick int,
-  at timestamptz not null default now(), primary key (world, dealer, phrase_key))
+  event_id bigint not null default 0, at timestamptz not null default now(), primary key (world, dealer, phrase_key))
 """
 UPSERT = (
     "insert into egg_hunt_tried (world, dealer, phrase_key, phrase_id, phrase, tick, game_hour, status, thread_id,"
-    " found_tick) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) on conflict (world, dealer, phrase_key) do update"
-    " set status = excluded.status, found_tick = excluded.found_tick"
+    " found_tick, event_id) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) on conflict (world, dealer, phrase_key)"
+    " do update set status = excluded.status, found_tick = excluded.found_tick, event_id = excluded.event_id"
 )
 SELECT = (
-    "select dealer, phrase_key, phrase_id, tick, game_hour, status, thread_id, found_tick, phrase"
+    "select dealer, phrase_key, phrase_id, tick, game_hour, status, thread_id, found_tick, phrase, event_id"
     " from egg_hunt_tried where world = %s"
 )
 
@@ -313,8 +315,9 @@ class PgStore:
             self.log(f"egg_hunt: tried set not loaded ({type(e).__name__}); starting empty")
             return []
         out = []
-        for dealer, key, pid, tick, hour, status, thread, found, phrase in got:
-            out.append(Tried(dealer, key, pid, int(tick), int(hour), status, int(thread or 0), found, phrase or ""))
+        for dealer, key, pid, tick, hour, status, thread, found, phrase, event in got:
+            row = Tried(dealer, key, pid, int(tick), int(hour), status, int(thread or 0), found, phrase or "")
+            out.append(replace(row, event=int(event or 0)))
         return out
 
     def save(self, rows: Sequence[Tried], tick: int) -> bool:
@@ -323,7 +326,7 @@ class PgStore:
         if self._down_at is not None and tick - self._down_at < RETRY_EVERY:
             return False
         args = [
-            (self.world, r.dealer, r.key, r.pid, r.phrase, r.tick, r.hour, r.status, r.thread, r.found_tick)
+            (self.world, r.dealer, r.key, r.pid, r.phrase, r.tick, r.hour, r.status, r.thread, r.found_tick, r.event)
             for r in rows
         ]
         try:
@@ -372,8 +375,7 @@ class EggHunter:
 
     def __post_init__(self) -> None:
         self.tried: dict[tuple[str, str], Tried] = {}
-        for row in self.store.load():
-            self.tried[(row.dealer, row.key)] = row
+        self._loaded = False  # the store is read on the first tick the hunt is on: off, it never touches Postgres
         self.mined: dict[tuple[str, str], Candidate] = {}
         self._seeds = seed_candidates(self.seeds)
         self.pending: dict[str, _Pending] = {}
@@ -382,6 +384,7 @@ class EggHunter:
         self.dry: dict[tuple[str, str], int] = {}  # dry run: (dealer, key) -> tick (memory only, never stored)
         self._unsaved: list[Tried] = []
         self._seen: set[int] = set()
+        self._read: set[int] = set()  # dealer message ids already checked for a warning
         self._hidden: set[str] | None = None
         self._woven_tick: int | None = None
         self._said: dict[tuple[str, str], int] = {}  # (dealer, reason) -> game hour a skip was last logged
@@ -389,7 +392,12 @@ class EggHunter:
     # ------------------------------------------------------------ switches and budget
 
     def mode(self, rules: Any) -> Mode:
-        return self.mode_fn() if getattr(rules, "egg_hunt_enabled", False) else "off"
+        mode = self.mode_fn() if getattr(rules, "egg_hunt_enabled", False) else "off"
+        if mode != "off" and not self._loaded:
+            self._loaded = True
+            for row in self.store.load():
+                self.tried.setdefault((row.dealer, row.key), row)
+        return mode
 
     def finds(self, dealer: str | None = None) -> int:
         return sum(1 for r in self.tried.values() if r.status == "found" and dealer in (None, r.dealer))
@@ -513,7 +521,8 @@ class EggHunter:
             return
         try:
             self._events(rules, list(events), us, tick, hour)
-            self._threads(rules, list(threads), tick)
+            for t in threads:
+                self.thread(rules, t, tick)
             self._catalog(catalog, set(held), tick, hour)
             self._expire(rules, tick)
         except Exception as e:  # noqa: BLE001 — a reading bug never costs the tick
@@ -530,11 +539,13 @@ class EggHunter:
                 for target, phrase in mine_hints(payload.get("text"), actor):
                     self._mined(target, phrase)
             elif kind in FOUND_EVENTS and payload.get("team") == us:
-                self._found(str(payload.get("persona") or ""), str(kind), eid, payload, tick, hour)
+                at = e.get("tick")
+                self._found(str(payload.get("persona") or ""), str(kind), eid, payload, at, tick, hour)
             elif kind in BACKOFF_EVENTS and payload.get("team") == us:
                 dealer = str(payload.get("persona") or "")
-                until = payload.get("until_tick")
-                end = until if isinstance(until, int) and until > tick else tick + rules.egg_hunt_backoff_ticks
+                end = _until(payload.get("until_tick"), e.get("tick"), tick, rules.egg_hunt_backoff_ticks)
+                if end is None:  # a replayed window after a restart: that cool-off is already over
+                    continue
                 self._back_off(dealer, end, str(kind), tick)
                 if dealer in self.pending:  # punished right after a woven message: stop everywhere
                     self._back_off("*", tick + rules.egg_hunt_backoff_ticks, f"{kind} after a woven message", tick)
@@ -551,43 +562,53 @@ class EggHunter:
             weakest = min(self.mined, key=lambda k: self.mined[k].score)
             self.mined.pop(weakest)
 
-    def _found(self, dealer: str, kind: str, eid: int, payload: Mapping[str, Any], tick: int, hour: int) -> None:
+    def _found(
+        self, dealer: str, kind: str, eid: int, payload: Mapping[str, Any], at: object, tick: int, hour: int
+    ) -> None:
         reward = payload.get("badge") or ",".join(str(x) for x in [*(payload.get("cards") or [])])
         reward = reward or ",".join(str(x) for x in payload.get("packs") or [])
         if kind != "egg.found":  # the reward line of a find: logged, the find itself is counted once
             self.log(f"tick {tick} egg_hunt reward kind={kind} reward={clean(reward, 40) or '-'}")
             return
+        if any(r.event == eid for r in self.tried.values()):  # stored before a restart: counted once
+            return
         p = self.pending.get(dealer)
-        if p is not None:
+        if p is not None and (not isinstance(at, int) or at >= p.tick):
             c = p.weave.candidate
-            row = replace(self.tried[(dealer, c.key)], status="found", found_tick=tick)
+            row = replace(self.tried[(dealer, c.key)], status="found", found_tick=tick, event=eid)
             self.pending.pop(dealer)
         else:  # a find no woven phrase explains (a hand-sent message, an egg on chance): counted all the same
-            row = Tried(dealer, f"@find:{eid}", "-", tick, hour, "found", found_tick=tick)
-            if (dealer, row.key) in self.tried:
-                return
+            row = Tried(dealer, f"@find:{eid}", "-", tick, hour, "found", found_tick=tick, event=eid)
         self.tried[(dealer, row.key)] = row
         self._unsaved.append(row)
         self.log(f"tick {tick} egg_hunt found dealer={dealer} phrase={row.pid} finds={self.finds()}")
 
-    def _threads(self, rules: Any, threads: list[Mapping[str, Any]], tick: int) -> None:
-        for t in threads:
-            dealer = str(t.get("with") or "")
+    def thread(self, rules: Any, t: Mapping[str, Any], tick: int, dealer: str | None = None) -> None:
+        """One dealer thread of ours as the taker read it (no request): a cool-off close, or a warning in the
+        dealer's reply to a woven message, backs off. Never raises."""
+        if self.mode(rules) == "off" or not isinstance(t, Mapping):
+            return
+        try:
+            dealer = dealer or str(t.get("with") or "")
             if t.get("closed_reason") == "cooloff":
-                until = t.get("until_tick")
-                end = until if isinstance(until, int) and until > tick else tick + rules.egg_hunt_backoff_ticks
-                self._back_off(dealer, end, "thread closed for cool-off", tick)
+                end = _until(t.get("until_tick"), None, tick, rules.egg_hunt_backoff_ticks)
+                if end is not None:
+                    self._back_off(dealer, end, "thread closed for cool-off", tick)
             p = self.pending.get(dealer)
             if p is None or t.get("id") != p.weave.thread:
-                continue
+                return
             for m in t.get("messages") or []:
-                if not isinstance(m, Mapping) or m.get("sender") != dealer:
+                if not isinstance(m, Mapping) or m.get("sender") != dealer or m.get("id") in self._read:
                     continue
                 at = m.get("tick")
                 if isinstance(at, int) and at < p.tick:
                     continue
+                if isinstance(m.get("id"), int):
+                    self._read.add(m["id"])
                 if WARNING.search(fold(clean(m.get("text"), 1200))):
                     self._back_off(dealer, tick + rules.egg_hunt_backoff_ticks, "a warning in the reply", tick)
+        except Exception as e:  # noqa: BLE001
+            self.log(f"tick {tick} egg_hunt thread read failed ({type(e).__name__})")
 
     def _catalog(self, catalog: Mapping[str, Any] | None, held: set[str], tick: int, hour: int) -> None:
         if not isinstance(catalog, Mapping):
@@ -627,6 +648,15 @@ class EggHunter:
                 self._unsaved = []
         except Exception as e:  # noqa: BLE001
             self.log(f"tick {tick} egg_hunt store failed ({type(e).__name__}); kept")
+
+
+def _until(until: object, at: object, tick: int, backoff: int) -> int | None:
+    """When a cool-off read now ends: its own `until_tick`, else `backoff` ticks after the event (or now). None when
+    it already ended (a feed window replayed after a restart)."""
+    if isinstance(until, int) and not isinstance(until, bool):
+        return until if until > tick else None
+    start = at if isinstance(at, int) and not isinstance(at, bool) else tick
+    return start + backoff if start + backoff > tick else None
 
 
 def _event_order(e: Mapping[str, Any]) -> int:

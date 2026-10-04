@@ -1671,6 +1671,8 @@ class Taker:
             if thread is None:  # refused: this conversation waits a tick, the others go on
                 continue
             self._keep(thread, run.snap, conv)
+            if self.eggs is not None:  # memory only: a warning or a cool-off after a woven phrase backs off
+                self.eggs.thread(self.rules, thread, run.snap.clock.tick, conv.dealer)
             if held and str(thread.get("status") or "open") == "open":
                 continue
             conv.ticks += 1
