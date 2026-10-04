@@ -1552,3 +1552,10 @@ Initial fixture treated StrategyParams as a dataclass → use Pydantic model_cop
 ### [2026-10-04] build-error — SALES2 integration checks
 
 New task initially reused historical SP1 spec ID → restored SP1 byte-for-byte and used unused SALES2. Focused command referenced nonexistent test_team_desk_cash.py → actual module is test_team_cash.py. Outreach fixture initially read DecisionLog from root tmp directory → use rec.decisions.dir. Independent review identified separate unknown-open namespaces could retry the same buyer through promotion → share the existing sales_open claim across both paths, with regression. Feed offer IDs resolve known real sellers behind board pseudonyms; unknown identity is never described as verified. Final focused163 tests pass; no live sends performed.
+
+### [2026-10-04] build-error — SALES3 wording format gate
+Ruff and Black disagreed on a multiline string concatenation in the new Sales prompt; use an f-string retaining the shared WORDS_SYSTEM, then verify both formatters. An initial I001 import-order finding was fixed by Ruff. Final focused tests:60pass; guards and deterministic terms unchanged.
+
+### [2026-10-04] build-error — Sunday pack policy left two stale test expectations
+
+PR304 CI deterministically failed two assertions pinning runtime max_price_pack to30 after main's authorized policy changed it to430. Reproduced locally:2failed. Tests now verify the loaded ceiling's exact allowed/denied boundary, pack quota and cash floor, while separately proving conservative constructor defaults remain20/off. Runtime/config unchanged. Focused pack/Pilar suite:26passed0.54s. This was stale expected data, not CI flakiness. Pre-commit caught an overlong updated test docstring; wrapped it before committing.

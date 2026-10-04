@@ -156,8 +156,14 @@ def test_taker_restock_respects_expired_tick(tmp_path):
 
 def test_deployed_policy_is_explicit_and_quota_stays_three():
     rules = load_guardrails().rules
-    assert rules.pack_restock_enabled and rules.max_price_pack == 30
-    assert rules.max_packs_per_game_hour == 3 and rules.cash_floor == 5
+    assert rules.pack_restock_enabled
+    assert rules.max_packs_per_game_hour == 3 and rules.cash_floor > 0
+    ctx = Context(cash=rules.max_price_pack + rules.cash_floor + 1, held={}, tick=100, t_hours=1, has_venue=True)
+    at_cap = Action("buy", "sobre_barrio", "pack", rules.max_price_pack)
+    assert check(at_cap, ctx, rules).allowed
+    assert not check(replace(at_cap, price=rules.max_price_pack + 1), ctx, rules).allowed
+    assert not check(at_cap, replace(ctx, packs_last_hour=rules.max_packs_per_game_hour), rules).allowed
+    assert not check(at_cap, replace(ctx, cash=rules.max_price_pack + rules.cash_floor - 1), rules).allowed
 
 
 @pytest.mark.parametrize("pending", [False, True])

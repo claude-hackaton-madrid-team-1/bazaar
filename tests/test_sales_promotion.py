@@ -47,6 +47,9 @@ def test_promotes_other_teams_public_ask_while_all_inventory_is_listed(tmp_path)
     assert team.sent[0] == ("open_thread", "t05", {"trade": "cards"}, "rastro")
     assert words[0][2] == {}  # no structured price, offer, assets or acceptance
     assert "#25018" in words[0][1] and "LAT-03" in words[0][1] and "7 P en v19" in words[0][1]
+    assert "¿Encaja con lo que buscas?" in words[0][1]
+    assert "vigencia y las comisiones" in words[0][1] and "coste total" in words[0][1]
+    assert "no reserva cartas" in words[0][1]
     assert saved[0][-1] == {} and saved[0][4] == 1
     assert not ledger.publication_rows() and ledger.spent_since(0) == 0
     assert ledger.count_in_tick("listing", v.tick) == 0

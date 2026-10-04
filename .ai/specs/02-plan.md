@@ -850,3 +850,7 @@ See [SALES1](SALES1-spec.md). In progress: team outreach ownership, Opus 5.5, OT
 - [Spec](SALES2-spec.md): structured sale outreach first on eligible low-fee alliance venues; shared reservations coordinate with Maker.
 - When inventory is already listed, introduce matching buyers to exact fresh public quotes without making a second financial promise.
 - Fake actor checks, independent review, integrated gate and guarded coordinator rollout.
+
+## SALES3 — truthful market-focused Sales wording
+- [Spec and evidence](SALES3-spec.md): apply the installed influence skill to Sales prompt/fallback and the actual deterministic public-offer contact; preserve all terms, guards and quote authentication.
+- 60 focused tests pass; independent review and coordinator rollout pending.
