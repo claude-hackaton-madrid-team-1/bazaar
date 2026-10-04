@@ -40,7 +40,14 @@ from bazaar_agent.agents.broker import BrokerAgent, BrokerConfig, bench_config_f
 from bazaar_agent.agents.market import Venue, _fee
 from bazaar_agent.agents.runtime import Recorder, Snapshot, TickWindow
 from bazaar_agent.agents.seller import offers_in, open_commitments
-from bazaar_agent.agents.venue_notice import WANTED_POOL, rotated, wanted_cards, wanted_notice
+from bazaar_agent.agents.venue_notice import (
+    EXAMPLE_PRICE,
+    WANTED_POOL,
+    fee_text,
+    rotated,
+    wanted_cards,
+    wanted_notice,
+)
 from bazaar_agent.config import ConfigError, Settings
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.guardrails import VENUE_COST, Action, Guardrails, check, runs_venue
@@ -69,7 +76,6 @@ ANNOUNCE_EVERY_TICKS = 20
 ANNOUNCE_MAX_PER_GAME_HOUR = 24  # also bounds announcements if the organisers shorten ticks again
 WAIT_HINT_MAX_TICKS = 120  # a `wait` refusal naming a later tick is honoured up to this far ahead
 MATRIX_GRACE_TICKS = 3  # a process's first notice waits this long for the team matrix's first read
-EXAMPLE_PRICE = 20  # the notice's fee example: 5 % of it is a whole number, so no rounding hides in it
 
 # Our market: a board (only there can our broker act), no fee (fees never score; what counts is the gains
 # realised on it), and a short neutral name and line.
@@ -111,16 +117,12 @@ def alliance_notice(snap: Snapshot, owners: str) -> Announcement | None:
     return Announcement(text="Alianza " + " / ".join(selected) + suffix) if selected else None
 
 
-def _fee_text(fee_bps: int, fee_per_card: int) -> str:
-    return f"{fee_bps / 100:g} %" + (f" + {fee_per_card} P/card" if fee_per_card else "")
-
-
 def announcement(plan: VenueSpec, venue: str, house: Venue | None = None) -> Announcement:
     """The notice on our venue: its name, id and fee, what the same trade costs on the house market (from the
     live `/api/venues` row, the accepting side pays it: `agents/market.py`), and what our broker does (a
     crossing bid and ask are paired every tick at the midpoint, lowered only to fit a fee: `matcher.match_price`).
     Nothing about our cards, cash or values, and no promise beyond that."""
-    ours = _fee_text(plan.fee_bps, plan.fee_per_card)
+    ours = fee_text(plan.fee_bps, plan.fee_per_card)
     text = f"{plan.name} ({venue}): {ours} fee."
     if house is not None:
         theirs = _fee(house.fee_bps, house.fee_per_card, EXAMPLE_PRICE, 1)
@@ -129,7 +131,7 @@ def announcement(plan: VenueSpec, venue: str, house: Venue | None = None) -> Ann
             where = "El Rastro" if house.id == "rastro" else "the house market"
             text += (
                 f" A {EXAMPLE_PRICE} P sale on {where} costs the side that accepts {theirs} P"
-                f" ({_fee_text(house.fee_bps, house.fee_per_card)}); here it costs {here}."
+                f" ({fee_text(house.fee_bps, house.fee_per_card)}); here it costs {here}."
             )
     where_mid = "at the midpoint" if not (plan.fee_bps or plan.fee_per_card) else "near the midpoint"
     text += f" Asks and bids welcome: our broker pairs crossing bids and asks every tick, {where_mid}."

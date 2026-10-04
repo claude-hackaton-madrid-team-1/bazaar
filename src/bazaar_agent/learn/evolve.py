@@ -7,7 +7,8 @@ fills show where those limits sit. The dealer names a final offer after ~`patien
 - climb so the walk point is reached by the dealer's patience, not after it (step = gap / (patience − 1));
 - walk at the high fills (`WALK_Q`): above that, closing this conversation costs more than the next one.
 - skip the class when too few fills sit at or under what we may pay (`MIN_DEAL_SHARE`): Chato's uncommons
-  fill at 28-32 and `max_price_uncommon` is 26, so a thread there only spends a slot and a quota.
+  fill at 28-32, so under a `max_price_uncommon` of 26 (the code default; GUARDRAILS.md sets 30) a thread there
+  only spends a slot and a quota.
 
 Guardrails (GUARDRAILS.md) bound everything: the walk point never exceeds the rarity's cap, and at use time
 never exceeds the strategy's own top (value minus the minimum surplus, the cap): a learned ladder can only

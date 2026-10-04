@@ -13,7 +13,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime
-from functools import partial
+from functools import cache, partial
 from typing import Annotated, Any
 
 import typer
@@ -403,12 +403,8 @@ def trade_plan(
 
     from bazaar_agent import affinity as af
     from bazaar_agent import trade_desk as td
-    from bazaar_agent.agents.market import venues_from
 
-    me = _payload_file(me_file) if me_file else _team_me()[1]
-    public = None if (catalog_file and venues_file) else public_client(load_settings())
-    catalog = _payload_file(catalog_file) if catalog_file else public.catalog()  # type: ignore[union-attr]
-    venues = venues_from(_payload_file(venues_file) if venues_file else public.venues())  # type: ignore[union-attr]
+    me, catalog, venues = _offline_inputs(me_file, catalog_file, venues_file)
     where = next((v for v in venues if v.id == venue), None)
     if where is None:
         _fail(f"venue {venue!r} is not in /api/venues")
@@ -504,9 +500,9 @@ def _offline_inputs(me_file: str | None, catalog_file: str | None, venues_file: 
     from bazaar_agent.agents.market import venues_from
 
     me = _payload_file(me_file) if me_file else _team_me()[1]
-    public = None if (catalog_file and venues_file) else public_client(load_settings())
-    catalog = _payload_file(catalog_file) if catalog_file else public.catalog()  # type: ignore[union-attr]
-    venues = venues_from(_payload_file(venues_file) if venues_file else public.venues())  # type: ignore[union-attr]
+    public = cache(lambda: public_client(load_settings()))  # built once, and only when a file is missing
+    catalog = _payload_file(catalog_file) if catalog_file else public().catalog()
+    venues = venues_from(_payload_file(venues_file) if venues_file else public().venues())
     return me, catalog, venues
 
 
@@ -560,9 +556,9 @@ def buyers(
     from bazaar_agent import db
 
     me = _payload_file(me_file) if me_file else _team_me()[1]
-    public = None if (catalog_file and board_file) else public_client(load_settings())
-    catalog = _payload_file(catalog_file) if catalog_file else public.catalog()  # type: ignore[union-attr]
-    board = _payload_file(board_file) if board_file else public.leaderboard()  # type: ignore[union-attr]
+    public = cache(lambda: public_client(load_settings()))  # built once, and only when a file is missing
+    catalog = _payload_file(catalog_file) if catalog_file else public().catalog()
+    board = _payload_file(board_file) if board_file else public().leaderboard()
     events = _history(events_file, live)
     stored, note = bd.stored_scan(lambda: db.connect(app="bazaar-buyers", connect_timeout_s=3)) if scan else ([], None)
     if note:
