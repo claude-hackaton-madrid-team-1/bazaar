@@ -68,7 +68,7 @@ class PersonaBook:
             try:
                 write(snaps, tick)
                 self._stored = sig  # only a stored payload counts: a failed write is retried when it is due
-            except Exception as e:  # noqa: BLE001 — storage is for reading later; never a reason to stop trading
+            except Exception as e:  # storage is for reading later; never a reason to stop trading
                 self.log(f"tick {tick} personas: snapshot not stored ({type(e).__name__})")
 
         self._stored_tick, self._attempted = tick, sig

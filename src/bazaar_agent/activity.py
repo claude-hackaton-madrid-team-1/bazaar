@@ -484,7 +484,7 @@ class ActivityWatch:
             self.report = report
             self._emit(report, us)
             return report
-        except Exception as e:  # noqa: BLE001 — the activity check must never cost the tick
+        except Exception as e:  # the activity check must never cost the tick
             self.log(f"tick {tick} activity: check skipped ({type(e).__name__})")
             return self.report
 
@@ -548,7 +548,7 @@ class ActivityWatch:
                 conn.commit()
                 self._conn = conn
             self._result = read_rows(self._conn, tick, read_ticks)
-        except Exception as e:  # noqa: BLE001 — logged, retried next tick
+        except Exception as e:  # logged, retried next tick
             self.log(f"tick {tick} activity: Postgres read failed ({type(e).__name__}); activity unknown")
             broken, self._conn = self._conn, None
             if broken is not None:

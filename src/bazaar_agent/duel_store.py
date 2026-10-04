@@ -114,7 +114,7 @@ class DuelStore:
             conn = self._connect()
             conn.execute(f"set statement_timeout = {STATEMENT_TIMEOUT_MS}")
             conn.commit()
-        except Exception as e:  # noqa: BLE001 - the duel loop must go on without Postgres
+        except Exception as e:  # the duel loop must go on without Postgres
             self._down(tick, "connect", e)
             return None
         self._conn, self._skip_until = conn, None
@@ -133,7 +133,7 @@ class DuelStore:
             return 0
         try:
             return save_duels(conn, duels, None if finished else tick)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             self._down(tick, "write", e)
             return 0
 

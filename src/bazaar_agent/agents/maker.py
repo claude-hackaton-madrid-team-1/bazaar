@@ -657,7 +657,7 @@ class Maker:
             return cached[1]
         try:
             supply = supply_map(snap.catalog, snap.me, snap.events, snap.scan).cards.get(card)
-        except Exception as e:  # noqa: BLE001 — a hint for the record: never costs the bid
+        except Exception as e:  # a hint for the record: never costs the bid
             return f"unknown ({type(e).__name__})"
         found = ", ".join(f"{team}×{n}" for team, n in supply.holders) if supply and supply.holders else "unknown"
         self._holder_notes[card] = (tick, found)

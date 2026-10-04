@@ -121,6 +121,6 @@ class SalesInvite:
         if body is not None and type(body.get("message")) is int and self.sent_words is not None:
             try:
                 self.sent_words(tid, team, v.us, v.tick, body["message"], text, {}, own.id)
-            except Exception as error:  # noqa: BLE001 (words buffer is best effort)
+            except Exception as error:  # words buffer is best effort
                 self.log(f"sales: invite words not buffered ({type(error).__name__})")
         return True

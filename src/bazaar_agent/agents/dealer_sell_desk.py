@@ -213,7 +213,7 @@ def dealer_kind(dealers: Iterable[Any] | None, dealer: str) -> str:
     snapshot does not say. A payload that does not parse never costs the tick."""
     try:
         persona = parse_personas(dealers or []).get(dealer)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return "dealer"
     return persona.kind if persona is not None else "dealer"
 
@@ -626,7 +626,7 @@ class SellDesk:
             tick = int(snap.clock.tick)
             estimate = impact_board.sell_state(me, ref, rarity, price, None, self.rules, tick, asset=int(copy["id"]))
             return {"card": ref, **estimate}
-        except Exception:  # noqa: BLE001 — the estimate only informs Jev; the guard still checks every send
+        except Exception:  # the estimate only informs Jev; the guard still checks every send
             return None
 
     def taker_wants(self, tick: int) -> set[str]:
@@ -666,7 +666,7 @@ class SellDesk:
         clock = snap.clock
         try:  # every copy an open offer of ours gives, thread offers included: none of them is free
             committed = set(locked) | listed_assets(snap)
-        except Exception as e:  # noqa: BLE001 - unreadable: no sell move this tick (fail closed)
+        except Exception as e:  # unreadable: no sell move this tick (fail closed)
             self.log(f"tick {clock.tick} dealer_sell: our open offers unreadable ({type(e).__name__}): holding")
             return
         if self.talk is not None:
@@ -693,11 +693,11 @@ class SellDesk:
         busy |= {d for d, tick in self.ended_at.items() if clock.tick - tick < gap}  # the dealer's turn for others
         try:  # a hostile persona never costs the sell desk its tick: today's ranking then
             personas, fever = self.persona_inputs(snap)
-        except Exception:  # noqa: BLE001
+        except Exception:
             personas, fever = None, None
         try:  # the ladder slots we already scored today, from the snapshot's feed (no request)
             deals: dict[str, int] | None = ladder_deals(snap.events or [], str(getattr(snap, "us", "") or ""))
-        except Exception:  # noqa: BLE001 - unknown: the level order alone
+        except Exception:  # unknown: the level order alone
             deals = None
         found = candidates(
             snap.me,

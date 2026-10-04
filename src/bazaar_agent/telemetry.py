@@ -172,7 +172,7 @@ def never_raise[**P, R](fn: Callable[P, R]) -> Callable[P, R | None]:
     def guarded(*args: P.args, **kwargs: P.kwargs) -> R | None:
         try:
             return fn(*args, **kwargs)
-        except Exception as e:  # noqa: BLE001 - deliberately broad: this is the telemetry firewall
+        except Exception as e:  # deliberately broad: this is the telemetry firewall
             _warn_once(f"hook:{fn.__qualname__}", "tracing: %s failed (%s); trading continues", fn.__qualname__, e)
             return None
 
@@ -188,7 +188,7 @@ class QuietExporter(SpanExporter):
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
         try:
             result = self._inner.export(spans)
-        except Exception:  # noqa: BLE001 - an exporter must not raise into the batch thread
+        except Exception:  # an exporter must not raise into the batch thread
             result = SpanExportResult.FAILURE
         failed = result is SpanExportResult.FAILURE
         if failed and not self._failing:
@@ -207,7 +207,7 @@ class QuietExporter(SpanExporter):
     def force_flush(self, timeout_millis: int = 30_000) -> bool:
         try:
             return self._inner.force_flush(timeout_millis)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return False
 
 
@@ -265,7 +265,7 @@ def init_tracing(service_name: str, config: TracingConfig | None = None, exporte
         install(provider.get_tracer("bazaar_agent"), cfg.secrets, provider, cfg.database_url)
         atexit.register(shutdown_tracing)
         return True
-    except Exception as e:  # noqa: BLE001 - tracing is optional, trading is not
+    except Exception as e:  # tracing is optional, trading is not
         _warn_once("init", "tracing could not start (%s); trading continues without it", e)
         return False
 

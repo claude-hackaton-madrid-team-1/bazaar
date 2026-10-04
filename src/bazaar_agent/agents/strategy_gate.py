@@ -73,7 +73,7 @@ class StrategyGate:
             if self.posture:
                 facts["risk_posture"] = self.posture
             advice = self.ask(name, facts)
-        except Exception as e:  # noqa: BLE001 - a broken state or Jev call keeps the strategy off
+        except Exception as e:  # a broken state or Jev call keeps the strategy off
             facts, advice = {}, JevAdvice("undecided", 0.0, reason=f"gate error: {type(e).__name__}")
         on = advice.verdict == "yes"
         self.answers[name] = GateAnswer(tick, on, advice, state_key)

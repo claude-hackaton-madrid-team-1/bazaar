@@ -133,7 +133,7 @@ class BenchBooks:
             rows = rows_for(self.world, tick, offers, self.venue, fee_bps, fee_per_card)
             if rows:
                 self._submit(rows)
-        except Exception as e:  # noqa: BLE001 — a capture never breaks a tick
+        except Exception as e:  # a capture never breaks a tick
             self._fail("record", e)
 
     def _append(self, tick: int, offers: Sequence[Any], fee_bps: int, fee_per_card: int) -> None:
@@ -171,7 +171,7 @@ class BenchBooks:
             sql, rows = self._queue.get()
             try:
                 self._write(rows, sql)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 self._fail("worker", e)
 
     def _db(self) -> psycopg.Connection | None:
@@ -185,7 +185,7 @@ class BenchBooks:
         try:
             conn = self._connect()
             conn.autocommit = True
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             self._skip = RETRY_EVERY
             self._fail("connect", e)
             return None
@@ -202,7 +202,7 @@ class BenchBooks:
                 conn.execute(f"set local statement_timeout = {STATEMENT_TIMEOUT_MS}")
                 with conn.cursor() as cur:
                     cur.executemany(sql, payload)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             self._fail("write", e)
             self._conn = None
             return

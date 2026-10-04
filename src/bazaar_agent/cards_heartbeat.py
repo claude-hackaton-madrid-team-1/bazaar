@@ -258,7 +258,7 @@ class CardsHeartbeat:
             self._pending += fresh
             self.events = (self.events + fresh)[-KEEP_EVENTS:]
             return fresh
-        except Exception as e:  # noqa: BLE001 — a hint only: the heartbeat never breaks a tick
+        except Exception as e:  # a hint only: the heartbeat never breaks a tick
             self.log(f"tick {tick} cards: skipped ({type(e).__name__})")
             return []
 
@@ -270,7 +270,7 @@ class CardsHeartbeat:
     def boost(self, tick: int) -> dict[str, float]:
         try:
             return {k: v for k, v in boost(self.rules, self.events, tick).items() if k not in self._dropped}
-        except Exception as e:  # noqa: BLE001 — no boost is today's ranking: never break a tick
+        except Exception as e:  # no boost is today's ranking: never break a tick
             self.log(f"tick {tick} cards: no boost ({type(e).__name__})")
             return {}
 
@@ -282,13 +282,13 @@ class CardsHeartbeat:
         try:
             if fresh:
                 self.record([learning_of(ev) for ev in fresh])
-        except Exception as e:  # noqa: BLE001 — memory keeps the events; the file and the log still say them
+        except Exception as e:  # memory keeps the events; the file and the log still say them
             self.log(f"tick {tick} cards: learnings not stored ({type(e).__name__})")
         try:
             if fresh or self._rewrite or not self.path.exists():
                 self._write(tick)
                 self._rewrite = False
-        except Exception as e:  # noqa: BLE001 — the file is a hint: never break the after-sends work
+        except Exception as e:  # the file is a hint: never break the after-sends work
             self.log(f"tick {tick} cards: {EVENTS_FILE} not written ({type(e).__name__})")
 
     def _write(self, tick: int) -> None:
@@ -324,6 +324,6 @@ class CardsHeartbeat:
                 )
         except FileNotFoundError:
             self.baseline, self.events = {}, []
-        except Exception as e:  # noqa: BLE001 — the hint file is optional: whatever it holds, start fresh
+        except Exception as e:  # the hint file is optional: whatever it holds, start fresh
             self.baseline, self.events, self._rewrite = {}, [], True
             self.log(f"cards: {EVENTS_FILE} unreadable ({type(e).__name__}); starting fresh")

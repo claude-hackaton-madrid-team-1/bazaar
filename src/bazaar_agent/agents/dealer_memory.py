@@ -125,7 +125,7 @@ def recall_dealer(
     try:
         lessons, etiquette = _learnings(store, dealer_id, us, tick, use_db)
         return DealerMemory(dealer_id, lessons, _texts(events, dealer_id, us), etiquette=etiquette)
-    except Exception as e:  # noqa: BLE001 — fail open: no memory is today's behaviour
+    except Exception as e:  # fail open: no memory is today's behaviour
         return DealerMemory(dealer_id, status=f"error:{type(e).__name__}")
 
 

@@ -104,7 +104,7 @@ def stored_scan(open_conn: Callable[[], psycopg.Connection]) -> tuple[list[dict[
     try:
         with open_conn() as conn:
             return load_scan(conn), None
-    except Exception as e:  # noqa: BLE001 (any failure means no scan, never a failed command)
+    except Exception as e:  # any failure means no scan, never a failed command
         return [], f"no scan (Postgres unavailable: {safe_error(e)}); holdings from the feed only"
 
 

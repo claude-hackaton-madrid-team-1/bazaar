@@ -366,7 +366,7 @@ def _team_affinity(as_json: bool) -> None:
         with db.connect(app="bazaar-affinity", connect_timeout_s=5) as conn:
             conn.read_only = True
             rows = ta.read(conn)
-    except Exception as e:  # noqa: BLE001 — a read-only report: say why and stop
+    except Exception as e:  # a read-only report: say why and stop
         err_console.print(f"team_affinity unreadable: {db.redact(str(e))}")
         raise typer.Exit(1) from None
     if as_json:
@@ -581,7 +581,7 @@ def buyers(
         try:
             with db.connect_ready("bazaar-buyers") as conn:
                 n = bd.save(conn, ranked, tick)
-        except Exception as e:  # noqa: BLE001 (printed redacted: a connect error can echo the password)
+        except Exception as e:  # printed redacted: a connect error can echo the password
             err_console.print(f"[red]not saved: {escape(bd.safe_error(e))}[/red]")
             raise typer.Exit(1) from None
         err_console.print(f"saved {n} rows for {len(ranked)} cards to Postgres (team_buyer_rank)")
@@ -1167,7 +1167,7 @@ def _forgiving_plan(
 
     try:
         persona = parse_personas(_dealer_personas(settings)).get(dealer)
-    except Exception as e:  # noqa: BLE001 — whatever failed, we cannot tell whether its final binds
+    except Exception as e:  # whatever failed, we cannot tell whether its final binds
         _fail(f"refusing to trade: /api/dealers unreadable ({type(e).__name__}): is {dealer}'s FINAL its limit?")
     if persona is None:
         _fail(f"refusing to trade: {dealer} is not listed in /api/dealers: is its FINAL its limit?")
@@ -1179,7 +1179,7 @@ def _forgiving_plan(
         _fail(f"refusing to trade: our team id is unknown, so our own fills cannot be left out of {dealer}'s range")
     try:
         events = _history(None, live=True)
-    except Exception as e:  # noqa: BLE001 — no fill known: its asks are never taken
+    except Exception as e:  # no fill known: its asks are never taken
         console.print(escape(f"feed unreadable ({type(e).__name__}): no fill known for {dealer}, we only bid"))
         events = []
     shaped = forgiving_plan(plan, persona, item, rarity, tape(events), rules, us)
@@ -1419,7 +1419,7 @@ def duel_run(
         nonlocal days_switch
         try:
             kept = deepcopy(days_switch)
-        except Exception as e:  # noqa: BLE001 - RecursionError on a pathological server value: keep the switch as is
+        except Exception as e:  # RecursionError on a pathological server value: keep the switch as is
             latch_failed(tick, e)
             return
         try:
@@ -1429,7 +1429,7 @@ def duel_run(
                     f"  duel days sign: {days_switch.verdict} (session {days_switch.session}; "
                     f"{escape(days_switch.describe())})"
                 )
-        except Exception as e:  # noqa: BLE001 - bookkeeping: the duels play this tick with the previous verdict
+        except Exception as e:  # bookkeeping: the duels play this tick with the previous verdict
             days_switch.keep_safer(kept)  # per role: a safer verdict found stays, never a half-merged `signed`
             latch_failed(tick, e)
 
@@ -1442,7 +1442,7 @@ def duel_run(
             observe_days(tick, [d for d in client.duels(done=True).get("duels") or [] if isinstance(d, dict)])
         except BazaarError as e:
             console.print(f"  /api/duels?done=true refused {e.code}: the days sign waits")
-        except Exception as e:  # noqa: BLE001 - bookkeeping after the tick's sends: it never breaks the loop
+        except Exception as e:  # bookkeeping after the tick's sends: it never breaks the loop
             console.print(f"  /api/duels?done=true failed ({type(e).__name__}): the days sign waits")
 
     def save_finished(tick: int) -> bool:
@@ -1454,7 +1454,7 @@ def duel_run(
         except BazaarError as e:
             console.print(f"tick {tick}: /api/duels?done=true refused {e.code}")
             return True
-        except Exception as e:  # noqa: BLE001 - bookkeeping after the tick's sends: it never breaks the loop
+        except Exception as e:  # bookkeeping after the tick's sends: it never breaks the loop
             console.print(f"tick {tick}: /api/duels?done=true failed ({type(e).__name__})")
             return False
         append_jsonl(log_path, {"tick": tick, "response": data, "done": True})
@@ -1529,7 +1529,7 @@ def duel_run(
                 offer = d.get("rival_offer")
                 key = f"{did}:{offer.get('id') or offer.get('tick')}" if isinstance(offer, dict) else did
                 injections.tag("duel", key, rival_text(d), c.tick, lambda m: console.print(f"  {escape(m)}"))
-            except Exception as e:  # noqa: BLE001 - calibration only
+            except Exception as e:  # calibration only
                 console.print(f"  duel {did}: injection tagging failed ({type(e).__name__}); the move goes on")
             pick = picks.get(did)
             if did in forced:  # v1: today's accept is the only legal move, played before Jev was asked

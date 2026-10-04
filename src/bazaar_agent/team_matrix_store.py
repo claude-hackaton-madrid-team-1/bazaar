@@ -89,7 +89,7 @@ class TeamMatrixStore:
         try:
             conn = self._connect()
             conn.autocommit = True
-        except Exception as e:  # noqa: BLE001 — memory goes on without Postgres
+        except Exception as e:  # memory goes on without Postgres
             self._fail("connect", e)
             return None
         self._conn = conn
@@ -134,7 +134,7 @@ class TeamMatrixStore:
                 with conn.cursor() as cur:
                     cur.executemany(INSERT_CELL, cells)
                     cur.executemany(INSERT_SUMMARY, summaries)
-        except Exception as e:  # noqa: BLE001 — never into the tick loop
+        except Exception as e:  # never into the tick loop
             self._fail("write", e)
             return 0
         if self._failed:
@@ -154,7 +154,7 @@ class TeamMatrixStore:
                 summaries = conn.execute(LOAD_SUMMARY, (self.world,)).fetchall()
                 cells = conn.execute(LOAD_CELLS, (self.world,)).fetchall()
             return _matrix(summaries, cells)
-        except Exception as e:  # noqa: BLE001 — start without a stored matrix
+        except Exception as e:  # start without a stored matrix
             self._fail("read", e)
             return None
 
@@ -224,7 +224,7 @@ class LatestMatrix:
     def _load(self) -> None:
         try:
             self.matrix = self.store.load() or self.matrix
-        except Exception:  # noqa: BLE001 — advice only: keep the last good matrix
+        except Exception:  # advice only: keep the last good matrix
             pass
         finally:
             self._loading.release()

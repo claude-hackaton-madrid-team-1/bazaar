@@ -341,7 +341,7 @@ class PgStore:
                 got = conn.execute(SELECT, (self.world,)).fetchall()
                 if hasattr(conn, "commit"):
                     conn.commit()
-        except Exception as e:  # noqa: BLE001 — not read: the caller retries, the hunt stays off meanwhile
+        except Exception as e:  # not read: the caller retries, the hunt stays off meanwhile
             self.log(f"egg_hunt: tried set not read ({type(e).__name__}); the hunt stays off, retrying")
             return None
         out = []
@@ -367,7 +367,7 @@ class PgStore:
                     conn.execute(UPSERT, a)
                 if hasattr(conn, "commit"):
                     conn.commit()
-        except Exception as e:  # noqa: BLE001 — kept in memory, retried
+        except Exception as e:  # kept in memory, retried
             self._down_at = tick
             if not self._failed:
                 self.log(f"egg_hunt: Postgres write failed ({type(e).__name__}); kept, retry in {RETRY_EVERY} ticks")
@@ -426,7 +426,7 @@ class BackgroundStore:
         while rows is None:  # until the read succeeds: the hunt stays off meanwhile (`load` answers None)
             try:
                 rows = self.inner.load()
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 self.log(f"egg_hunt: tried set not read ({type(e).__name__}); the hunt stays off, retrying")
             if rows is None:
                 self.sleep(self.retry_s)
@@ -438,7 +438,7 @@ class BackgroundStore:
                 try:
                     if self.inner.save(batch, tries * RETRY_EVERY):
                         break
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     self.log(f"egg_hunt: store write failed ({type(e).__name__}); retrying")
                 tries += 1
                 self.sleep(self.retry_s)
@@ -583,7 +583,7 @@ class EggHunter:
                     self.log(f"tick {tick} egg_hunt would-send dealer={dealer} phrase={cand.id} text={woven!r}")
                 return Weave(dealer, thread, cand, woven, mode == "live")
             self._skip(dealer, "no untried candidate", hour, tick)
-        except Exception as e:  # noqa: BLE001 — the hunt never costs the bid
+        except Exception as e:  # the hunt never costs the bid
             self.log(f"tick {tick} egg_hunt skipped dealer={dealer} reason=error {type(e).__name__}")
         return None
 
@@ -629,7 +629,7 @@ class EggHunter:
                 self.thread(rules, t, tick)
             self._catalog(catalog, set(held), tick, hour)
             self._expire(rules, tick)
-        except Exception as e:  # noqa: BLE001 — a reading bug never costs the tick
+        except Exception as e:  # a reading bug never costs the tick
             self.log(f"tick {tick} egg_hunt observe failed ({type(e).__name__})")
 
     def _events(self, rules: Any, events: list[Mapping[str, Any]], us: str, tick: int, hour: int) -> None:
@@ -716,7 +716,7 @@ class EggHunter:
                     self._read.add(m["id"])
                 if WARNING.search(fold(clean(m.get("text"), 1200))):
                     self._punished(rules, dealer, tick + rules.egg_hunt_backoff_ticks, "a warning in the reply", tick)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             self.log(f"tick {tick} egg_hunt thread read failed ({type(e).__name__})")
 
     def _catalog(self, catalog: Mapping[str, Any] | None, held: set[str], tick: int, hour: int) -> None:
@@ -767,7 +767,7 @@ class EggHunter:
         try:
             if self.store.save(list(self._unsaved), tick):
                 self._unsaved = []
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             self.log(f"tick {tick} egg_hunt store failed ({type(e).__name__}); kept")
 
 

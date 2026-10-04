@@ -145,7 +145,7 @@ class TickBoard[T]:
         except psycopg.errors.UndefinedTable:
             self._rollback()
             box["value"] = self.no_table()
-        except Exception as e:  # noqa: BLE001 — any failure answers the fallback; the type is enough for the log
+        except Exception as e:  # any failure answers the fallback; the type is enough for the log
             self._drop()
             box["error"] = type(e).__name__
 

@@ -286,7 +286,7 @@ class InjectionLog:
                 if a.severity == "attempt":  # weak tags (a venue's JSON format) are kept without a line
                     self._log(f"injection attempt recorded ({a.source} from {a.from_team}): {', '.join(a.tags)}")
             del self.buffer[:-BUFFER_MAX]
-        except Exception as e:  # noqa: BLE001 — a record never costs the tick
+        except Exception as e:  # a record never costs the tick
             self._log(f"injection log: buffer failed ({type(e).__name__})")
         return added
 
@@ -302,7 +302,7 @@ class InjectionLog:
                     self._events.clear()
                 self._events.add(eid)
                 added += self.note(from_feed_event(event, us))
-        except Exception as e:  # noqa: BLE001 — a record never costs the tick
+        except Exception as e:  # a record never costs the tick
             self._log(f"injection log: feed scan failed ({type(e).__name__})")
         return added
 
@@ -310,7 +310,7 @@ class InjectionLog:
         """Buffer the attempts in a thread payload, scanning each message once (never raises)."""
         try:
             return self.note(from_thread(payload, us, source, tick, self._messages))
-        except Exception as e:  # noqa: BLE001 — a record never costs the tick
+        except Exception as e:  # a record never costs the tick
             self._log(f"injection log: thread scan failed ({type(e).__name__})")
             return 0
 
@@ -321,7 +321,7 @@ class InjectionLog:
             for duel in duels:
                 if isinstance(duel, Mapping):
                     added += self.note(from_duel(duel, self._messages))
-        except Exception as e:  # noqa: BLE001 — a record never costs the tick
+        except Exception as e:  # a record never costs the tick
             self._log(f"injection log: duel scan failed ({type(e).__name__})")
         return added
 
@@ -354,7 +354,7 @@ class InjectionLog:
                 conn.execute(f"set local statement_timeout = {STATEMENT_TIMEOUT_MS}")
                 with conn.cursor() as cur:
                     cur.executemany(INSERT, rows)
-        except Exception as e:  # noqa: BLE001 — keep the buffer, retry in RETRY_EVERY ticks
+        except Exception as e:  # keep the buffer, retry in RETRY_EVERY ticks
             self._fail(e)
             if self._conn is not None and not self._conn.closed:
                 self._conn.close()
@@ -384,7 +384,7 @@ class InjectionLog:
             if conn is not None:
                 ensure_schema(conn)
             return conn is not None
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             self._fail(e)
             if self._conn is not None and not self._conn.closed:
                 self._conn.close()  # a login without CREATE must not leak one connection per start

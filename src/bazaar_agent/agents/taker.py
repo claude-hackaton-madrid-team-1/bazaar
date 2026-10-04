@@ -751,7 +751,7 @@ class Taker:
         if self.rules.live_watchdog_enabled and self.live:
             try:
                 self.watchdog.tick(tick, self.rules)  # Postgres only, bounded; it never raises by design
-            except Exception as e:  # noqa: BLE001 — a watchdog bug must never cost the tick
+            except Exception as e:  # a watchdog bug must never cost the tick
                 self.log(f"tick {tick} taker: watchdog failed ({type(e).__name__}); the tick goes on")
             self._activity_check(tick)
 
@@ -770,7 +770,7 @@ class Taker:
             )
             if self.hub is not None:
                 self.hub.activity(report.public() if report is not None else None)
-        except Exception as e:  # noqa: BLE001 — an activity bug must never cost the tick
+        except Exception as e:  # an activity bug must never cost the tick
             self.log(f"tick {tick} taker: activity check skipped ({type(e).__name__}); the tick goes on")
 
     def _card_boost(self, tick: int) -> dict[str, float]:
@@ -779,7 +779,7 @@ class Taker:
             return {}
         try:
             return self.cards.boost(tick)
-        except Exception as e:  # noqa: BLE001 — a hint only
+        except Exception as e:  # a hint only
             self.log(f"tick {tick} taker: card boost skipped ({type(e).__name__})")
             return {}
 
@@ -802,7 +802,7 @@ class Taker:
             log.note_feed(getattr(self.feed, "last_window", ()), us)
             for payload in self.team_desk.payloads():
                 log.note_thread(payload, us, "team_thread", tick)
-        except Exception as e:  # noqa: BLE001 — a record never costs the tick
+        except Exception as e:  # a record never costs the tick
             self.log(f"tick {tick} taker: injection scan failed ({type(e).__name__})")
         log.flush(tick)
 
@@ -820,7 +820,7 @@ class Taker:
         run.listed = frozenset(int(t["id"]) for t in threads if isinstance(t.get("id"), int))
         try:  # no request: the snapshot's /api/dealers. A hostile persona never costs the tick: last tick's stay
             self.personas.observe(snap.dealers, clock.tick)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             self.log(f"tick {clock.tick} taker: personas not read ({type(e).__name__}); last tick's kept")
         if self.eggs is not None:  # memory only, before the hold: finds and back-off signals in what we read
             self.eggs.observe(
@@ -994,7 +994,7 @@ class Taker:
             return call() or []
         except (BazaarError, LedgerUnavailable):
             raise  # a refused read or a ledger outage stops the taker's writes this tick (on_tick reports it)
-        except Exception as e:  # noqa: BLE001 — fail closed for the desk, never for the board or the dealers
+        except Exception as e:  # fail closed for the desk, never for the board or the dealers
             self.log(f"team desk: {what} failed ({type(e).__name__}: {e}); no team-thread move this tick")
             return []
 
@@ -1039,7 +1039,7 @@ class Taker:
             return
         try:
             self.team_desk.ranks = leaderboard_ranks(read())
-        except Exception as e:  # noqa: BLE001 — the order is a preference, never a reason to lose the tick
+        except Exception as e:  # the order is a preference, never a reason to lose the tick
             self.log(f"tick {tick} taker: leaderboard unreadable ({type(e).__name__}); team desk keeps its order")
 
     def _ask_jev(self, run: _TickRun, state: dict[str, Any]) -> JevAdvice:
@@ -1349,7 +1349,7 @@ class Taker:
                 self._taller(run, threads)
         except (BazaarError, LedgerUnavailable):
             raise  # a refused read or a ledger outage stops the taker's writes this tick (on_tick reports it)
-        except Exception as e:  # noqa: BLE001 — fail closed for the Workshop only
+        except Exception as e:  # fail closed for the Workshop only
             self.log(f"tick {run.snap.clock.tick} taker: Workshop skipped ({type(e).__name__})")
 
     def _taller(self, run: _TickRun, threads: list[dict[str, Any]]) -> None:

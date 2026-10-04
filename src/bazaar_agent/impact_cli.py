@@ -163,7 +163,7 @@ def _facts_or_why(read: FactsRead, tick: int | None, team: str | None) -> tuple[
         return None, "no tick in /api/me: pass --tick"
     try:
         facts = read(tick)
-    except Exception as e:  # noqa: BLE001 — the type only: a connect error can echo DATABASE_URL (.ai/memory.md)
+    except Exception as e:  # the type only: a connect error can echo DATABASE_URL (.ai/memory.md)
         return None, type(e).__name__
     if facts is None:
         return None, "no /me snapshot in Postgres names us yet"
