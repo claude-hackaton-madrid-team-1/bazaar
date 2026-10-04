@@ -1358,16 +1358,20 @@ class Taker:
             return
         book_craft(self.ledger, clock.tick, clock.t_hours, t.refs)  # before the send: the shared hourly cap
         reservation = publication.reserve(self.ledger, clock.tick, clock.t_hours, us, {"assets": list(t.asset_ids)}, {})
+        # Reserve in the local desk too before sending; an uncertain result must keep both reservations.
+        gone = {"id": -4, "status": "open", "maker": us, "give": {"assets": [{"id": s.asset_id, "ref": s.ref}
+                for s in t.spares]}}  # fmt: skip
+        view, offers = run.team_view, run.offers
+        offers.append(gone)
+        if view is not None and view.offers is not offers:
+            run.team_view = replace(view, offers=[*view.offers, gone])
         body = self.rec.send(did, clock.tick, "taller", {"assets": t.asset_ids}, lambda: craft(self.team, t.asset_ids))
         if body is None and 400 <= self.rec.last_status < 500 and self.rec.last_status != 408:
             publication.release(self.ledger, reservation, clock.tick, clock.t_hours)
+            offers.remove(gone)
+            run.team_view = view
             self._taller_rest_until = clock.tick + 10
             return
-        gone = {"id": -4, "status": "open", "maker": us, "give": {"assets": [{"id": s.asset_id, "ref": s.ref}
-                for s in t.spares]}}  # fmt: skip
-        run.offers.append(gone)  # later checks this tick (the team desk's posts too) never give a crafted copy
-        if run.team_view is not None and run.team_view.offers is not run.offers:
-            run.team_view = replace(run.team_view, offers=[*run.team_view.offers, gone])
         if body is None:
             self.log(f"tick {clock.tick} taker: Workshop outcome unknown; copies remain reserved")
         else:

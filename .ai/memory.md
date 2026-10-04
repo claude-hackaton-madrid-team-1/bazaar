@@ -1441,6 +1441,20 @@ AT1: legacy restart fixtures used hourlycap0 as 'disable trading', conflicting w
 - Dealer continuation tests previously set a low value before opening; now they lower it after opening so they still exercise mid-conversation revalidation. The new opening fixture initially lost its feed through `parts()`; binding `MarketFeed` made the regression exercise the intended negotiated fills.
 - Depot caught one more pre-opening low-value fixture in `test_ladder_tolerance`: it expected a now-infeasible dealer opening. Reproduced locally (`1 failed, 6 passed`), then lowered the value after opening to preserve the mid-thread tolerance assertion.
 
+### [2026-10-04] build-error — #244 conflicts with the Workshop hardening on main
+The merge conflicted in GUARDRAILS.md, taker, CLI and guardrails because TL1 replaced process-local craft counts
+with shared ledger rows and strengthened busy checks. Keep main's shared accounting, enabled Workshop, fresh
+holdings, settling and event guards; reserve consumed copies before the POST and release them only on definite
+refusal. Refusals still count in the shared hourly cap, as on main.
+
+### [2026-10-04] build-error — #244 full test gate aborted in native psycopg
+The single full pytest run exited 134 at about 33% with `Fatal Python error: Aborted`; the active thread was
+in psycopg transaction entry from `holdings._read_and_store`, while the main thread initialized a test schema.
+This resembles the earlier heavy-load faulthandler incident; the native cause is unconfirmed. The user required
+one full run, so it was not repeated. The focused Workshop tests passed (43); the simulator smoke passed.
+A remaining local `bazaar-pytest` backend was idle in transaction with no live client-port owner; it was
+terminated only after checking its port with lsof. Full-suite completion and coverage remain unverified.
+
 ### [2026-10-04] finding — MM1 market routing and trade visibility
 - Tick1774: Team10's v07 was open with zero fees and an empty direct book. Its LAT04 offer22486 was on Rastro, not v07. Venue owner must never be displayed as the buyer without settlement/offer evidence.
 - `show.agent_decisions` dropped the recipient of our RET07 bid22565 despite the recorded offer naming t02. Explicit destination/context must survive the private Live projection; a posted offer is not a settled sale.
