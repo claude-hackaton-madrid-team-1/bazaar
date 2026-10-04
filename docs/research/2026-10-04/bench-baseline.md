@@ -15,9 +15,10 @@
 - The match probe showed that the game refuses any pair whose posted quotes do not cross. Any edge has to come from
   which crossing pairs we match, and when.
 
-**The next Market Test is not at 11:16.** `/api/schedule` has the next bench at game hour 15.0, which is tick ~1774 at
-**~10:37 local**. Session 7 was an extra, unscheduled test. The one after that is game hour 17.0, tick ~2254,
-**~12:37 local**. The dashboard's countdown is wrong (see Q3).
+**Session 8 was not at 11:16.** `/api/schedule` put it at game hour 15.0, and it started at tick 1774 (10:37:24
+local), as predicted. Session 7 was an extra, unscheduled test. Session 8 tied again (efficiency 0.895, 0.5; see the
+last section). The next one is game hour 17.0, tick ~2254, **~12:37 local**. The dashboard's countdown is wrong (see
+Q3).
 
 ## Q1. What "the baseline" is and how bench points are computed
 
@@ -88,7 +89,7 @@ session) and at tick 1722 (after). The Sunday round's market was backed out for 
 |---|---|---|---|
 | t01, t02, t04, t11, t15, t18 | 0.00 | 11.23 | +11.23 |
 | t03, t08, t10, t13 | ~0 | 11.22–11.25 | +11.21 … +11.25 |
-| t06, t09, t14, t16, t17 | ~−0.3 … −2.2 (rounding) | 9.1–10.9 | +11.27 … +11.36 |
+| t06, t09, t14, t16, t17 | ~−0.3 … −2.2 (artefact: the Saturday round value moved after Saturday's close, likely the organic fix applied retroactively; only Δ is robust) | 9.1–10.9 | +11.27 … +11.36 |
 | t05 | 6.70 | 17.53 | +10.83 |
 | t07 | 11.27 | 21.84 | +10.57 |
 | t12 | 17.44 | 27.62 | +10.18 |
@@ -186,7 +187,7 @@ teams on our venue. It is 0 because nobody trades on v19. The bench half is fine
   - It changed how organic is computed. It explains t05, t07 and t12's smaller deltas above.
   - It did not change the 22.5 / 7.5 split, and it does not affect us: we have no organic to lose.
 
-## Q5. What `exact` and the match probe did in session 7, and what to run in session 8
+## Q5. What `exact` and the match probe did in session 7, and what to run in session 9
 
 **From the `bazaar-maker` logs (UTC).** Every start today logs:
 
@@ -233,22 +234,23 @@ session 7's real data shows it would have.
 
 ## Q6. Recommendations, ranked by expected points
 
-1. **Session 8 (~10:37, tick ~1774–1790): change nothing.** Keep `exact`, which is 0.5 at no risk.
-   - The maker restarted for #284 at 08:27:11Z (deployment 9ce746ec) and has been ticking since, so it is up for the
-     session.
-   - **Do not merge anything touching `src/**` between tick ~1765 and ~1792.** A redeploy during the session leaves
-     v19 unmatched, and 0 for that session is −1.5 final points.
-   - Run `scripts/merge_safe.sh <pr>`, which knows the window (it printed "safe until tick 1763" for this session).
+1. **Default for session 9 (~12:37, tick ~2254–2270): keep `exact` and keep the maker up.** That is 0.5 at no risk.
+   - Session 8 ran on it with the maker up (restarted for #284 at 08:27:11Z, deployment 9ce746ec).
+   - **Do not merge anything touching `src/**` from ~tick 2240 to ~2275.** A redeploy during the session leaves v19
+     unmatched. t07 and t08 showed in session 8 that this scores ~0, which is ~−1.3 to −1.5 final points.
+   - Run `scripts/merge_safe.sh <pr>`, which knows the window (it printed "safe until tick 1763" before session 8).
+     Deploys are fine until ~tick 2240 (~12:33).
 2. **Session 9 (~12:37, tick ~2254): switch to `edge` only if bench-sim shows it beats the stall on b120 and the
    Saturday books.**
    - Setting: `bazaar-maker` env `BAZAAR_BENCH_POLICY=edge`, keeping the default `BAZAAR_BENCH_GUARD_MARGIN` (10),
      which only deviates from exact when the estimated gain is ≥ 10 P.
    - Upside: 0.5 → up to 1.0, which is +1.5 final.
-   - Risk: below the stall (< 0.5) if its limit estimates are wrong.
+   - Risk: below the stall (< 0.5) if its limit estimates are wrong. The worst case, ~0, is now observed (t07 and t08
+     in session 8).
    - Expected value: positive only if bench-sim's win rate over the stall is well above 50 %. Otherwise stay on
      `exact`.
-   - Window: a Railway variable change redeploys the maker. Do it after session 8 ends (tick ≥ 1792, ~10:42) and
-     before ~tick 2240 (~12:33). The organisers can fire an extra unscheduled test at any time (session 7 was one), so
+   - Window: a Railway variable change redeploys the maker. Do it now (session 8 is over) and before ~tick 2240
+     (~12:33). The organisers can fire an extra unscheduled test at any time (session 7 was one), so
      check `/api/schedule` and `/api/clock` right before.
 3. **Do not set `BAZAAR_BENCH_POLICY=probe`**: it is refused 100 % of the time. Leave `BAZAAR_BENCH_MATCH_PROBE` as
    it is; its claim is spent.
