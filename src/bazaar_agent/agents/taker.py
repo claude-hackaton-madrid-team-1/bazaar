@@ -1171,7 +1171,8 @@ class Taker:
             self.rec.decide(
                 run.snap.clock.tick,
                 "addressed_offer",
-                f"skip {o.side} {o.ref} at {o.price} addressed to us by {o.maker} on {o.venue or '?'}: {why}",
+                f"skip {f'{o.side} {o.ref} at {o.price}' if o.price else f'offer {oid}'} addressed to us by "
+                f"{o.maker} on {o.venue or '?'}: {why}",
                 inputs={
                     "offer_id": oid,
                     "venue": o.venue,

@@ -39,9 +39,10 @@ CARD_RARITIES = ("common", "uncommon", "rare", "epic", "legendary")
 @dataclass(frozen=True)
 class LadderSlots:
     """The ladder this round as the probe plans it: each dealer's level (`/api/dealers` `level`) and our scored deals
-    per dealer (`dealer_sell_data.ladder_deals`: buys and sells since the day opened, away from the opening price,
-    from the snapshot's feed window, so a deal older than the window is missed and the level looks emptier: the
-    probe then plans as it did before slots were counted, never less)."""
+    per dealer (`dealer_sell_data.ladder_deals`: buys and sells since the round started or the day opened, away from
+    the opening price, from the snapshot's feed events: the Postgres archive plus the live window. Without the
+    archive only the window (~20 ticks) is seen, an older deal is missed and the level looks emptier: the probe
+    then plans as it did before slots were counted, never less)."""
 
     levels: Mapping[str, int]
     deals: Mapping[str, int]
