@@ -3222,6 +3222,13 @@ def agent_taker(
     accept_bids: bool = typer.Option(
         True, "--accept-bids/--no-accept-bids", help="Sell into guarded standing bids above our value"
     ),
+    addressed: str = typer.Option(
+        "asks",
+        "--addressed",
+        envvar="BAZAAR_ADDRESSED_OFFERS",
+        help="Offers other teams address to us (read from /api/me/offers, no extra request): asks (default: take "
+        "their asks like a board ask), all (their bids too, through the sell guards), off. Any other value: off",
+    ),
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
     evals_every: int | None = typer.Option(None, "--evals-every", min=0, help=EVALS_EVERY_HELP),
@@ -3240,8 +3247,12 @@ def agent_taker(
     """Every tick: accept standing asks below their value to us (fee included) and run dealer threads."""
     from bazaar_agent.agents.dealer import template_words
     from bazaar_agent.agents.runtime import no_jev
-    from bazaar_agent.agents.taker import Taker, TakerConfig
+    from bazaar_agent.agents.taker import Taker, TakerConfig, addressed_mode
     from bazaar_agent.learn.jev_context import offer_situation, with_lessons
+
+    mode, note = addressed_mode(addressed)
+    if note:
+        err_console.print(f"[yellow]taker: {note}[/yellow]")
 
     def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
         rules, log = kw["rules"], kw["log"]
@@ -3259,7 +3270,7 @@ def agent_taker(
             swap_jev=_swap_jev(settings, rules) if jev else no_jev,  # no Jev: the team desk sends no swap
             strategy_jev=_strategy_jev(settings, rules) if jev else None,  # no Jev: no ladder probe (SG1)
             words_fn=llm_cli.words_for(settings, rules, template_words),
-            config=TakerConfig(max_dealer_threads=threads, accept_bids=accept_bids),
+            config=TakerConfig(max_dealer_threads=threads, accept_bids=accept_bids, addressed=mode),
             cards=_cards_heartbeat(kw, settings),
             news=_news_sentinel(kw, settings),
             personas=_persona_book(kw, shared),

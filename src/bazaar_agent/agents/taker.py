@@ -28,7 +28,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import partial
-from typing import Any
+from typing import Any, Literal
 
 from bazaar_agent import buy_targets, deploy_guard, move_impact
 from bazaar_agent.activity import ActivityWatch
@@ -52,6 +52,7 @@ from bazaar_agent.agents.dealer import (
 )
 from bazaar_agent.agents.dealer_memory import DealerMemory, address_for, recall_dealer
 from bazaar_agent.agents.dealer_plan import LIFTED_FINAL_MIN_BIDS, DealerPlan, plan_dealer_buy
+from bazaar_agent.agents.dealer_sell_data import ladder_deals
 from bazaar_agent.agents.desk import (
     Conversation,
     DeskMove,
@@ -66,11 +67,20 @@ from bazaar_agent.agents.egg_hunt import EggHunter, Weave
 from bazaar_agent.agents.injection_tags import INJECTIONS_FILE, InjectionTags, latest_message
 from bazaar_agent.agents.inspector import CardIndex, FlagBook, Inspection, flag_step
 from bazaar_agent.agents.jev_cache import CACHED_REASONS, VerdictCache, state_key
-from bazaar_agent.agents.ladder_probe import opening_asks, our_dealer_deals, plan_probes, probe_state
+from bazaar_agent.agents.ladder_probe import (
+    LadderSlots,
+    dealer_levels,
+    opening_asks,
+    our_dealer_deals,
+    plan_probes,
+    probe_state,
+    unfillable,
+)
 from bazaar_agent.agents.market import (
     BoardOffer,
     OpenOffer,
     Venue,
+    addressed_to_us,
     board_offers,
     our_open_offers,
     parse_offer,
@@ -175,6 +185,21 @@ DESK_RANKS_EVERY = 10  # ticks between leaderboard reads for the team desk's par
 THREAD_GONE_STATUS = 404  # a dealer thread read refused with this may retire the thread (see `_thread_of`)
 
 
+AddressedMode = Literal["off", "asks", "all"]
+ADDRESSED_MODES: tuple[AddressedMode, ...] = ("off", "asks", "all")
+
+
+def addressed_mode(raw: str | None) -> tuple[AddressedMode, str | None]:
+    """`BAZAAR_ADDRESSED_OFFERS` / `--addressed` read safely: (the mode, a warning or None). Unset is the default
+    "asks"; a value we do not know turns the reader off rather than stop the taker at start (a crash loop holds
+    every write)."""
+    value = (raw or "asks").strip().lower()
+    for mode in ADDRESSED_MODES:
+        if value == mode:
+            return mode, None
+    return "off", f"BAZAAR_ADDRESSED_OFFERS={raw!r} is not one of {', '.join(ADDRESSED_MODES)}: addressed offers off"
+
+
 @dataclass(frozen=True)
 class TakerConfig:
     max_dealer_threads: int = 3  # dealer conversations at once (one per dealer; the team cap is 6 threads)
@@ -188,6 +213,11 @@ class TakerConfig:
     # Also accept standing BIDS for cards we hold when the bid, less the fee, beats what selling our least
     # valuable copy costs us by `sell_min_surplus` (`opportunities.score_offer`). All sell/accept guards apply.
     accept_bids: bool = True
+    # Offers another team addressed to us (`GET /api/me/offers`, already read every tick: no extra request; a keyless
+    # board never shows them). "asks": their asks go through the same path as a board ask, and their bids follow
+    # `accept_bids` like any board bid; "all": their bids too even with `accept_bids` off; "off": unread, as before.
+    # Every one gets a decision row: an accept or a skip, or an `addressed_offer` row with the reason it was not one.
+    addressed: AddressedMode = "asks"
     # No new dealer ladder whose bids would still run when a Market Test or a duel session starts (the official
     # schedule, read by the news sentinel): the duels take the team's accept slot and the bench wants the request
     # budget. A thread already open goes on. No price changes.
@@ -221,15 +251,26 @@ def ask_candidates(
     params: StrategyParams,
     ours: set[int],
     own_bids: dict[str, OpenOffer],
+    why: dict[int, str] | None = None,
 ) -> list[AskCandidate]:
     """Standing asks for missing page cards whose total cost (fee included) is below their value to us
-    by at least `min_buy_surplus`. One per card (the cheapest), scarce cards first, then by score."""
+    by at least `min_buy_surplus`. One per card (the cheapest), scarce cards first, then by score. `why`, when
+    given, gets the reason each ask that is not a candidate was dropped (the audit of offers addressed to us)."""
     best: dict[str, AskCandidate] = {}
+    said = why if why is not None else {}
     for o in offers:
         card, venue = m.cards.get(o.ref), venues.get(o.venue)
-        if o.side != "ask" or o.id in ours or card is None or venue is None:
+        if o.side != "ask" or o.id in ours:
+            continue
+        if card is None or venue is None:
+            said[o.id] = f"{o.ref} is not a card we know" if card is None else f"venue {o.venue} is not tradable"
             continue
         if not card.page or card.set_code not in m.released or m.held.get(o.ref, 0) > 0:
+            said[o.id] = (
+                f"we already hold {o.ref}"
+                if m.held.get(o.ref, 0) > 0
+                else f"{o.ref} is not a missing page card of a released set (the taker buys only those)"
+            )
             continue
         case = buy_case(m, card, params)
         fee = venue.fee(o.price)
@@ -237,6 +278,12 @@ def ask_candidates(
         surplus = case.value - total
         bid = own_bids.get(o.ref)
         if surplus < params.min_buy_surplus or (bid is not None and total >= bid.price):
+            said[o.id] = (
+                f"ask {o.price} + fee {fee} = {total} leaves {surplus:.1f} under its worth {case.value:.1f} "
+                f"(min_buy_surplus {params.min_buy_surplus:g})"
+                if surplus < params.min_buy_surplus
+                else f"our own bid for {o.ref} at {bid.price if bid else 0} is cheaper"
+            )
             continue
         score = round(surplus * (1 + params.scarcity_weight * case.urgency), 2)
         reason = f"worth {case.worth}; ask {o.price} + fee {fee} on {o.venue} = {total}; {case.supply_note}"
@@ -244,7 +291,11 @@ def ask_candidates(
             o, card.rarity, fee, total, round(case.value, 1), round(surplus, 1), case.supply.scarce, score, reason, bid
         )
         if o.ref not in best or cand.total < best[o.ref].total:
+            if o.ref in best:
+                said[best[o.ref].offer.id] = f"a cheaper ask for {o.ref} is the candidate this tick"
             best[o.ref] = cand
+        else:
+            said[o.id] = f"a cheaper ask for {o.ref} is the candidate this tick"
     return sorted(best.values(), key=lambda c: (not c.scarce, -c.score, c.offer.id))
 
 
@@ -490,6 +541,10 @@ class _TickRun:
     unread: set[str] = field(default_factory=set)  # cards of dealer threads we could not read this tick
     listed: frozenset[int] = frozenset()  # our open threads as /api/me/threads listed them this tick
     prints: list[Print] | None = None  # the feed history's tape, read once a forgiving dealer's plan needs it
+    addressed: dict[int, BoardOffer] = field(default_factory=dict)  # offers another team addressed to us, this tick
+    slots: LadderSlots | None = None  # the ladder's scored slots this round (feed window), read once per tick
+    ladder_open: frozenset[str] = frozenset()  # dealers whose level has an empty slot (`dealer_ladder_value_tolerance`)
+    why: dict[int, str] = field(default_factory=dict)  # board offer id -> why it is not an accept candidate
 
 
 class Taker:
@@ -611,6 +666,8 @@ class Taker:
         self._playbook_said: set[str] = set()  # playbook instructions the taker already said it obeys
         self._taller_notes: set[tuple[str, str]] = set()  # (triple, verdict) already recorded and not sent
         self._taller_rest_until = 0  # a refused craft: no other try before this tick
+        self._addressed_said: dict[int, str] = {}  # addressed offer id -> the reason last recorded (once each)
+        self._slot_said: dict[tuple[int, str], tuple[int, str]] = {}  # (level, dealer) -> (game hour, reason) said
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
 
@@ -769,6 +826,9 @@ class Taker:
             self.bluff.begin_tick(clock.tick, clock.round, snap.us)
             self.bluff.events(snap.events, snap.us, clock.tick)
         market = build_market(snap.me, snap.catalog, snap.events, snap.dealers, snap.scan)
+        run.slots = LadderSlots(dealer_levels(snap.dealers), ladder_deals(snap.events, snap.us))
+        if self.rules.dealer_ladder_value_tolerance > 0:  # 0: no buy may pass the official value (today's cap)
+            run.ladder_open = frozenset(d for d in run.slots.levels if not run.slots.full(d))
         self._news_market = (clock.tick, market)  # the sentinel's team matrix reads its supply map after the sends
         run.boost = self._card_boost(clock.tick)
         book = build_playbook(
@@ -782,6 +842,9 @@ class Taker:
         proposals += [board_proposal(c) for c in self._target_asks(run, board, board_venues)]
         if self.config.accept_bids:
             proposals += self._bids(run, market, board, board_venues)
+        elif self.config.addressed == "all":  # bids addressed to us only: public bids stay behind `accept_bids`
+            proposals += self._bids(run, market, [o for o in board if o.id in run.addressed], board_venues)
+        self._addressed_audit(run, proposals)
         self.team_desk.matrix = self.news.matrix if self.news is not None else None
         self._refresh_desk_ranks(run.snap.clock.tick)
         view = run.team_view = self._team_view(run, threads)
@@ -835,7 +898,7 @@ class Taker:
             ctx = committed_context(ctx, self._unsettled)
         book = book_values(run.snap.catalog)
         trades = None if run.settled is None else trade_book(kept, run.snap.us, run.settled, book)
-        return replace(ctx, spent_last_hour=ctx.spent_last_hour + run.spent, trades=trades)
+        return replace(ctx, spent_last_hour=ctx.spent_last_hour + run.spent, trades=trades, ladder_open=run.ladder_open)
 
     def _commit(
         self,
@@ -951,10 +1014,32 @@ class Taker:
             {venue_id: partial(self._board_of, run, venue_id) for venue_id in venues}, self.rules.parallel_reads
         )
         offers: list[BoardOffer] = [o for venue_id in venues for o in boards[venue_id]]
+        if self.config.addressed != "off":  # before the makers are named: a pseudonym is resolved like any other
+            offers += self._addressed_in(run, venues, {o.id for o in offers})
         if run.settled is not None:  # the board shows pseudonyms; the feed's `offer.listed` names the team
             makers = listed_makers(run.snap.events)
             offers = [replace(o, maker=makers.get(o.id, o.maker)) for o in offers]
         return offers, venues
+
+    def _addressed_in(self, run: _TickRun, venues: dict[str, Venue], on_board: set[int]) -> list[BoardOffer]:
+        """The plain offers another team addressed to us (`/api/me/offers`, read with the snapshot: no request) on a
+        venue we may trade on, kept in `run.addressed`. One we cannot price or take gets its reason in `run.why`;
+        one the board already showed is not added twice."""
+        out = []
+        for o in addressed_to_us(run.snap.offers, run.snap.us):
+            parsed = parse_offer(o)
+            oid = int(o["id"])
+            if parsed is None:
+                run.addressed[oid] = BoardOffer(oid, str(o.get("venue") or ""), str(o.get("maker")), "ask", "?", 0,
+                                                None, None, o.get("expires_tick"), o.get("created_tick"))  # fmt: skip
+                run.why[oid] = "not a plain one-card offer for cash: skipped, never guessed at"
+                continue
+            run.addressed[oid] = parsed
+            if parsed.venue not in venues:
+                run.why[oid] = f"venue {parsed.venue or '?'} is not one we may trade on (closed, or our own)"
+            elif oid not in on_board:
+                out.append(parsed)
+        return out
 
     def _board(
         self, run: _TickRun, market: Market, offers: list[BoardOffer], venues: dict[str, Venue]
@@ -962,8 +1047,11 @@ class Taker:
         own_bids = {o.ref: o for o in run.mine if o.side == "bid"}
         # a card whose dealer thread we could not read this tick is not bought here: our bid there may still
         # stand (and she may take it), and that thread cannot be walked until we read it again
+        for o in offers:
+            if o.ref in run.unread:
+                run.why[o.id] = f"our dealer thread for {o.ref} could not be read this tick"
         offers = [o for o in offers if o.ref not in run.unread]
-        return ask_candidates(market, offers, venues, run.params, {o.id for o in run.mine}, own_bids)
+        return ask_candidates(market, offers, venues, run.params, {o.id for o in run.mine}, own_bids, run.why)
 
     def _target_asks(self, run: _TickRun, offers: list[BoardOffer], venues: dict[str, Venue]) -> list[AskCandidate]:
         """The cheapest standing ask per buy target whose cost, fee included, is at or under its ceiling (the
@@ -1040,6 +1128,7 @@ class Taker:
                 key=lambda a: (float(a["your_value"]), -int(a["id"])),
             )
             if not copies:
+                run.why[o.id] = f"no free copy of {o.ref} to sell"
                 continue
             copy_id = int(copies[0]["id"])  # the free copy we lose least by
             op = score_offer(
@@ -1056,6 +1145,13 @@ class Taker:
             )
             if op is not None and op.ours >= run.params.sell_min_surplus:
                 out.append(bid_proposal(op, copy_id, o))
+            else:
+                run.why[o.id] = (
+                    f"{o.ref} is not a card we can price on venue {o.venue}"
+                    if op is None
+                    else f"{op.reason}: nets {op.ours:.1f} over what selling costs us "
+                    f"(sell_min_surplus {run.params.sell_min_surplus:g})"
+                )
         return out
 
     def _board_of(self, run: _TickRun, venue_id: str) -> list[BoardOffer]:
@@ -1065,6 +1161,49 @@ class Taker:
         except BazaarError as e:
             self.log(f"tick {run.snap.clock.tick} taker: board {venue_id} refused {e.code}; skipped")
             return []
+
+    def _addressed_audit(self, run: _TickRun, proposals: list[AcceptProposal]) -> None:
+        """Every offer another team addressed to us leaves a decision row. A candidate is marked
+        (`addressed_to_us`): its accept or skip row says what happened, every tick it is tried. Any other gets one
+        `addressed_offer` row with the reason it is not a candidate, again only when that reason changes (memory
+        only: a restart records each open one once more, an audit row and never a send)."""
+        proposed = {p.offer_id for p in proposals if p.source == "board"}
+        for p in proposals:
+            if p.source == "board" and p.offer_id in run.addressed:
+                p.inputs["addressed_to_us"] = True
+        self._addressed_said = {k: v for k, v in self._addressed_said.items() if k in run.addressed}
+        bids_on = self.config.accept_bids or self.config.addressed == "all"
+        for oid, o in sorted(run.addressed.items()):
+            if oid in proposed:
+                continue
+            why = run.why.get(oid) or (
+                "selling into a bid addressed to us is off (BAZAAR_ADDRESSED_OFFERS=asks; `all` turns it on)"
+                if o.side == "bid" and not bids_on
+                else "not an accept candidate this tick"
+            )
+            if self._addressed_said.get(oid) == why:
+                continue
+            self._addressed_said[oid] = why
+            self.rec.decide(
+                run.snap.clock.tick,
+                "addressed_offer",
+                f"skip {f'{o.side} {o.ref} at {o.price}' if o.price else f'offer {oid}'} addressed to us by "
+                f"{o.maker} on {o.venue or '?'}: {why}",
+                inputs={
+                    "offer_id": oid,
+                    "venue": o.venue,
+                    "maker": o.maker,
+                    "side": o.side,
+                    "ref": o.ref,
+                    "price": o.price,
+                    "expires_tick": o.expires_tick,
+                    "addressed_to_us": True,
+                },
+                reason=why,
+                guardrail=why if why.startswith("denied") else "-",
+                chosen=False,
+                status="rejected",
+            )
 
     # ------------------------------------------------------------ (c) sealed packs we hold
 
@@ -1306,8 +1445,9 @@ class Taker:
         (no official value read before), and with `jev_min_budget_s` of the tick left; the official value is
         read once per planned card. Every probe is guarded and checked per send like any dealer buy."""
         gate, clock = self.strategy_gate, run.snap.clock
-        if gate is None:
+        if gate is None:  # no Jev: no probe, and no slot rows either (the taker as it ran before slots)
             return book
+        slots = run.slots or LadderSlots(dealer_levels(run.snap.dealers), ladder_deals(run.snap.events, run.snap.us))
         hour = int(clock.t_hours)
         self._probed = {k for k in self._probed if k[1] == hour}
         busy = {str(t.get("with")) for t in threads} | set(self.convs)
@@ -1315,7 +1455,8 @@ class Taker:
         floor = effective_cash_floor(self.rules, ctx)
         room = max(0, min(ctx.cash - floor, self.rules.max_spend_per_game_hour - ctx.spent_last_hour))
         opens = opening_asks(market, run.snap.events, run.snap.dealers)
-        if not plan_probes(market, opens, self.rules, room, skip):
+        if not plan_probes(market, opens, self.rules, room, skip, slots=slots):
+            self._empty_slots(run, slots, ())
             return book
         if gate.due(LADDER_PROBE, clock.tick) and run.window.left() < needed_budget_s(self.config.jev_min_budget_s):
             return book
@@ -1325,16 +1466,18 @@ class Taker:
             return values.value(ref, clock.tick, held=0) if values is not None else None
 
         def state() -> dict[str, Any]:
-            planned = plan_probes(market, opens, self.rules, room, skip, value_of)
+            planned = plan_probes(market, opens, self.rules, room, skip, value_of, slots)
             deals = our_dealer_deals(run.snap.events, run.snap.us)
-            return probe_state(planned, ctx.cash, floor, room, ctx.spent_last_hour, deals)
+            return probe_state(planned, ctx.cash, floor, room, ctx.spent_last_hour, deals, slots)
 
         if not gate.allows(LADDER_PROBE, clock.tick, state):
+            self._empty_slots(run, slots, (), "the ladder probe gate is not a decided yes (Jev or the LLM decider)")
             return book
-        probes = plan_probes(market, opens, self.rules, room, skip, value_of)  # values cached for the tick
+        probes = plan_probes(market, opens, self.rules, room, skip, value_of, slots)  # values cached for the tick
         # A dealer whose card fails once its official value is read rests for the hour too: no GET
         # /api/me/value every tick on the shared key while the gate stays yes (#212 review).
-        self._probed |= {(p.dealer, hour) for p in plan_probes(market, opens, self.rules, room, skip)}
+        self._probed |= {(p.dealer, hour) for p in plan_probes(market, opens, self.rules, room, skip, slots=slots)}
+        self._empty_slots(run, slots, [p.dealer for p in probes])
         moves = [p.move() for p in probes]
         for p, mv in zip(probes, moves, strict=True):
             self._probed.add((p.dealer, hour))
@@ -1349,6 +1492,30 @@ class Taker:
                 status="approved",
             )
         return replace(book, buys=(*book.buys, *moves))
+
+    def _empty_slots(
+        self, run: _TickRun, slots: LadderSlots, planned: Iterable[str], blocked: str | None = None
+    ) -> None:
+        """One `ladder_slot` row per level with an empty slot this round that no probe this tick fills, saying why
+        (a dealer that sells us no card, not unlocked, no probe inside our caps, the gate), once per game hour or
+        when the reason changes. Memory only, no request; a row, never a send."""
+        clock = run.snap.clock
+        hour = int(clock.t_hours)
+        unlocked = [str(d) for d in run.snap.me.get("unlocked") or [] if isinstance(d, str)]
+        for level, dealer, why in unfillable(run.snap.dealers, slots, unlocked, self.rules, planned, blocked):
+            if self._slot_said.get((level, dealer)) == (hour, why):
+                continue
+            self._slot_said[(level, dealer)] = (hour, why)
+            self.rec.decide(
+                clock.tick,
+                "ladder_slot",
+                f"empty ladder slot: {why}",
+                inputs={"level": level, "dealer": dealer, "scored": slots.scored(level), "why": why},
+                reason=why,
+                guardrail="-",
+                chosen=False,
+                status="rejected",
+            )
 
     def _all_denied(self, run: _TickRun, moves: list[StrategyMove]) -> None:
         """No dealer thread opens and every dealer buy the strategy ranked is denied by the guardrails (cash above
@@ -1576,7 +1743,7 @@ class Taker:
             op = replace(op, plan=replace(op.plan, final_max=dp.final_max, lift_after=LIFTED_FINAL_MIN_BIDS))
         if (forgiving := self._forgiving(run, op.dealer, op.item, op.rarity, op.plan)) != op.plan:  # last: no lift
             op = replace(op, plan=forgiving, reason=f"{op.reason}; {forgiving_note(forgiving)}")
-        verdict = check(Action("buy", op.item, op.rarity, op.plan.start), ctx, self.rules)
+        verdict = check(Action("buy", op.item, op.rarity, op.plan.start, dealer=op.dealer), ctx, self.rules)
         if not verdict.allowed and not verdict.halted and op.item in run.boost and self.cards is not None:
             self.cards.unboost(op.item)  # a refused release never holds this dealer's slot again
         plan = f"{op.plan.start}→{op.plan.max_price} step {op.plan.step}"
@@ -1945,7 +2112,7 @@ class Taker:
         conv, tick, move = dm.conv, run.snap.clock.tick, dm.move
         if move.kind == "bid":
             at_final = dm.final and move.price is not None and move.price == dm.ask  # meeting her final (N14a)
-            action = Action("bid", conv.item, conv.rarity, move.price, final=at_final)
+            action = Action("bid", conv.item, conv.rarity, move.price, final=at_final, dealer=conv.dealer)
         else:  # a walk closes the thread: only the kill switch can refuse it
             action = Action("close_thread", str(conv.thread_id))
         ctx = self._ctx(run, skip_thread=conv.thread_id)
@@ -2243,7 +2410,10 @@ class Taker:
         maker = p.candidate.offer.maker if p.candidate is not None else None  # a dealer is not a counterparty
         ask = p.candidate.offer.price if p.candidate is not None else None  # the maker's share: without the fee
         final = p.final and p.desk is not None  # a dealer's final: its cap is `final_cap_for` (N14a)
-        action = Action("accept_buy", p.ref, p.rarity, p.price, counterparty=maker, volume=ask, final=final)
+        dealer = p.source if p.desk is not None else None  # `dealer_ladder_value_tolerance`: dealer deals only
+        action = Action(
+            "accept_buy", p.ref, p.rarity, p.price, counterparty=maker, volume=ask, final=final, dealer=dealer
+        )
         verdict = check(action, ctx, self.rules)
         if not verdict.allowed:
             self._skip(run, p, str(verdict), "rejected")
@@ -2433,9 +2603,21 @@ class Taker:
                 {"offer": op.offer_id, "assets": [p.asset_id]},
                 lambda: self.team.accept(op.offer_id, assets=[p.asset_id]),
             )
+            if body is None and 400 <= (self.rec.last_status or 0) < 500 and self.rec.last_status != 408:
+                publication.release(self.ledger, reservation, clock.tick, clock.t_hours)
+            if body is None and cost_nothing(self.rec.last_code, self.rec.last_status):
+                # A 4xx cost nothing (the bid expired or was taken mid-tick: `offer_not_open`): the team's accept is
+                # free again, as after a refused buy (`_accept_one`), for the next candidate or a duel.
+                code = self.rec.last_code
+                self._accepts_refused += 1
+                if code in RATE_LIMITED or code in TEAM_WIDE_REFUSALS or self._accepts_refused >= MAX_REFUSED_ACCEPTS:
+                    self._accepts_stop = f"accept refused {code}: no more accepts this tick"
+                try:
+                    self.ledger.release_accept(clock.tick, f"sell:{p.asset_id}")
+                except LedgerUnavailable as e:  # the slot stays taken (fail closed); the tick goes on
+                    self._accepts_stop = f"accept refused {code}; its slot could not be given back ({e})"
+                return False
             if body is None and not self.rec.maybe_landed:
-                if 400 <= self.rec.last_status < 500 and self.rec.last_status != 408:
-                    publication.release(self.ledger, reservation, clock.tick, clock.t_hours)
                 return True  # the reserved slot stays spent, as for a buy
         # This tick's later checks: the copy is promised and the maker's share counts the sale.
         run.offers.append(
