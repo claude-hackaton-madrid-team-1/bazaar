@@ -19,7 +19,7 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from bazaar_agent import intel
 from bazaar_agent.config import REPO_ROOT
@@ -34,6 +34,7 @@ from bazaar_agent.guardrails import (
     action_kind,
     check,
     parse_md_config,
+    team_ids,
 )
 from bazaar_agent.guardrails import validated as validated_model
 from bazaar_agent.move_impact import our_cards
@@ -68,6 +69,12 @@ class StrategyParams(BaseModel):
     # Optional too: 0 keeps today's sell_to_need (a spare below the buyer's need, or of a set nobody chases, is
     # not offered); N offers up to N of them at our value + `sell_min_surplus` (sell_spares, STRATEGY.md).
     sell_spare_slots: int = Field(default=0, ge=0)
+    preferred_sell_venue_owners: str = "none"
+
+    @field_validator("preferred_sell_venue_owners")
+    @classmethod
+    def valid_venue_owners(cls, value: str) -> str:
+        return ",".join(team_ids(value))
 
 
 @dataclass(frozen=True)
