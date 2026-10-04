@@ -95,12 +95,14 @@ Cross-PR: cli.py plan_app + README textual conflicts with #71 #79 #81 W8. Compat
 Gates: pytest 1,278 passed / 35 skipped / 0 failed; ruff, black, mypy ok. Both tournaments re-run in FULL (1,000 W1a seeds via origin/night/w1a-bench-sim 5171749 + 1,000 own books): every number exact (edge = stall 0.793/0.791 mean; points 0.527/0.543; corners +0.134/+0.141, limit +0.255/+0.250, one-pair +0.125/+0.215; edge_limit refusals 10/24). Added fee runs (200 bps, 1000 bps + 5 P, 333 bps + 1 P; 300 books): still 0 infeasible. GUARDRAILS.md not in diff; defaults exact/normal/quote/1 read. 0 blockers, 0 highs, 2 medium, 3 low.
 Verdict check: NO-GO follows (default edge +0.000-0.002 p50; oracle only +0.04-0.09 vs +0.15 bar). No overclaims found.
 1. [medium] src/bazaar_agent/agents/bench_edge.py:123 probing / :223 _candidate: planner treats a pair as non-crossing when ask + ceil_fee(ask) > bid; a server rounding the fee down (sim uses round()) accepts it under the QUOTE rule -> probes.accepted > 0 -> give-up never fires (hard, 200 bps, quote world, 300 books: 979 refused vs 8 at fee 0) AND the decision log records "limit probe ... ACCEPTED", i.e. false evidence that the server honours hidden limits = the morning decision. Only with --bench-cross limit + fee > 0 + server rounding below ceil. Fix: never probe pairs that cross under floor rounding; don't count such acceptances as limit evidence. Repro:
-    from dataclasses import replace; import random, bazaar_agent.evals.bench as b
-    from bazaar_agent.agents.bench_edge import ProbeStats
-    spec = replace(b.PRESETS["hard"], fee_bps=200); rng = random.Random(f"2026:hard:{spec.arrivals}")
-    drawn = [b.draw_traders(spec, rng) for _ in range(300)]; probes = ProbeStats()
-    for t in drawn: b.play(spec, t, b._shared(b.policies()["edge_limit"]("hard"), probes))
-    print(probes)  # sent=988 refused=979 accepted=9
+   ```python
+   from dataclasses import replace; import random, bazaar_agent.evals.bench as b
+   from bazaar_agent.agents.bench_edge import ProbeStats
+   spec = replace(b.PRESETS["hard"], fee_bps=200); rng = random.Random(f"2026:hard:{spec.arrivals}")
+   drawn = [b.draw_traders(spec, rng) for _ in range(300)]; probes = ProbeStats()
+   for t in drawn: b.play(spec, t, b._shared(b.policies()["edge_limit"]("hard"), probes))
+   print(probes)  # sent=988 refused=979 accepted=9
+   ```
 2. [medium, live leak with env] src/bazaar_agent/cli.py:1567 `broker probe`: live_mode(live) honours BAZAAR_LIVE=1, so in a Railway shell (BAZAAR_LIVE=1) `bazaar broker probe b12-3 b12-4 60` SENDS a real match without --live (docstring "Dry run unless --live" is wrong). Still needs allow_venue_open + check(). Dry run also reads real /api/clock with the broker key and writes a decision row to DATABASE_URL if set. Fix: explicit flag only for this one-shot command. Proof test (passes on head):
     from tests.test_broker_bench_edge import _probe
     def test_probe_without_live_flag_sends_when_bazaar_live_is_set(tmp_path, monkeypatch):
