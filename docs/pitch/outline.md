@@ -159,5 +159,5 @@ and any number in an answer must exist in `claims.md`. Add five likely questions
 - **Two laptops:** Omar's is the stage laptop; Marius's mirrors the slide deck and holds the same backup recordings.
 - **Deck tool:** a Slides artifact built from this outline, or Google Slides. The deck is built **after** Saturday's evidence; this file is
   its source of truth.
-- **Open questions for Omar:** (1) the real presentation slot and length; (2) whether to show the explainer site (Marius's
+- **Open questions for Omar:** (1) the real presentation slot and length (answered Sunday 09:18, see above); (2) whether to show the explainer site (Marius's
   `game-explainer-site`, unpushed at 04:30). Answered: Omar switched `duel_policy` to v2 on Saturday at about 10:00 (C35); slide 5 says so.
