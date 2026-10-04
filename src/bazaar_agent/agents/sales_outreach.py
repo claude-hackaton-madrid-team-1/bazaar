@@ -13,6 +13,7 @@ from typing import Any
 
 from bazaar_agent import rivals
 from bazaar_agent.agents import publication
+from bazaar_agent.agents.market import best_venue
 from bazaar_agent.agents.runtime import Recorder
 from bazaar_agent.agents.seller import (
     MAX_PRICE,
@@ -34,8 +35,6 @@ from bazaar_agent.team_matrix_store import MAX_AGE_TICKS
 
 def sale_lead(v: DeskView, rules: Guardrails, matrix: TeamMatrix | None) -> Listing | None:
     """Highest proposed surplus among unpromised, guard-eligible copies with a buyer hint."""
-    if not any(p.id == "rastro" and p.status == "open" and p.owner != v.us for p in v.venues):
-        return None
     needs: dict[tuple[str, str], int] = {}
     if matrix is not None and matrix.us == v.us and 0 <= v.tick - matrix.tick <= MAX_AGE_TICKS:
         needs.update(((c.team, c.card), 0) for c in matrix.cells if c.missing_for_page)
@@ -82,7 +81,16 @@ def sale_lead(v: DeskView, rules: Guardrails, matrix: TeamMatrix | None) -> List
             )
             if price > MAX_PRICE:
                 continue
-            listing = sell_listing(v.me, str(a["id"]), price, "rastro", team)
+            venue = best_venue(v.venues, v.us, price, to=team)
+            if venue is None:
+                continue
+            preferred = [
+                p
+                for p in v.venues
+                if p.owner in v.params.preferred_sell_venue_owners.split(",") and p.fee(price) <= venue.fee(price)
+            ]
+            venue = best_venue(preferred, v.us, price, to=team) or venue
+            listing = sell_listing(v.me, str(a["id"]), price, venue.id, team)
             if check(listing.action(), ctx, rules).allowed:
                 leads.append(listing)
     return max(leads, key=lambda x: (x.price - (x.your_value or 0), x.to or "", x.asset_id or 0), default=None)
@@ -101,25 +109,25 @@ class SalesOutreach:
     ) -> None:
         self.team, self.rules, self.ledger, self.rec = team, rules, ledger, rec
         self.log, self.live, self.words = log, live, words
-        self.sent_words: Callable[[int, str, str, int, int, str, dict[str, Any]], None] | None = None
+        self.sent_words: Callable[[int, str, str, int, int, str, dict[str, Any], str], None] | None = None
 
-    def on_tick(self, v: DeskView, matrix: TeamMatrix | None) -> None:
+    def on_tick(self, v: DeskView, matrix: TeamMatrix | None) -> bool:
         if not self.live or not self.rules.team_threads_enabled or not v.window_open():
-            return
+            return False
         if sale_lead(v, self.rules, matrix) is None:
-            return  # no extra reads when there is no uncommitted sale candidate
+            return False  # no extra reads when there is no uncommitted sale candidate
         with trade_lock(self.ledger):
             if not v.window_open() or kill_switch(self.rules):
-                return
+                return False
             me = self.team.me()
             if me.get("id") != v.us:
-                return
+                return False
             offers = publication.with_pending(
                 self.ledger, me, offers_in(self.team.my_offers()), v.us, v.tick, v.t_hours
             )
             payload = self.team.my_threads()
             threads = [t for t in payload.get("threads", []) if t.get("status", "open") == "open"]
-            dealers = sum(t.get("kind") == "dealer" for t in threads)
+            dealers = sum(t.get("kind") in ("dealer", "persona") for t in threads)
             team_count = len(threads) - dealers
             reserve = max(0, self.rules.team_threads_dealer_reserve - dealers)
             if (
@@ -128,7 +136,7 @@ class SalesOutreach:
                 or len(offers) >= v.max_open_offers
                 or self.ledger.count_in_tick("listing", v.tick) >= v.listing_cap
             ):
-                return
+                return False
             old = v.ctx(None)
             base = context_from(me, v.tick, v.t_hours, self.ledger, self.rules, old.values)
             trades = trade_book(offers, v.us, old.trades.settled, book_values(v.catalog)) if old.trades else None
@@ -136,20 +144,20 @@ class SalesOutreach:
             fresh = replace(v, me=me, offers=offers, threads=threads, ctx=lambda _: ctx)
             listing = sale_lead(fresh, self.rules, matrix)
             if listing is None:
-                return
+                return False
             claim = f"operator_say:sales_open:{getattr(self.ledger, 'world', 'unknown')}:{v.us}:{listing.to}"
             # Durable unresolved opening claim: a lost response must be reconciled, not retried.
             if self.ledger.count_since(claim, -1) > self.ledger.count_since(claim + ":resolved", -1):
-                return
+                return False
             verdict = check(listing.action(), ctx, self.rules)
             if not verdict.allowed or not v.window_open() or kill_switch(self.rules):
-                return
+                return False
             terms = {"give": listing.give, "want": listing.want}
             inputs = {
                 "ref": listing.ref,
                 "side": "sell",
                 "price": listing.price,
-                "venue": "rastro",
+                "venue": listing.venue,
                 "counterparty": listing.to,
                 "terms": terms,
             }
@@ -168,13 +176,13 @@ class SalesOutreach:
             if not v.window_open() or kill_switch(self.rules):
                 self.ledger.record(claim + ":resolved", v.tick, v.t_hours)
                 self.rec.decisions.settle(did, "expired")
-                return
+                return False
             body = self.rec.send(
                 did,
                 v.tick,
                 "open_thread",
-                {"team": listing.to, "venue": "rastro"},
-                lambda: self.team.open_thread(listing.to, topic={"trade": "cards"}, venue="rastro"),
+                {"team": listing.to, "venue": listing.venue},
+                lambda: self.team.open_thread(listing.to, topic={"trade": "cards"}, venue=listing.venue),
             )
             if body is None or type(body.get("id")) is not int:
                 if (
@@ -184,9 +192,10 @@ class SalesOutreach:
                     and self.rec.last_status != 408
                 ):
                     self.ledger.record(claim + ":resolved", v.tick, v.t_hours)
-                return
+                return True
             self.ledger.record(claim + ":resolved", v.tick, v.t_hours)
             self._offer(fresh, listing, body["id"], inputs)
+            return True
 
     def _offer(self, v: DeskView, listing: Listing, tid: int, inputs: dict[str, Any]) -> None:
         if not v.window_open() or self.ledger.count_in_tick(f"operator_say:{tid}", v.tick):
@@ -242,7 +251,7 @@ class SalesOutreach:
         )
         if body is not None and type(body.get("message")) is int and self.sent_words is not None:
             try:
-                self.sent_words(tid, listing.to or "", v.us, v.tick, body["message"], text, terms)
+                self.sent_words(tid, listing.to or "", v.us, v.tick, body["message"], text, terms, listing.venue)
             except Exception as error:
                 self.log(f"sales: sent words not buffered ({type(error).__name__})")
         if body is not None and type(body.get("offer")) is int:

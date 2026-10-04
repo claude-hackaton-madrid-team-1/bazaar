@@ -309,3 +309,15 @@ def test_acknowledged_team_message_persists_and_fills_existing_missing_text(data
             True,
         )
     store.close()
+
+
+def test_acknowledged_sales_message_preserves_actual_partner_venue():
+    from bazaar_agent.learn.threads import _rows
+
+    store = ThreadStore(None)
+    store.sent(44, "t05", "t01", 100, 9001, "Propuesta adjunta.", {}, "v28")
+    threads, messages = _rows(list(store.buffer.values()))
+    assert store.buffer[44].thread["venue"] == "v28"
+    assert threads[0][4] == "v28" and messages[0][0] == 9001
+    store.sent(45, "t05", "t01", 100, 9002, "No guardar", {}, "bad venue")
+    assert 45 not in store.buffer

@@ -13,6 +13,7 @@ from bazaar_agent import telemetry as tm
 from bazaar_agent.agents.market import our_open_offers
 from bazaar_agent.agents.runtime import Snapshot, TickWindow
 from bazaar_agent.agents.sales_outreach import SalesOutreach
+from bazaar_agent.agents.sales_promotion import SalesPromotion
 from bazaar_agent.agents.seller import offers_in, unsettled_accepts
 from bazaar_agent.agents.taker import Taker, _TickRun, board_proposal, swap_proposal
 from bazaar_agent.guardrails import kill_switch
@@ -33,7 +34,9 @@ class Sales(Taker):
         self.outreach = SalesOutreach(
             self.team, self.rules, self.ledger, self.rec, self.log, self.live, words=self.words_fn
         )
+        self.promotion = SalesPromotion(self.team, self.public, self.rules, self.ledger, self.rec, self.live)
         if self.thread_store is not None:
+            self.promotion.sent_words = self.thread_store.sent
             self.team_desk.sent_words = self.thread_store.sent
             self.outreach.sent_words = self.thread_store.sent
 
@@ -69,7 +72,9 @@ class Sales(Taker):
         taken |= {p.cash_thread for p in run.accepted if p.cash_thread is not None}
         self._team_desk("converse", lambda: self.team_desk.converse(run.team_view or view, taken))
         if window.open():
-            self.outreach.on_tick(run.team_view or view, self.team_desk.matrix)
+            offered = self.outreach.on_tick(run.team_view or view, self.team_desk.matrix)
+            if not offered:
+                self.promotion.on_tick(run.team_view or view, self.team_desk.matrix)
         for payload in self.team_desk.payloads():
             self._keep(payload, snap)
         self.log(f"tick {clock.tick} sales: {len(proposals)} candidates, {len(run.accepted)} accepted")

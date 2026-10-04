@@ -1540,3 +1540,15 @@ Sales review reproduced PAUSE during LLM wording followed by send → cached gua
 
 ### [2026-10-04] build-error — SC1 strategy guidance
 Backend rebase conflicted with SALES1 backlog append; retained both task entries. Adviser wording was too restrictive for approved complete-page-only protection; aligned it with current GUARDRAILS. Commit hook caught E501 in the revised shared prompt; wrapped the prompt line, keeping its content.
+
+### [2026-10-04] finding — Sales needs a path for already-listed inventory
+
+Coordinator observed all8 eligible low-value copies already listed, so the guarded free-copy outreach correctly returned no lead. SALES2 preserves those commitments and adds text-only introductions to fresh existing public asks; structured uncommitted sales remain first and now select eligible alliance markets via the shared venue helper. Older own-market asks can fall outside finite feed replay, so promotion reads its public book once rather than claiming absent events mean no supply. No promotion message or inventory holding is itself a scored trade.
+
+### [2026-10-04] build-error — Promotion fixtures and existing commitments
+
+Initial fixture treated StrategyParams as a dataclass → use Pydantic model_copy. Full Sales actor fixture omitted the owned venue from public.venues → include the actual venue snapshot. Independent review reproduced legitimate partner promotion denied because its own existing ask was counted twice → evaluate only that exact ask's copy back into sellable context, retaining every other commitment and all floor/page guards; realistic committed-context regression now passes. Quotes expiring on the current tick are skipped. Coordinator's diagnostic /board route returned404; SDK board uses /api/venues/{id}/offers, no manual route added.
+
+### [2026-10-04] build-error — SALES2 integration checks
+
+New task initially reused historical SP1 spec ID → restored SP1 byte-for-byte and used unused SALES2. Focused command referenced nonexistent test_team_desk_cash.py → actual module is test_team_cash.py. Outreach fixture initially read DecisionLog from root tmp directory → use rec.decisions.dir. Independent review identified separate unknown-open namespaces could retry the same buyer through promotion → share the existing sales_open claim across both paths, with regression. Feed offer IDs resolve known real sellers behind board pseudonyms; unknown identity is never described as verified. Final focused163 tests pass; no live sends performed.

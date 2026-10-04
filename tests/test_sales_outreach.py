@@ -227,3 +227,65 @@ def test_lost_message_response_never_invents_a_quote(tmp_path):
     team.say = unknown
     actor.on_tick(v, matrix)
     assert seen == []
+
+
+def test_structured_sale_uses_eligible_alliance_venue_and_records_actual_route(tmp_path):
+    from bazaar_agent.agents.market import venues_from
+
+    actor, team, ledger, v, matrix = setup(tmp_path)
+    rows = [
+        {"venue": "v19", "owner": "t01", "status": "open", "fee_bps": 0, "fee_per_card": 0},
+        {"venue": "v05", "owner": "t05", "status": "open", "fee_bps": 0, "fee_per_card": 0},
+        {"venue": "v15", "owner": "t15", "status": "open", "fee_bps": 0, "fee_per_card": 0},
+    ]
+    v = replace(
+        v,
+        venues=(*v.venues, *venues_from({"venues": rows})),
+        params=v.params.model_copy(update={"preferred_sell_venue_owners": "t01,t05,t15"}),
+    )
+    from bazaar_agent.learn.threads import ThreadStore
+
+    store = ThreadStore(None)
+    actor.sent_words = store.sent
+    assert actor.on_tick(v, matrix) is True
+    assert store.buffer[42].thread["venue"] == "v15"
+    assert team.sent[0] == ("open_thread", "t05", {"trade": "cards"}, "v15")
+    assert team.sent[1][0] == "say" and team.sent[1][2]["give"]["assets"]
+    assert ledger.count_in_tick("listing", v.tick) == 1
+    import json
+
+    decisions = [json.loads(line) for line in (actor.rec.decisions.dir / "decisions.jsonl").read_text().splitlines()]
+    assert all(row["inputs"]["venue"] == "v15" for row in decisions if "inputs" in row)
+
+
+def test_alliance_preference_never_increases_buyers_acceptance_fee(tmp_path):
+    from bazaar_agent.agents.market import venues_from
+
+    actor, _, _, v, matrix = setup(tmp_path)
+    rows = [
+        {"venue": "v15", "owner": "t15", "status": "open", "fee_bps": 1000, "fee_per_card": 2},
+        {"venue": "v07", "owner": "t10", "status": "open", "fee_bps": 0, "fee_per_card": 0},
+    ]
+    v = replace(
+        v,
+        venues=(*v.venues, *venues_from({"venues": rows})),
+        params=v.params.model_copy(update={"preferred_sell_venue_owners": "t15"}),
+    )
+    lead = sale_lead(v, actor.rules, matrix)
+    assert lead is not None and lead.venue == "v07"
+
+
+def test_no_structured_candidate_returns_false_for_promotion_fallback(tmp_path):
+    actor, team, _, v, matrix = setup(tmp_path)
+    assert actor.on_tick(replace(v, me={**v.me, "assets": []}), matrix) is False
+    assert team.sent == []
+
+
+def test_unknown_structured_open_stops_promotion_in_same_tick(tmp_path):
+    actor, team, _, v, matrix = setup(tmp_path)
+
+    def unknown(*args, **kwargs):
+        raise BazaarError("network", "lost", 0)
+
+    team.open_thread = unknown
+    assert actor.on_tick(v, matrix) is True
