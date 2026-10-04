@@ -61,6 +61,7 @@ from bazaar_agent.agents.desk import (
     plan_conversation,
     topic_for,
 )
+from bazaar_agent.agents.egg_hunt import EggHunter, Weave
 from bazaar_agent.agents.injection_tags import INJECTIONS_FILE, InjectionTags, latest_message
 from bazaar_agent.agents.inspector import CardIndex, FlagBook, Inspection, flag_step
 from bazaar_agent.agents.jev_cache import CACHED_REASONS, VerdictCache, state_key
@@ -523,6 +524,7 @@ class Taker:
         strategy_gate: StrategyGate | None = None,
         strategy_jev: AskFn | None = None,
         injection_log: InjectionLog | None = None,
+        eggs: EggHunter | None = None,
     ) -> None:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.swap_jev = swap_jev  # Jev `team_swap_worth_it`: the team desk sends a swap only on its decided yes
@@ -537,6 +539,7 @@ class Taker:
         self._learned_skips: dict[tuple[str, str], str] = {}  # (dealer, class) -> the reason last recorded
         self.thread_store = thread_store  # our dealer threads as read each tick, written after the sends
         self.injection_log = injection_log  # injection attempts in the words we read, written after the sends
+        self.eggs = eggs  # the easter-egg hunt: a phrase rides on a bid we send anyway (off unless switched on)
         self._inj_us: str | None = None  # our team id from this tick's snapshot (our own words are never recorded)
         self.bluff = bluff  # the words' tactics, learned per dealer (N16); None: today's words only
         self.cards = cards  # the catalog diffed each tick: new releases rank up (no request; logged and stored after)
@@ -650,6 +653,8 @@ class Taker:
             self.news.on_tick(*self._news_view, market=market)  # never raises; at most 4 keyless GETs every 10 ticks
         if self.cards is not None:
             self.cards.flush(tick)
+        if self.eggs is not None:
+            self.eggs.flush(tick)  # the phrases tried and the finds: one bounded write, never raises
         self.feed.archive_pending()
         if self.rules.live_watchdog_enabled and self.live:
             try:
@@ -725,6 +730,17 @@ class Taker:
             self.personas.observe(snap.dealers, clock.tick)
         except Exception as e:  # noqa: BLE001
             self.log(f"tick {clock.tick} taker: personas not read ({type(e).__name__}); last tick's kept")
+        if self.eggs is not None:  # memory only, before the hold: finds and back-off signals in what we read
+            self.eggs.observe(
+                self.rules,
+                tick=clock.tick,
+                hour=int(clock.t_hours),
+                us=snap.us,
+                events=snap.events,
+                threads=threads,
+                catalog=snap.catalog,
+                held=[str(a.get("ref")) for a in snap.me.get("assets") or [] if isinstance(a, dict)],
+            )
         self._restart_wrapup(run, threads)
         self._adopt_orphans(run, threads)
         if self.rules.max_counterparty_share < 1:
@@ -2019,13 +2035,17 @@ class Taker:
             self.rec.decisions.settle(did, "rejected")
             self.log(f"tick {tick} taker: kill switch on: holding bid on thread {conv.thread_id} ({'; '.join(stops)})")
             return
+        egg = self._egg(run, dm, text)
+        said = egg.text if egg is not None and egg.live else text  # dry: the bid goes out as it was
         body = self.rec.send(
             did,
             tick,
             "say",
             {"thread": conv.thread_id, "price": price},
-            lambda: self.team.say(conv.thread_id, text, price=price),
+            lambda: self.team.say(conv.thread_id, said, price=price),
         )
+        if egg is not None and self.eggs is not None and (body is not None or self.rec.maybe_landed):
+            self.eggs.sent(egg, tick, int(run.snap.clock.t_hours), message_id(body) if body is not None else None)
         if body is not None:
             conv.neg.bids.append(price)
             if self.bluff is not None and choice is not None:
@@ -2035,6 +2055,25 @@ class Taker:
         elif not self.rec.maybe_landed:
             return
         self._commit(run, price, conv.item, conv.thread_id)
+
+    def _egg(self, run: _TickRun, dm: DeskMove, text: str) -> Weave | None:
+        """One candidate easter-egg phrase asked about at the end of this bid's words (`agents/egg_hunt.py`), or
+        None. The bid's price and thread are unchanged; no request of its own."""
+        if self.eggs is None or not self.live:
+            return None
+        conv = dm.conv
+        blocker = run.blocks.stops(conv.dealer)
+        return self.eggs.weave(
+            self.rules,
+            tick=run.snap.clock.tick,
+            hour=int(run.snap.clock.t_hours),
+            dealer=conv.dealer,
+            thread=conv.thread_id,
+            text=text,
+            final=dm.final,
+            blocker=blocker.text if blocker is not None else None,
+            never_address=conv.never_address,
+        )
 
     def _after_refused_walk(self, run: _TickRun, conv: Conversation, move: Move) -> None:
         """Our close was refused: read the thread again. Ended (a deal that landed first): wrap it up, its

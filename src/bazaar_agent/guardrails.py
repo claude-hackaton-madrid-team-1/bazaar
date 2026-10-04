@@ -158,7 +158,7 @@ class Guardrails(BaseModel):
     inspect_accepts: bool = True
     bluff_enabled: bool = True
 
-    @field_validator("flag_trusted_dealers", "flag_dealers")
+    @field_validator("flag_trusted_dealers", "flag_dealers", "egg_hunt_dealers")
     @classmethod
     def _dealer_list_parse(cls, value: str, info: ValidationInfo) -> str:
         if value.strip().lower() == "none":
@@ -246,6 +246,14 @@ class Guardrails(BaseModel):
     buy_target_step_ticks: int = Field(default=6, ge=1, le=200)
     buy_target_steps: int = Field(default=5, ge=1, le=50)
     activity_stall_seconds: float = Field(default=0.0, ge=0, le=3600)  # 0: off (GUARDRAILS.md turns it on)
+    # Easter-egg hunt (`agents/egg_hunt.py`): off here and in GUARDRAILS.md; also needs env BAZAAR_EGG_HUNT.
+    egg_hunt_enabled: bool = False
+    egg_hunt_dealers: str = "abuela,picaros,chato,pilar"
+    egg_hunt_max_phrases_per_dealer_per_hour: int = Field(default=3, ge=0, le=20)
+    egg_hunt_dealer_gap_ticks: int = Field(default=8, ge=1, le=2000)
+    egg_hunt_backoff_ticks: int = Field(default=240, ge=1, le=5000)
+    egg_hunt_max_finds_per_dealer: int = Field(default=1, ge=0, le=10)
+    egg_hunt_max_finds: int = Field(default=5, ge=0, le=30)
 
     @field_validator("team_desk_never_trade")
     @classmethod
@@ -433,6 +441,13 @@ ENFORCED_BY: dict[str, str] = {
     "dealer_sell_breaker_reset_ticks": "watchdog.run (a dealer_sell trip's until_tick; the sell guards still refuse)",
     "watchdog_refusal_storm": "watchdog.refusal_storms (WARN only)",
     "activity_stall_seconds": "agents.taker → activity.ActivityWatch (after the tick's sends; logs, never trades)",
+    "egg_hunt_enabled": "agents.egg_hunt.EggHunter.mode (+ env BAZAAR_EGG_HUNT) ← agents.taker._desk_send",
+    "egg_hunt_dealers": "agents.egg_hunt.EggHunter.blocked (the dealers a phrase may ride to)",
+    "egg_hunt_max_phrases_per_dealer_per_hour": "agents.egg_hunt.EggHunter.blocked (live + dry, per game hour)",
+    "egg_hunt_dealer_gap_ticks": "agents.egg_hunt.EggHunter.blocked + _expire (wait for the reply and the find)",
+    "egg_hunt_backoff_ticks": "agents.egg_hunt.EggHunter.observe (cool-off, strike, warning, flag back-off)",
+    "egg_hunt_max_finds_per_dealer": "agents.egg_hunt.EggHunter.blocked (stop per dealer after its find)",
+    "egg_hunt_max_finds": "agents.egg_hunt.EggHunter.blocked (stop everywhere at our cap)",
 }
 
 
