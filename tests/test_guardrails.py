@@ -21,7 +21,7 @@ def test_the_committed_file_parses_and_every_rule_is_enforced_somewhere():
 
 def test_deployment_keeps_every_last_copy_and_the_sal07_incident_fails_closed():
     rules = REAL.rules
-    assert rules.human_approval_above == 60
+    assert rules.human_approval_above == 0
     assert rules.protect_page_exceptions == "none"
     assert all(rules.protects(f"{page}-07", "uncommon", 1) for page in ("LAV", "SAL", "MAL", "RET", "LAT", "CHA"))
     action = gr.Action("accept_sell", "SAL-07", "uncommon", 29, your_value=118.6, asset=438)
@@ -61,7 +61,7 @@ def test_values_are_typed():
 
 
 def test_price_caps_cash_floor_spend_cap_and_album():
-    rules = REAL.rules
+    rules = REAL.rules.model_copy(update={"max_spend_per_game_hour": 250})
     assert gr.check(gr.Action("bid", "LAV-03", "common", 9), ctx(), rules).allowed
     assert "max_price_common" in str(gr.check(gr.Action("bid", "LAV-03", "common", 13), ctx(), rules))
     assert "cash_floor" in str(gr.check(gr.Action("buy", "LAV-09", "rare", 60), ctx(cash=150), rules))
@@ -146,7 +146,7 @@ def test_the_committed_file_runs_our_venue_with_a_5_floor_and_holds_no_reserve_o
     rules = REAL.rules
     assert rules.allow_venue_open is True
     assert (rules.cash_floor, rules.venue_bond_reserve, rules.venue_open_after_game_hours) == (5, 270, 3.0)
-    assert rules.max_spend_per_game_hour == 250
+    assert rules.max_spend_per_game_hour == 0
     opened = ctx(cash=119, has_venue=True)
     assert gr.effective_cash_floor(rules, opened) == 5 and gr.floor_text(rules, opened) == "cash_floor 5"
     buy = gr.Action("buy", "LAV-09", "rare", 92)
@@ -365,3 +365,31 @@ def test_a_second_venue_needs_max_venues_2():
         gr.Guardrails(allow_venue_open=True, venue_open_after_game_hours=0, max_venues=2),
     )
     assert "never open a second one" not in str(two)
+
+
+@pytest.mark.human_approval
+def test_zero_hourly_cap_and_approval_threshold_leave_cash_and_card_protections():
+    rules = gr.Guardrails(
+        cash_floor=5, venue_bond_reserve=0, max_spend_per_game_hour=0, human_approval_above=0, protect_page_sets="SAL"
+    )
+    buying = gr.Action("accept_buy", "SAL-09", "rare", 70)
+    assert gr.check(buying, ctx(cash=100, spent_last_hour=10_000, approvals=None), rules).allowed
+    assert "cash_floor" in str(gr.check(buying, ctx(cash=74, spent_last_hour=10_000), rules))
+    selling = gr.Action("accept_sell", "SAL-09", "rare", 70, your_value=35)
+    assert gr.check(selling, ctx(held={"SAL-09": 2}, approvals=None), rules).allowed
+    assert "protect_page_sets" in str(gr.check(selling, ctx(held={"SAL-09": 1}), rules))
+    low = gr.Action("accept_sell", "SAL-09", "rare", 20, your_value=35)
+    assert "your_value" in str(gr.check(low, ctx(held={"SAL-09": 2}), rules))
+    capped = rules.model_copy(update={"max_spend_per_game_hour": 250})
+    assert "max_spend_per_game_hour" in str(gr.check(buying, ctx(spent_last_hour=232), capped))
+
+
+def test_spend_room_zero_cap_uses_only_available_cash():
+    off = gr.Guardrails(max_spend_per_game_hour=0)
+    assert off.spend_room(65, 10_000) == 65
+    assert off.spend_room(-5, 10_000) == 0
+    on = gr.Guardrails(max_spend_per_game_hour=250)
+    assert on.spend_room(65, 232) == 18
+    assert on.spend_room(65, 251) == 0
+    with pytest.raises(ValueError):
+        gr.Guardrails(max_spend_per_game_hour=-1)

@@ -374,15 +374,16 @@ def ctx_with(approved: approvals.ApprovalBook | None) -> gr.Context:
 
 @pytest.mark.human_approval
 def test_a_dealer_sale_at_or_above_the_threshold_needs_an_approval_in_force(tmp_path, asked):
-    top = REAL.human_approval_above
-    assert top > 0  # GUARDRAILS.md turns it on (60 on Sat 3 Oct)
-    hooks = approval_hooks(tmp_path, RARE, ctx_with(book()))
+    top = AT60.human_approval_above
+    hooks = approval_hooks(tmp_path, RARE, ctx_with(book()), AT60)
     for kind in ("dealer_sell", "accept_sell"):  # our ask, and our accept of her bid
         assert hooks.guard(kind, top) == f"needs human approval: SAL-09 sell {top}"
         assert hooks.guard(kind, top + 9) == f"needs human approval: SAL-09 sell {top + 9}"
         assert hooks.guard(kind, top - 1) is None  # under the threshold no human is asked
     assert [(r["card"], r["side"], r["price"]) for r in asked] == [("SAL-09", "sell", top)]  # asked once
-    approved = approval_hooks(tmp_path, RARE, ctx_with(book(approvals.Approval("SAL-09", "sell", None, top, 200))))
+    approved = approval_hooks(
+        tmp_path, RARE, ctx_with(book(approvals.Approval("SAL-09", "sell", None, top, 200))), AT60
+    )
     for kind in ("dealer_sell", "accept_sell"):
         assert approved.guard(kind, top) is None and approved.guard(kind, top + 9) is None
     for wrong in (
@@ -391,7 +392,7 @@ def test_a_dealer_sale_at_or_above_the_threshold_needs_an_approval_in_force(tmp_
         approvals.Approval("SAL-09", "sell", None, top + 10, 200),  # a minimum above our price
         approvals.Approval("SAL-09", "sell", None, top, 100),  # expired at this tick
     ):
-        hooks = approval_hooks(tmp_path, RARE, ctx_with(book(wrong)))
+        hooks = approval_hooks(tmp_path, RARE, ctx_with(book(wrong)), AT60)
         assert all(hooks.guard(kind, top) is not None for kind in ("dealer_sell", "accept_sell")), wrong
 
 

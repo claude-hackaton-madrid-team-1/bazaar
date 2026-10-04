@@ -448,3 +448,7 @@ id and Python SDK version when we build it). Today we only keep the seam that ma
 3. **Words.** Templates only, or an LLM for message text (Claude Haiku 4.5 is cheap and fast)?
    Templates are enough for Abuela; duels may benefit from an LLM.
 4. **Merge `docs/openapi-spec`** into main so Plan B has its reference on the default branch.
+
+## AT1 autonomous trading policy update, 4 October
+
+Omar explicitly requested removal of the amount-based human approval threshold and the global 250 P/hour spending cap. Zero disables these two rules; positive values remain enforceable. This supersedes earlier mandatory 60 P approval wording for normal automated trades. Cash, pending commitments, sole page-copy protection, value/impact checks and tick/API limits still apply. Details and tests: `AT1-spec.md`.

@@ -196,10 +196,13 @@ laptop checkout, or one Railway service's volume: pause each, `docs/operations.m
   score 28.25 → 23.98 and rank 5 → 12.
 - Never sell below our floor: `sell_min_value_ratio` × the server's `your_value` of that copy
   (`GUARDRAILS.md`).
-- Any card buy or sell priced at `human_approval_above` (60 P) or more needs a human approval first
-  (`uv run bazaar approve`); it fails closed.
-- No override flag, breaker reset, kill-switch bypass or approval shortcut may be used to force a
-  sale past any of the three rules above (the Sat 3 Oct sale used the coordinator's `--allow-page-card` hand flag after a `dealer_sell` breaker reset, per the coordinator's own report; PR #220 is closed).
+- **Autonomous trading update (Omar, Sun 4 Oct):** amount-based human approval and the global 250 P
+  hourly purchase ceiling are disabled: `human_approval_above = 0`, `max_spend_per_game_hour = 0`.
+  This explicitly replaces the earlier 60 P approval requirement. Available cash, pending commitments,
+  cash floor, value/impact checks and tick/API limits still govern every trade. Explicit human buy targets
+  and reviewed operator proposals retain their own meaning; disabling an amount gate does not execute them.
+- No override flag, breaker reset or kill-switch bypass may force a sale past last-copy protection
+  or the sell floor (the Sat 3 Oct sale used the coordinator's `--allow-page-card` hand flag after a `dealer_sell` breaker reset, per the coordinator's own report; PR #220 is closed).
 
 ## Task identity & spec source (the pipeline runs PER TASK)
 **This repo (decided 2026-10-03): the backlog is LOCAL.** Tasks live in `.ai/specs/02-plan.md` with a

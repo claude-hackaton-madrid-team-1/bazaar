@@ -186,8 +186,8 @@ def asked():
 
 
 @pytest.mark.human_approval
-def test_committed_rules_protect_last_copy_and_require_approval_at_60(asked):
-    rules = gr.load_guardrails().rules
+def test_explicit_approval_threshold_still_protects_last_copy_and_requires_approval_at_60(asked):
+    rules = gr.load_guardrails().rules.model_copy(update={"human_approval_above": 60})
     assert rules.protect_page_exceptions == "none"
     assert rules.human_approval_above == 60
     for ref in ("LAT-10", "LAT-09"):

@@ -214,3 +214,11 @@ def test_a_ranking_check_neither_refuses_nor_asks(asked):
     ranking = gr.Context(cash=500, held={}, tick=10, t_hours=1.0, breakers=frozenset(), ranking=True)
     assert gr.check(BUY, ranking, RULES).allowed
     assert asked == []
+
+
+def test_disabled_amount_approval_never_reads_the_approval_service(monkeypatch):
+    def forbidden(*args):
+        raise AssertionError("disabled amount approval must not access its service")
+
+    monkeypatch.setattr(approvals, "board", forbidden)
+    assert gr.check(BUY, ctx(), RULES.model_copy(update={"human_approval_above": 0})).allowed

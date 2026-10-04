@@ -469,3 +469,13 @@ def test_a_focus_keeps_the_plans_swaps_to_those_pages_while_any_can_be_planned()
         assert focused.threads and {t.refs[1][:3] for t in focused.threads} == {page}
     nothing = td.build_plan(me, catalog, EVENTS, amap, PARAMS, Guardrails(), pp, VENUE, focus={"CHA"})
     assert [t.refs for t in nothing.threads] == [t.refs for t in free.threads]  # none for CHA: the full plan
+
+
+def test_disabled_hourly_cap_keeps_pending_cash_reserved():
+    me, catalog, amap = rich_world()
+    rules = Guardrails(max_spend_per_game_hour=0)
+    pending = {"id": 70, "maker": "t01", "status": "open", "give": {"cash": 100}, "want": {"cards": ["MAL-01"]}}
+    plan = td.build_plan(me, catalog, EVENTS, amap, PARAMS, rules, td.PlanParams(), VENUE, [pending], spent=10_000)
+    assert plan.cash_room == me["cash"] - 100 - rules.cash_floor == 50
+    assert plan.checks == ()
+    assert sum(td._cash_out(t) for t in (*plan.listings, *plan.threads)) <= 50

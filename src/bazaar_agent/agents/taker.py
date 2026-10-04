@@ -1419,7 +1419,7 @@ class Taker:
         moves = self._unblocked(run, moves, busy)
         moves = self._persona_shaped(run, moves, busy)
         floor = effective_cash_floor(self.rules, ctx)  # the floor check() applies, bond reserve included (#71)
-        cash_room = min(ctx.cash - floor, self.rules.max_spend_per_game_hour - ctx.spent_last_hour)
+        cash_room = self.rules.spend_room(ctx.cash - floor, ctx.spent_last_hour)
         moves = self._evolved(run, moves, busy, max(0, cash_room))  # primas, never thread slots (`room` above)
         moves = self._before_events(run, moves, busy)
         # The card of every DEALER thread of ours is busy, this process's or another's (security #158 r2 P3-B):
@@ -1453,7 +1453,7 @@ class Taker:
         busy = {str(t.get("with")) for t in threads} | set(self.convs)
         skip = busy | {d for d, _ in self._probed}
         floor = effective_cash_floor(self.rules, ctx)
-        room = max(0, min(ctx.cash - floor, self.rules.max_spend_per_game_hour - ctx.spent_last_hour))
+        room = self.rules.spend_room(ctx.cash - floor, ctx.spent_last_hour)
         opens = opening_asks(market, run.snap.events, run.snap.dealers)
         if not plan_probes(market, opens, self.rules, room, skip, slots=slots):
             self._empty_slots(run, slots, ())
@@ -2137,8 +2137,8 @@ class Taker:
         if not verdict.allowed and move.kind == "bid" and not action.final:
             # UB1: only this rung is unaffordable: bid the most we may still commit instead of walking the thread
             # (never on a meet of her final: a lower bid there is no answer to it).
-            floor, cap = effective_cash_floor(self.rules, ctx), self.rules.max_spend_per_game_hour
-            room = min(ctx.cash - floor, cap - ctx.spent_last_hour)
+            floor = effective_cash_floor(self.rules, ctx)
+            room = self.rules.spend_room(ctx.cash - floor, ctx.spent_last_hour)
             if (lower := affordable_rung(verdict.violations, conv.neg.bids, room)) is not None:
                 move = replace(move, price=lower, reason=f"{move.reason}; rung {move.price} above our cash room {room}")
                 action = replace(action, price=lower)

@@ -15,8 +15,9 @@ Hard rules apply before every action; historical results below do not authorize 
 - `max_score_loss_per_move` = 0.001. Require nonnegative prospective `bazaar impact` for every sale or swap;
   do not use approval to bypass a negative estimate or disable this limit.
 - No buy-back. `no_buyback_ticks` = 480 blocks buying any card sold or swapped away in the last 480 ticks.
-- `human_approval_above` = 60. A card buy or sell at or above 60 P requires human approval;
-  approval never waives the sale floor, last-copy protection or other hard rules.
+- `human_approval_above` = 0 and `max_spend_per_game_hour` = 0, disabled by Omar on Sun 4 Oct.
+  Eligible automated trades do not wait for amount approval or a rolling-hour purchase ceiling.
+  Cash, pending commitments, value/impact and last-copy guards still apply.
 - `dealer_sell_enabled` = false means hand commands only after `bazaar impact`.
   Run `uv run bazaar impact sell CARD P --to pilar` for the concrete proposed price before a hand sale to Pilar,
   substituting the actual counterparty for other sales. A dealer final still must pass every rule above.
@@ -87,9 +88,9 @@ maker already run rows 2 and 5 on their own.
 | # | Action | Command / agent | Gate (GUARDRAILS.md) | Evidence |
 |---|---|---|---|---|
 | 1 | **Sell a spare card to Pilar, ask until she finalises** (uncommons 14 to 30, rares 50 to 87, epics 140 to 199; start high, step down 1 to 2 P per distinct bid, take her `final: true` only if the sale floor and nonnegative impact hold) | `uv run bazaar dealer sell CARD --dealer pilar --live` (hand only after `bazaar impact`; `dealer_sell_enabled` is false) | `protect_page_sets` (never the last copy), `sell_min_value_ratio` 1.0, `max_score_loss_per_move` 0.001, `no_buyback_ticks` 480 | 3 finals = +3.3 board; SAL-07 at 29 = -4.27 |
-| 2 | **Dealer ladder buys, step 1 from low**: open at the lowest fill seen, never at her opening ask, climb by distinct bids until her final | taker (`agent taker --live`) or `dealer buy CARD --start P --max P --dealer D` | `max_price_*`, `official_value_margin` 0, `max_spend_per_game_hour` 250, `trickster_*` | Abuela commons 6 to 9 = 60 %; Pícaros rare 55 to 58 = 60 % |
-| 3 | **Buy a missing page card from a team or dealer below our value, including fees. Evaluate epics separately: they do not complete pages.** | `bazaar strategy`, `bazaar opportunities`, `sell bid` | `block_buying_held_cards`, `off_page_min_surplus` 10, `max_price_epic` 240, `human_approval_above` 60 | buys below value +5 to +14 raw each; t10 epics +1.9 board |
-| 4 | **Sell a duplicate to the team that needs it** (the page-completing buyer pays 2 to 3x our value) | `bazaar buyers`, `bazaar swaps`, `sell list CARD`, `sell swap` | `max_counterparty_share`, `team_swap_*`, `watchdog_max_swaps_per_team` 3, human approval for rares | +33 to +55 raw per rare; `buyer_rank_enabled` is false |
+| 2 | **Dealer ladder buys, step 1 from low**: open at the lowest fill seen, never at her opening ask, climb by distinct bids until her final | taker (`agent taker --live`) or `dealer buy CARD --start P --max P --dealer D` | `max_price_*`, `official_value_margin` 0, `max_spend_per_game_hour` 0 (disabled), `trickster_*` | Abuela commons 6 to 9 = 60 %; Pícaros rare 55 to 58 = 60 % |
+| 3 | **Buy a missing page card from a team or dealer below our value, including fees. Evaluate epics separately: they do not complete pages.** | `bazaar strategy`, `bazaar opportunities`, `sell bid` | `block_buying_held_cards`, `off_page_min_surplus` 10, `max_price_epic` 240, `human_approval_above` 0 (disabled) | buys below value +5 to +14 raw each; t10 epics +1.9 board |
+| 4 | **Sell a duplicate to the team that needs it** (the page-completing buyer pays 2 to 3x our value) | `bazaar buyers`, `bazaar swaps`, `sell list CARD`, `sell swap` | `max_counterparty_share`, `team_swap_*`, `watchdog_max_swaps_per_team` 3, fresh sell-floor and impact checks | +33 to +55 raw per rare; `buyer_rank_enabled` is false |
 | 5 | **Ladder by level, three per round**: Abuela, Chato, Pilar, Pícaros; Banco feasibility is UNVERIFIED, see below | `dealer buy`, `agent taker` | level caps and quotas per dealer (`bazaar dealers`) | 16 of 74 threads settled; 3 deals per level = the component |
 | 6 | **Workshop only for a missing rare** | `bazaar taller` | `taller_enabled`, `max_taller_per_game_hour` 2 | luck; never scores by itself |
 | 7 | **Market**: keep the board venue's broker running; probe the edge only in a closed window | `agent maker`, `venue status`, `broker`, `BAZAAR_BENCH_POLICY` | `allow_venue_open`, `max_venues` 2, `deploy_guard_bench_ticks` 10 | stall = 0.5; t10 12.5 |
@@ -167,7 +168,7 @@ Use the current clock and schedule, with evidence in `docs/briefing.md`.
   two rounds and at most four concurrent. Current-round raw duel points were zero at tick 1540;
   Saturday's totals do not establish Sunday saturation. Do not merge during a protected event window.
 - [ ] Re-read holdings after every deal. Only true duplicates may be sold or swapped, above the fresh sell floor.
-  Require explicit human approval at 60 P or more. Do not lower Jev's gate simply to increase activity.
+  Amount-based human approval is disabled. Do not lower Jev's gate simply to increase activity.
 - [ ] Finish eligible dealer work before the scheduled h18.367 stall closure and final duel wave.
   Scores freeze is currently h19.367; the schedule explicitly closes doors at 15:00 CEST.
   At closing, pause first, then use `bazaar flatten --live --threads` if needed.

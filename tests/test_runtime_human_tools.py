@@ -561,3 +561,8 @@ def test_each_human_tool_publishes_a_strict_schema():
     approve = {s.name: s for s in ht.human_specs(Store())}["approve"].schema()["properties"]
     assert (approve["price"]["minimum"], approve["price"]["maximum"]) == (1, 1000)
     assert (approve["ttl_ticks"]["minimum"], approve["ttl_ticks"]["maximum"]) == (1, 480)
+
+
+def test_disabled_hourly_cap_does_not_report_a_false_buy_refusal(tmp_path):
+    b = human_backend(tmp_path, rules=RULES.model_copy(update={"max_spend_per_game_hour": 0}))
+    assert ht.buy_refusals(b, "LAV-09", 90, "rare", TICK, {"assets": []}) == []

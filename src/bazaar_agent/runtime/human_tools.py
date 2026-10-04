@@ -178,7 +178,7 @@ def buy_refusals(b: Backend, card: str, price: int, rarity: str, tick: int, me: 
         out.append(f"no max_price for rarity {rarity}: buying it is not allowed")
     elif price > cap[0]:
         out.append(f"{cap[1]} {cap[0]}: an approval never lifts it")
-    if price > rules.max_spend_per_game_hour:
+    if rules.max_spend_per_game_hour > 0 and price > rules.max_spend_per_game_hour:
         out.append(f"max_spend_per_game_hour {rules.max_spend_per_game_hour}: an approval never lifts it")
     if not is_page_card(rarity) and _copies(me, card) > 0:
         out.append(f"we already hold {card} (block_buying_held_cards): an approval never lifts it")
