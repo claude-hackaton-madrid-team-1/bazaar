@@ -1455,6 +1455,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 | PR | Title | Merged | Commit |
 |---|---|---|---|
+| [#271](../../pull/271) | docs: architecture page for Sunday (corrected schedule, tonight's merges) | Sun 02:04 | `13faa68` |
 | [#269](../../pull/269) | feat: calibrated Sunday scenario for bazaar-sim | Sun 01:58 | `16ecba3` |
 | [#268](../../pull/268) | docs: 3-minute motion pitch deck | Sun 01:49 | `bcdb73a` |
 | [#270](../../pull/270) | docs: correct the Sunday schedule | Sun 01:47 | `cd5ab1c` |
@@ -1466,13 +1467,11 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | [#259](../../pull/259) | fix(taller): harden SA1's Workshop (TL1) | Sun 00:25 | `2bcc094` |
 | [#257](../../pull/257) | feat(broker): try to beat the stall in the Market Test (probe policy, off by default) | Sun 00:18 | `000cc58` |
 | [#261](../../pull/261) | feat: record the full Market Test bench book each tick | Sun 00:17 | `2c8b726` |
-| [#258](../../pull/258) | fix(guardrails): no_buyback_ticks skips unread sales on a simulator; a stale tape fails closed | Sun 00:13 | `deca8e7` |
 
 ### Open pull requests
 
 | PR | Title | Branch |
 |---|---|---|
-| [#271](../../pull/271) | docs: architecture page for Sunday (corrected schedule, tonight's merges) | `docs/arch-sunday` |
 | [#267](../../pull/267) | docs: simplify README and refresh the implemented architecture (DOC1) | `codex/docs-cleanup` |
 | [#266](../../pull/266) | ci: limit Depot to unit, integration, formatter and linter | `codex/ci-four-checks` |
 | [#244](../../pull/244) | fix(taller): interlock with dealer sells, promise a craft before its POST (#239 review follow-ups) | `fix/sa1-taller-hardening` |
