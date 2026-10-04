@@ -173,3 +173,26 @@ def test_the_hunt_takes_one_accept_per_tick_and_records_it(tmp_path):
     t.on_tick(clock())
     assert len([s for s in team.sent if s[0] == "accept"]) == 1 and ledger.accepts_in_tick(TICK) == 1
     assert [r for r in rows(tmp_path) if r.get("kind") == "accept_ask" and r.get("chosen")]
+
+
+def test_under_the_live_guardrails_a_far_from_complete_single_copy_sells_above_value_and_a_complete_one_never(
+    tmp_path,
+):
+    # The repo's GUARDRAILS.md (protect_page_sets on every set, protect_complete_pages_only true) and the taker's
+    # own context from /me: the check() the accept will meet, with the complete pages it reads from /me.
+    from bazaar_agent.guardrails import Ledger, context_from, load_guardrails
+
+    rules = load_guardrails().rules
+    assert rules.protect_complete_pages_only
+    me = {**ME, "album": {"pages": [  # the live /me shape: each page says whether it is complete
+        {"set": "LAV", "have": 2, "of": 6, "complete": False},
+        {"set": "LAT", "have": 2, "of": 2, "complete": True},
+    ]}}  # fmt: skip
+    ctx = context_from(me, TICK, 1.5, Ledger(tmp_path / "ledger.jsonl"), rules)
+    m = build_market(me, CATALOG, [], [])
+    (o,) = board_offers({"offers": [bid(9, "LAV-06", 60)]}, "rastro", "t01")
+    op = score_offer(o, m, me, PARAMS, rules, AffinityMap(), VENUES["rastro"], ctx, page_horizon=2)
+    assert op is not None and op.ours >= PARAMS.sell_min_surplus and op.verdict == "allowed", op
+    (lat,) = board_offers({"offers": [bid(10, "LAT-09", 500)]}, "rastro", "t01")
+    op = score_offer(lat, m, me, PARAMS, rules, AffinityMap(), VENUES["rastro"], ctx, page_horizon=2)
+    assert op is None or op.verdict != "allowed"  # LAT is complete: its only copy never goes
