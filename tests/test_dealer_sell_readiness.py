@@ -563,6 +563,17 @@ def test_ladder_deals_counts_our_scored_dealer_deals_of_today_only():
     assert desk.ladder_deals(events, "") == {}
 
 
+def test_ladder_deals_restart_when_a_round_starts_mid_day():
+    # The ladder restarts every round, and a round may start in the middle of a day (Sunday's schedule).
+    events = [
+        {"id": 50, "tick": 40, "type": "day.opened", "payload": {"day": "sun"}},
+        *sell_thread(60, 41, "picaros", 102, 5, 7, 60),  # round 2, this morning
+        {"id": 75, "tick": 75, "type": "round.started", "payload": {"round": 3}},
+        *sell_thread(80, 43, "abuela", 104, 5, 6, 80),  # round 3
+    ]
+    assert desk.ladder_deals(events, "t01") == {"abuela": 1}
+
+
 def test_the_desk_opens_with_the_highest_level_not_yet_full_today(tmp_path):
     first = Desk(tmp_path / "a", Seller("picaros", [5], me=ME5), live_rules(tmp_path / "a"))
     first.on_tick(100)

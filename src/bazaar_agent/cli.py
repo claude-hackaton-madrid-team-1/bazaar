@@ -3195,6 +3195,24 @@ def _affinity_book(kw: dict[str, Any], shared: bool) -> Any:
     return ta.AffinityBook(write, kw["log"], told) if shared else None
 
 
+def _egg_hunter(kw: dict[str, Any], shared: bool) -> Any:
+    """The easter-egg hunt (`agents/egg_hunt.py`): its tried set in the shared Postgres (`egg_hunt_tried`, read
+    and written on a background thread) when there is one, else a JSONL file next to the decisions. Built always;
+    it does nothing until GUARDRAILS.md `egg_hunt_enabled` and env BAZAAR_EGG_HUNT both turn it on (the env is
+    re-read every tick)."""
+    from bazaar_agent import db
+    from bazaar_agent.agents import egg_hunt
+
+    log = kw["log"]
+    store: Any
+    if shared:
+        pg = egg_hunt.PgStore(lambda: db.connect(app="bazaar-taker-eggs", connect_timeout_s=3), log)
+        store = egg_hunt.BackgroundStore(pg, log)  # the Postgres reads and writes never run inside a 15 s tick
+    else:
+        store = egg_hunt.FileStore(kw["decisions"].dir / egg_hunt.TRIED_FILE)
+    return egg_hunt.EggHunter(store, log)
+
+
 @agent_app.command("taker")
 def agent_taker(
     live: bool = typer.Option(False, help=AGENT_LIVE_HELP),
@@ -3203,6 +3221,13 @@ def agent_taker(
     jev: bool = typer.Option(True, help="Ask Jev offer_is_worth_accepting (advisory) and spend_pack_slot_now"),
     accept_bids: bool = typer.Option(
         True, "--accept-bids/--no-accept-bids", help="Sell into guarded standing bids above our value"
+    ),
+    addressed: str = typer.Option(
+        "asks",
+        "--addressed",
+        envvar="BAZAAR_ADDRESSED_OFFERS",
+        help="Offers other teams address to us (read from /api/me/offers, no extra request): asks (default: take "
+        "their asks like a board ask), all (their bids too, through the sell guards), off. Any other value: off",
     ),
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
@@ -3222,8 +3247,12 @@ def agent_taker(
     """Every tick: accept standing asks below their value to us (fee included) and run dealer threads."""
     from bazaar_agent.agents.dealer import template_words
     from bazaar_agent.agents.runtime import no_jev
-    from bazaar_agent.agents.taker import Taker, TakerConfig
+    from bazaar_agent.agents.taker import Taker, TakerConfig, addressed_mode
     from bazaar_agent.learn.jev_context import offer_situation, with_lessons
+
+    mode, note = addressed_mode(addressed)
+    if note:
+        err_console.print(f"[yellow]taker: {note}[/yellow]")
 
     def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
         rules, log = kw["rules"], kw["log"]
@@ -3241,11 +3270,12 @@ def agent_taker(
             swap_jev=_swap_jev(settings, rules) if jev else no_jev,  # no Jev: the team desk sends no swap
             strategy_jev=_strategy_jev(settings, rules) if jev else None,  # no Jev: no ladder probe (SG1)
             words_fn=llm_cli.words_for(settings, rules, template_words),
-            config=TakerConfig(max_dealer_threads=threads, accept_bids=accept_bids),
+            config=TakerConfig(max_dealer_threads=threads, accept_bids=accept_bids, addressed=mode),
             cards=_cards_heartbeat(kw, settings),
             news=_news_sentinel(kw, settings),
             personas=_persona_book(kw, shared),
             affinity=_affinity_book(kw, shared),
+            eggs=_egg_hunter(kw, shared),
             **kw,
         )
 

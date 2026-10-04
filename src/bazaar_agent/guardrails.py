@@ -109,6 +109,9 @@ class Guardrails(BaseModel):
     trickster_max_strictness: float = Field(default=0.0, ge=0, le=1)  # 0: the published kind alone decides
     trickster_accept_fill_share: float = Field(default=1 / 3, gt=0, le=1)
     official_value_margin: float = Field(default=0.0, ge=0)
+    # A taker dealer buy (not epic or legendary) may pay up to this many P OVER the official value while that dealer's
+    # level has an empty ladder slot this round (`Context.ladder_open`). 0: today's cap. At most 10 (a typo guard).
+    dealer_ladder_value_tolerance: float = Field(default=0.0, ge=0, le=10)
     max_packs_per_game_hour: int = 3
     sell_min_value_ratio: float = 1.0
     relist_step_share: float = Field(default=0.05, ge=0, le=0.5)
@@ -158,7 +161,7 @@ class Guardrails(BaseModel):
     inspect_accepts: bool = True
     bluff_enabled: bool = True
 
-    @field_validator("flag_trusted_dealers", "flag_dealers")
+    @field_validator("flag_trusted_dealers", "flag_dealers", "egg_hunt_dealers")
     @classmethod
     def _dealer_list_parse(cls, value: str, info: ValidationInfo) -> str:
         if value.strip().lower() == "none":
@@ -246,6 +249,14 @@ class Guardrails(BaseModel):
     buy_target_step_ticks: int = Field(default=6, ge=1, le=200)
     buy_target_steps: int = Field(default=5, ge=1, le=50)
     activity_stall_seconds: float = Field(default=0.0, ge=0, le=3600)  # 0: off (GUARDRAILS.md turns it on)
+    # Easter-egg hunt (`agents/egg_hunt.py`): off here and in GUARDRAILS.md; also needs env BAZAAR_EGG_HUNT.
+    egg_hunt_enabled: bool = False
+    egg_hunt_dealers: str = "abuela,picaros,chato,pilar"
+    egg_hunt_max_phrases_per_dealer_per_hour: int = Field(default=3, ge=0, le=20)
+    egg_hunt_dealer_gap_ticks: int = Field(default=8, ge=1, le=2000)
+    egg_hunt_backoff_ticks: int = Field(default=240, ge=1, le=5000)
+    egg_hunt_max_finds_per_dealer: int = Field(default=1, ge=0, le=10)
+    egg_hunt_max_finds: int = Field(default=5, ge=0, le=30)
 
     @field_validator("team_desk_never_trade")
     @classmethod
@@ -327,6 +338,7 @@ ENFORCED_BY: dict[str, str] = {
     "trickster_accept_fill_share": "agents.dealer.decide (a forgiving dealer: accept only low in its fill range)",
     "dealer_final_lift": "guardrails.check (a dealer's final only) + agents.dealer_plan",
     "official_value_margin": "guardrails.check (every card buy, official_values.OfficialValues: GET /api/me/value)",
+    "dealer_ladder_value_tolerance": "guardrails.check (taker dealer buys, a level with an empty ladder slot only)",
     "max_packs_per_game_hour": "guardrails.check + ledger",
     "sell_min_value_ratio": "guardrails.check",
     "relist_step_share": "agents.relist.relist_price (maker asks)",
@@ -433,6 +445,13 @@ ENFORCED_BY: dict[str, str] = {
     "dealer_sell_breaker_reset_ticks": "watchdog.run (a dealer_sell trip's until_tick; the sell guards still refuse)",
     "watchdog_refusal_storm": "watchdog.refusal_storms (WARN only)",
     "activity_stall_seconds": "agents.taker → activity.ActivityWatch (after the tick's sends; logs, never trades)",
+    "egg_hunt_enabled": "agents.egg_hunt.EggHunter.mode (+ env BAZAAR_EGG_HUNT) ← agents.taker._desk_send",
+    "egg_hunt_dealers": "agents.egg_hunt.EggHunter.blocked (the dealers a phrase may ride to)",
+    "egg_hunt_max_phrases_per_dealer_per_hour": "agents.egg_hunt.EggHunter.blocked (live + dry, per game hour)",
+    "egg_hunt_dealer_gap_ticks": "agents.egg_hunt.EggHunter.blocked + _expire (wait for the reply and the find)",
+    "egg_hunt_backoff_ticks": "agents.egg_hunt.EggHunter.observe (cool-off, strike, warning, flag back-off)",
+    "egg_hunt_max_finds_per_dealer": "agents.egg_hunt.EggHunter.blocked (stop per dealer after its find)",
+    "egg_hunt_max_finds": "agents.egg_hunt.EggHunter.blocked (stop everywhere at our cap)",
 }
 
 
@@ -764,6 +783,7 @@ class Action:
     counterparty: str | None = None
     volume: int | None = None  # what the trade adds to the counterparty's share (default: `price`)
     final: bool = False  # a dealer's final offer (take it or it walks): its cap is `final_cap_for` (N14a)
+    dealer: str | None = None  # a taker buy from this dealer (`dealer_ladder_value_tolerance`); None: any other buy
     limit: int | None = None  # duels: our private limit (a seller's cost, a buyer's value)
     role: str | None = None  # duels: "seller" | "buyer"
     days: float | None = None  # two-issue duels: the delivery days of the deal (None in price-only duels)
@@ -859,6 +879,9 @@ class Context:
     taller_last_hour: int = 0  # Workshop crafts in the last game hour (`max_taller_per_game_hour`, this process)
     # Why no Workshop craft may go this tick: an accept still settling hands over a copy we cannot name.
     taller_hold: str | None = None
+    # Dealers whose ladder level has an empty slot this round (the taker's `LadderSlots`): their card buys may use
+    # `dealer_ladder_value_tolerance`. Empty: no buy ever does.
+    ladder_open: frozenset[str] = frozenset()
 
 
 # What a stored or answered /me (`holdings.without_secrets`) keeps of `starter_broker_key`: that it was there.
@@ -1254,7 +1277,32 @@ def _official_value_violations(action: Action, ctx: Context, rules: Guardrails) 
         return []
     held = ctx.held.get(action.item, 0)
     margin = rules.value_margin_for(action.rarity)  # an epic or legendary: strictly below, never liftable
+    if (tolerance := ladder_tolerance(action, ctx, rules)) > 0:
+        return cap_violations(
+            action.item,
+            action.price,
+            action.gives_value,
+            ctx.values,
+            ctx.tick,
+            held,
+            rules,
+            margin - tolerance,
+            rule="dealer_ladder_value_tolerance",
+        )
     return cap_violations(action.item, action.price, action.gives_value, ctx.values, ctx.tick, held, rules, margin)
+
+
+def ladder_tolerance(action: Action, ctx: Context, rules: Guardrails) -> float:
+    """How far over the official value this buy may go: `dealer_ladder_value_tolerance` for a taker buy from a
+    dealer (open, bid or accept) whose level has an empty ladder slot this round, never for an epic or legendary
+    (`off_page_min_surplus` is Marius's hard rule) nor a team trade; else 0. A dealer deal scores on the ladder (a
+    share of the dealer's own range); whether a dealer buy above our value costs neg_points was never observed (no
+    Saturday buy was above it), so each such buy may also cost up to the tolerance in neg_points."""
+    if rules.dealer_ladder_value_tolerance <= 0 or action.dealer is None or action.counterparty is not None:
+        return 0.0
+    if action.kind not in ("buy", "bid", "accept_buy") or str(action.rarity or "").lower() in OFF_PAGE_RARITIES:
+        return 0.0
+    return rules.dealer_ladder_value_tolerance if action.dealer in ctx.ladder_open else 0.0
 
 
 # Our own market (RULES.md "Your own market"): opening costs a refundable bond plus an opening fee.
