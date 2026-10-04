@@ -1565,3 +1565,6 @@ Manual guarded dealer sales initially refused the shared publication mutex: read
 
 ### [2026-10-04] build-error
 PACK1 review found two deployed-policy tests still asserting restock enabled → update only those expectations to disabled restock/enabled dealer desk; preserve price-cap, cash-floor and quota checks.
+
+### [2026-10-04] finding
+PACK1 user correction: Sales should hunt teams across allied markets, not activate dealer sales. Final policy disables restock only; dealer_sell_enabled remains false and no dealer reclaim is introduced.

@@ -156,7 +156,7 @@ def test_taker_restock_respects_expired_tick(tmp_path):
 
 def test_deployed_policy_is_explicit_and_quota_stays_three():
     rules = load_guardrails().rules
-    assert not rules.pack_restock_enabled and rules.dealer_sell_enabled
+    assert not rules.pack_restock_enabled and not rules.dealer_sell_enabled
     assert rules.max_packs_per_game_hour == 3 and rules.cash_floor > 0
     ctx = Context(cash=rules.max_price_pack + rules.cash_floor + 1, held={}, tick=100, t_hours=1, has_venue=True)
     at_cap = Action("buy", "sobre_barrio", "pack", rules.max_price_pack)

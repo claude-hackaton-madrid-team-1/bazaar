@@ -856,5 +856,5 @@ See [SALES1](SALES1-spec.md). In progress: team outreach ownership, Opus 5.5, OT
 - 60 focused tests pass; independent review and coordinator rollout pending.
 
 ## PACK1 — sales before further packs
-- [Spec](PACK1-spec.md): disable inventory restocking; enable existing guarded dealer duplicate desk only for missing ladder slots under CARD HUNT.
+- [Spec](PACK1-spec.md): disable inventory restocking; preserve dealer desk off and prioritize existing Sales team market activity.
 - Existing focused checks, independent review and safe coordinator rollout.

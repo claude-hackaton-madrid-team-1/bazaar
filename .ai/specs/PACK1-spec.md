@@ -1,14 +1,12 @@
-# PACK1 — stop replenishment and prioritize guarded duplicate dealer sales
+# PACK1 — stop pack restocking and prioritize team market sales
 
-User requests sales after the tick2308 silver-pack loss. Set pack_restock_enabled=false and dealer_sell_enabled=true; change no executor, prices, sell floors, protected copies, quotas or accept slots. Taker/Maker CLI CARD HUNT defaults on; the production Taker BAZAAR_CARD_HUNT is unset/default-on. Coordinator must verify Maker CARD HUNT before rollout and resume Taker only after the new policy loads. Existing tests must prove packs excluded, profitable ladder buys retained, dealer sales only into missing slots, shared commitments respected and manual dealer threads not adopted.
+User prioritizes Sales hunting buyers across allied markets, not new dealer sales. Set pack_restock_enabled=false only. Keep dealer_sell_enabled=false and all other guards, caps, floors and executor logic unchanged. With deployed Taker CARD HUNT default-on (BAZAAR_CARD_HUNT unset), both restock and holding-value pack buys are excluded; other profitable guarded trades remain eligible.
 
-Rollout: only coordinator merges through deploy guard after active manual deals are safe. Current Taker pause persists on its service volume. No guarantee of buyers, fills or recovered score.
+Coordinator must merge through deploy guard and resume Taker only after the policy loads. Existing Maker/Sales are resumed; Taker's service-local pause persists. No new dealer openings or listing reclaim is added.
 
-## Evidence and limits
-- `uv run pytest tests/test_card_hunt.py tests/test_dealer_sell_desk.py tests/test_pack_gate.py -q`: `52 passed in 1.45s`.
-- `uv run pytest tests/test_guardrails.py -q`: `41 passed in 0.20s`.
-- `uv run bazaar rules`: exit 0; `git diff --check`: exit 0.
-- Production Maker and Taker nonsecret SSH read-back: BAZAAR_CARD_HUNT unset/default-on (CLI default True). Maker/Sales resume verified in logs2356–2357; Taker service-local pause persists.
-- Existing dealer desk skips manual busy dealers, protects sole copies, checks fresh commitments under the publication mutex, and reserves its own exact copy. It opens only on missing known ladder slots with CARD HUNT.
+## Evidence
+Focused card-hunt/dealer-desk/pack-gate/guardrails/pack-restock/Pilar-readiness modules are rerun after the final policy correction. Guard assertions preserve pack cap, cash floor and quota checks.
 
-Honest implementation: policy and existing guard checks verified (3/3, 100%); no deployment or score recovery claim. Unverified: post-deploy sale fills and score effect. Could-not-do: automatic reclaim is absent; the dealer desk cannot sell already listed copies or current Maker ask targets. Enabling it arms future free inventory only. Existing max four dealer-sell openings/hour and all other caps unchanged.
+Unverified: deployment, team sale fills and score recovery. Could-not-do: this minimal policy does not change Sales targeting or reclaim already committed copies. No SDK/network fix.
+
+Final verification: `uv run pytest tests/test_pack_restock.py tests/test_pilar_readiness.py tests/test_card_hunt.py tests/test_dealer_sell_desk.py tests/test_pack_gate.py tests/test_guardrails.py -q` → `119 passed`; rules validation and diff check exit0. Policy/test alignment verified; deployment/fills unverified.
