@@ -1,4 +1,4 @@
-"""End-to-end smoke on a local simulator: the merge gate every PR passes (`.github/workflows/sim-smoke.yml`).
+"""Optional manual end-to-end diagnostic on a local simulator; not a CI or merge gate.
 
     uv run python scripts/sim_smoke.py
 

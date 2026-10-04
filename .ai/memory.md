@@ -1344,3 +1344,31 @@ Review also caught that `/dev/null` fails the settings loader's regular-file che
 receive the run's actual empty environment file, including the simulator server.
 The runner's advertised `--jev` could not work with stripped credentials and loopback guards; remove that
 unsupported flag and always run these offline profiles with `--no-jev`.
+
+### [2026-10-04] gotcha — CI1 integration tests were skipped or misclassified
+The old CI ran without Postgres; six approvals/watchdog DB tests also lacked the integration marker.
+CI1 marks those six and gives Depot an ephemeral pgvector/Postgres 17 service on loopback port 5433,
+with a failing connection preflight before the integration suite. The localhost hostname matters:
+local-only integration tests compare the database target to DEFAULT_DATABASE_URL or use it directly.
+CI now runs unit tests, integration tests, Black and Ruff only; simulator smoke remains manual.
+GitHub workflow duplicates are removed, and the Depot README writer runs only after main pushes or
+manual dispatch, so opening a PR no longer runs the writer or queues Blacksmith.
+
+### [2026-10-04] build-error — CI1 exposed three integration failures
+Depot run 81tld9gxwq: 143 integration tests passed, three failed. Trust authentication prevented
+the read-only user's old password from being rejected; use the disposable database's normal password
+authentication. Rich wrapped the CLI import message at CI temp-path lengths; normalize whitespace
+in that assertion. Holdings answers before its asynchronous save commits; the snapshot assertion now
+uses the writer's own locked session to wait for the commit. No production code or assertions removed.
+Local isolation harness: BAZAAR_ENV_FILE=/dev/null was rejected because the setting requires a
+regular file; replacing it with an empty temporary file fixed setup. The four holdings synchronization
+fixes passed all 26 holdings DB tests against a private ephemeral Postgres (12.07 s).
+
+### [2026-10-04] gotcha — DOC1 generated documentation drift
+The README refresh copied backlog, memory and activity into a roughly 1,500-line entry point, while the
+architecture generator retained a Saturday roadmap and old worker state. DOC1 keeps only bounded
+project metadata in the README and generates a source-linked implementation overview; operations
+live in `docs/operations.md`. Historical reports stay in their original sources. During validation,
+Ruff disagreed with Black on f-string quote choices; Ruff's formatting passes both tools.
+Review also caught a bare coverage command that could inherit the shared game database: the
+documented command now explicitly selects the local development database. No runtime policy changed.

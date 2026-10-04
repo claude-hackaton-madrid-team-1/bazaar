@@ -1,927 +1,401 @@
 {
-  "boxes": {
-    "guardrails": {
-      "title": "Guardrails / hard rules",
-      "status": "done",
-      "lines": [
+  "flow": [
+    {
+      "title": "Read the game",
+      "body": "Clock, holdings, available dealers and venue books form the current snapshot. The monitor archives the event stream and fills gaps from the feed.",
+      "sources": [
         {
-          "text": "GUARDRAILS.md checked before every write",
-          "mark": "✓",
-          "lead": true
+          "label": "Snapshots",
+          "href": "../src/bazaar_agent/agents/runtime.py"
         },
         {
-          "text": "buys capped at official value (#177)",
-          "mark": "✓",
-          "lead": true
-        },
-        {
-          "text": "1 accept per tick, shared ledger (#162)",
-          "mark": "✓",
-          "lead": true
-        },
-        {
-          "text": "offer inspector before accepts (#146)",
-          "mark": "✓",
-          "lead": true
-        },
-        {
-          "text": "rare cap 95, Jev 0.95 (#186)",
-          "mark": "✓",
-          "lead": true
+          "label": "Monitor",
+          "href": "../src/bazaar_agent/monitor.py"
         }
       ]
     },
-    "state": {
-      "title": "STATE",
-      "status": "done",
-      "lines": [
-        {
-          "text": "CLI monitor (laptop)"
-        },
-        {
-          "text": "live stream + feed poll"
-        },
-        {
-          "text": "holdings in Postgres: /me per tick",
-          "mark": "✓"
-        },
-        {
-          "text": "1 /me per tick, shared (was 2)",
-          "mark": "✓"
-        },
-        {
-          "text": "album checked first",
-          "note": true
-        }
-      ],
-      "mark": "✓"
-    },
-    "llm_proposer": {
-      "title": "LLM → Jev picks",
-      "status": "done",
-      "lines": [
-        {
-          "text": "Claude via subscription ✓ (#51)"
-        },
-        {
-          "text": "tick loop: Jev per move",
-          "mark": "✓"
-        },
-        {
-          "text": "strategy proposes moves",
-          "mark": "✓"
-        },
-        {
-          "text": "desk + subagents: Jev per request",
-          "mark": "✓"
-        },
-        {
-          "text": "token on duels, taker, maker",
-          "note": true
-        }
-      ],
-      "mark": "✓"
-    },
-    "jev": {
-      "title": "JEV (decision / orchestrator)",
-      "status": "wip",
-      "lines": [
-        {
-          "text": "jev-1.13.0, every decision logged",
-          "mark": "✓"
-        },
-        {
-          "text": "dealer, taker, duels, maker moves",
-          "mark": "✓"
-        },
-        {
-          "text": "ops calls: v2, rare 95, venue",
-          "mark": "✓"
-        },
-        {
-          "text": "team swaps gated by Jev (#188)",
-          "mark": "◑"
-        },
-        {
-          "text": "undecided is never a yes"
-        }
-      ],
-      "mark": "◑"
-    },
-    "runtime": {
-      "title": "runtime (Railway)",
-      "status": "done",
-      "lines": [
-        {
-          "text": "taker, maker, duels: LIVE, real game",
-          "mark": "✓"
-        },
-        {
-          "text": "Postgres ledger shared by all",
-          "mark": "✓"
-        },
-        {
-          "text": "phoenix traces (#139) · bazaar-mcp",
-          "mark": "✓"
-        },
-        {
-          "text": "news sentinel in the taker (#182)",
-          "mark": "✓"
-        },
-        {
-          "text": "team matrix → negotiators (#225)",
-          "mark": "✓"
-        },
-        {
-          "text": "bazaar-live: agent screen fixed (#19)",
-          "mark": "✓"
-        },
-        {
-          "text": "CI: Blacksmith queued, local gate"
-        }
-      ],
-      "mark": "✓"
-    },
-    "llm_runtime": {
-      "title": "LLM → Jev picks",
-      "status": "done",
-      "lines": [
-        {
-          "text": "Claude Agent SDK runtime (#59)",
-          "mark": "✓"
-        },
-        {
-          "text": "MCP tools + guardrail hook",
-          "mark": "✓"
-        },
-        {
-          "text": "desk + subagents: Jev per request (N15)",
-          "mark": "✓"
-        },
-        {
-          "text": "bazaar-mcp: live, bearer, dry run",
-          "note": true
-        }
-      ],
-      "mark": "✓"
-    },
-    "buy_sell": {
-      "title": "BUY / SELL",
-      "status": "done",
-      "lines": [
-        {
-          "text": "taker: SAL-09 from Chato, SAL page done",
-          "mark": "✓"
-        },
-        {
-          "text": "maker: asks + LAT-09 68, SAL-10 76",
-          "mark": "✓"
-        },
-        {
-          "text": "duels v2 live (#170): accept 169 > 130",
-          "mark": "✓"
-        },
-        {
-          "text": "venue v19 open, broker matches",
-          "mark": "✓"
-        },
-        {
-          "text": "dealer sell (#179 #183 #190): OFF again"
-        },
-        {
-          "text": "team threads ON + Jev gate (#188)"
-        }
-      ],
-      "mark": "◐"
-    },
-    "pg_vectors": {
-      "title": "Pg vectors",
-      "status": "done",
-      "lines": [
-        {
-          "text": "pgvector 0.8.6, PG 18.6"
-        },
-        {
-          "text": "learnings embedded (bge-small, 384-d)",
-          "mark": "✓"
-        },
-        {
-          "text": "HNSW cosine for the hybrid recall",
-          "mark": "✓"
-        }
-      ],
-      "mark": "✓"
-    },
-    "db_cards": {
-      "title": "DB · cards",
-      "status": "done",
-      "lines": [
-        {
-          "text": "holdings N13 approved (#105), 09:30 window",
-          "note": true
-        }
-      ],
-      "mark": "✓"
-    },
-    "db_traders_behaviors": {
-      "title": "DB · traders_behaviors",
-      "status": "part",
-      "lines": [
-        {
-          "text": "every dealer move: open/concede/hold/final/deal",
-          "mark": "✓"
-        },
-        {
-          "text": "written by the outcome learner (N3)",
-          "note": true
-        }
-      ],
-      "mark": "◐"
-    },
-    "db_learnings": {
-      "title": "DB · learnings",
-      "status": "part",
-      "lines": [
-        {
-          "text": "feed reader: blockers, fees, notices",
-          "mark": "✓"
-        },
-        {
-          "text": "taker skips blocked dealers",
-          "mark": "✓"
-        },
-        {
-          "text": "LLM pass (opt-in, background, never blocks)",
-          "mark": "✓"
-        },
-        {
-          "text": "maker reads fee notices",
-          "mark": "✓"
-        },
-        {
-          "text": "lessons from every outcome (N3)",
-          "mark": "✓"
-        },
-        {
-          "text": "news + schedule (#182, #187)",
-          "mark": "◑"
-        },
-        {
-          "text": "card releases heartbeat (#185)",
-          "mark": "◑"
-        }
-      ],
-      "mark": "◐"
-    },
-    "also_stored": {
-      "title": "Also stored",
-      "status": "done",
-      "lines": [
-        {
-          "text": "feed · tape · dealer_curves"
-        },
-        {
-          "text": "traders · snapshots · alerts"
-        },
-        {
-          "text": "decisions · executions"
-        },
-        {
-          "text": "ledger (accept slot)"
-        },
-        {
-          "text": "supply_assets · supply_cards · supply_sets (N14b)",
-          "mark": "◑",
-          "note": true
-        },
-        {
-          "text": "outcomes + scorecard",
-          "mark": "◑",
-          "note": true
-        },
-        {
-          "text": "team_affinity: said vs inferred (AF1)",
-          "mark": "◑",
-          "note": true
-        }
-      ],
-      "mark": "✓"
-    },
-    "observability": {
-      "title": "Observability + evals",
-      "status": "wip",
-      "lines": [
-        {
-          "text": "Phoenix: session per negotiation",
-          "mark": "✓"
-        },
-        {
-          "text": "agents /health /state /events",
-          "mark": "✓"
-        },
-        {
-          "text": "Bazaar Live: real decisions view",
-          "mark": "✓"
-        },
-        {
-          "text": "read-only DB login for the team",
-          "mark": "✓"
-        }
-      ],
-      "mark": "◑"
-    }
-  },
-  "waiting_on_you": [
     {
-      "status": "wip",
-      "label": "Omar",
-      "title": "Blacksmith runners",
-      "body": "Every CI job is queued since 11:44: check the Blacksmith GitHub App and runner group access for the bazaar repo. Merges use the full local gate + pr-reviewer meanwhile."
-    },
-    {
-      "status": "wip",
-      "label": "Omar",
-      "title": "One merger on main",
-      "body": "Merges outside the release train race it and redeploy mid-duel; send PR numbers to the coordinator instead."
-    }
-  ],
-  "being_built": [
-    {
-      "status": "wip",
-      "label": "queued",
-      "title": "Sentinel: schedule + rival jumps (#187)",
-      "body": "Approved. Lead-time warnings for Market Tests, duels, Pilar, fevers; a rival_move learning when a team climbs 3+ ranks (t14: market +4.4 from one trade on its free stall)."
-    },
-    {
-      "status": "wip",
-      "label": "review",
-      "title": "Cards heartbeat (#185)",
-      "body": "/cards releases become ranking hints for 30 ticks; fixing a P1 (a malformed hint file could stop taker ticks)."
-    },
-    {
-      "status": "wip",
-      "label": "review",
-      "title": "Team threads with a Jev gate (#188)",
-      "body": "N17 on: every swap needs a Jev yes (>= 0.75), spare-copy reservation from the maker, cash cap per hour; missing cards first (LAV-09/10, MAL-09/10)."
-    },
-    {
-      "status": "wip",
-      "label": "worker",
-      "title": "Who to sell to (#193)",
-      "body": "bazaar buyers + team_buyer_rank: best-paying non-podium team per card; maker addresses asks to it."
-    },
-    {
-      "status": "wip",
-      "label": "worker",
-      "title": "Persona model",
-      "body": "/api/personas traits + menus drive opening, step, patience, tone and what each dealer buys; priors for L4/L5, learned curves win for Abuela and Chato."
-    },
-    {
-      "status": "wip",
-      "label": "Pilar",
-      "title": "Sell to Doña Pilar",
-      "body": "Open to all at h5.51: she buys uncommons, rares and epics (SAL and RET preferred), never commons, and sells only Gold packs. Salamanca fever: +25 % over book for SAL until about 20:04 (/api/schedule)."
-    }
-  ],
-  "not_started": [
-    {
-      "status": "todo",
-      "label": "tonight",
-      "title": "Ops hardening for 15 s ticks (#128)",
-      "body": "Maker cancel cap and a tick offset per service: Sunday's model puts us at 5.3-5.7 req/s against 5."
-    },
-    {
-      "status": "todo",
-      "label": "Sunday P0",
-      "title": "Presentation (40 %)",
-      "body": "Three proofs: a real dealer deal, an injection refused, v2 vs v1; real/simulated/pending labels."
-    },
-    {
-      "status": "part",
-      "label": "gap",
-      "title": "Market points from other teams",
-      "body": "v19 is open at 0 %, but no trade between other teams on it yet; one such trade gave t14 +4.4."
-    }
-  ],
-  "links": [
-    {
-      "name": "Taker",
-      "urls": [
-        "https://bazaar-taker-production.up.railway.app",
-        "wss://bazaar-taker-production.up.railway.app/events"
+      "title": "Choose a move",
+      "body": "Taker and maker policies rank trades and manage conversations. Duel policies negotiate their own price and delivery terms. Jev or the configured LLM supplies advisory verdicts.",
+      "sources": [
+        {
+          "label": "Taker",
+          "href": "../src/bazaar_agent/agents/taker.py"
+        },
+        {
+          "label": "Maker",
+          "href": "../src/bazaar_agent/agents/maker.py"
+        },
+        {
+          "label": "Duels",
+          "href": "../src/bazaar_agent/agents/duelist.py"
+        }
       ]
     },
     {
-      "name": "Maker",
-      "urls": [
-        "https://bazaar-maker-production.up.railway.app",
-        "wss://bazaar-maker-production.up.railway.app/events"
+      "title": "Pass the gates",
+      "body": "Validate the structured action against inventory, guardrails, approvals, breakers and the remaining tick window. The shared Postgres ledger coordinates accepts and listings.",
+      "sources": [
+        {
+          "label": "Guardrails",
+          "href": "../src/bazaar_agent/guardrails.py"
+        },
+        {
+          "label": "Shared ledger",
+          "href": "../src/bazaar_agent/ledger_pg.py"
+        }
       ]
     },
     {
-      "name": "Phoenix",
-      "urls": [
-        "https://phoenix-production-6aa3.up.railway.app"
+      "title": "Send and record",
+      "body": "Python sends approved actions through the game client, backed by the vendored SDK. The organisers settle accepted trades on the next tick. Decisions and execution outcomes are recorded.",
+      "sources": [
+        {
+          "label": "Game client",
+          "href": "../src/bazaar_agent/sdk.py"
+        },
+        {
+          "label": "Decision records",
+          "href": "../src/bazaar_agent/decisions.py"
+        },
+        {
+          "label": "Official rules",
+          "href": "../vendor/bazaar-kit/RULES.md"
+        }
+      ]
+    }
+  ],
+  "intelligence": [
+    {
+      "title": "Autonomous workers",
+      "body": "Trading and duel policies run on game ticks. A configurable Jev/LLM decider advises under a bounded budget; short ticks can fall back to Jev. Optional generated words do not replace structured prices.",
+      "sources": [
+        {
+          "label": "Decider",
+          "href": "../src/bazaar_agent/jev/decider.py"
+        },
+        {
+          "label": "Runtime settings",
+          "href": "../RUNTIME.md"
+        }
+      ]
+    },
+    {
+      "title": "Interactive desk + MCP",
+      "body": "The Claude Agent SDK desk routes operator requests to strategist, buyer, seller and duelist roles. CLI and authenticated MCP tools use the same Python actions and guardrails; writes default to dry run.",
+      "sources": [
+        {
+          "label": "Desk",
+          "href": "../src/bazaar_agent/runtime/desk.py"
+        },
+        {
+          "label": "Write actions",
+          "href": "../src/bazaar_agent/runtime/actions.py"
+        },
+        {
+          "label": "MCP server",
+          "href": "../src/bazaar_agent/runtime/mcp_server.py"
+        }
+      ]
+    },
+    {
+      "title": "Feed learning + recall",
+      "body": "Feed and thread readers extract counterparty behaviour and outcomes. Optional LLM interpretation and local embeddings add context for future decisions; learning scopes keep duels and trading separate.",
+      "sources": [
+        {
+          "label": "Learner",
+          "href": "../src/bazaar_agent/learn/live.py"
+        },
+        {
+          "label": "Recall",
+          "href": "../src/bazaar_agent/learn/recall.py"
+        },
+        {
+          "label": "Settings",
+          "href": "../RUNTIME.md"
+        }
+      ]
+    }
+  ],
+  "services": [
+    {
+      "name": "bazaar-taker",
+      "command": "bazaar agent taker",
+      "role": "Buys from venue asks and negotiates dealer purchases. Public read-only /health, /state and WebSocket /events.",
+      "sources": [
+        {
+          "label": "Taker source",
+          "href": "../src/bazaar_agent/agents/taker.py"
+        },
+        {
+          "label": "Health endpoint",
+          "href": "https://bazaar-taker-production.up.railway.app/health"
+        }
+      ]
+    },
+    {
+      "name": "bazaar-maker",
+      "command": "bazaar agent maker",
+      "role": "Posts and maintains asks/bids; runs the venue broker. An optional dealer-sell desk can negotiate sales when enabled. Public read-only status and events.",
+      "sources": [
+        {
+          "label": "Maker source",
+          "href": "../src/bazaar_agent/agents/maker.py"
+        },
+        {
+          "label": "Health endpoint",
+          "href": "https://bazaar-maker-production.up.railway.app/health"
+        }
+      ]
+    },
+    {
+      "name": "bazaar-duels",
+      "command": "bazaar duel run --play",
+      "role": "Negotiates scheduled duels and coordinates the shared accept slot with trading workers. Duel scoring is separate from card trading.",
+      "sources": [
+        {
+          "label": "Duel policy",
+          "href": "../src/bazaar_agent/agents/duelist.py"
+        },
+        {
+          "label": "Railway declaration",
+          "href": "../.railway/railway.py"
+        }
       ]
     },
     {
       "name": "bazaar-mcp",
-      "urls": [
-        "https://bazaar-mcp-production.up.railway.app/mcp"
+      "command": "bazaar mcp serve",
+      "role": "Team tools over authenticated Streamable HTTP at /mcp. Human approval tools require a separate approver credential. /health is public.",
+      "sources": [
+        {
+          "label": "Server",
+          "href": "../src/bazaar_agent/runtime/mcp_server.py"
+        },
+        {
+          "label": "Human tools",
+          "href": "../src/bazaar_agent/runtime/human_tools.py"
+        }
       ]
     },
     {
       "name": "bazaar-sim",
-      "urls": [
-        "https://bazaar-sim-production-1d48.up.railway.app"
+      "command": "bazaar-sim serve",
+      "role": "Standalone simulated game API with synthetic team keys and an isolated bazaar_sim database. Real workers are not configured to target it.",
+      "sources": [
+        {
+          "label": "Simulator",
+          "href": "../src/bazaar_sim"
+        },
+        {
+          "label": "Health endpoint",
+          "href": "https://bazaar-sim-production-1d48.up.railway.app/api/health"
+        }
       ]
     },
     {
-      "name": "Bazaar Live",
-      "urls": [
-        "https://bazaar-live-production.up.railway.app"
+      "name": "phoenix",
+      "command": "arizephoenix/phoenix",
+      "role": "OpenTelemetry trace collection and a login-protected inspection UI. Persistent storage is separate from the trading database.",
+      "sources": [
+        {
+          "label": "Telemetry",
+          "href": "../src/bazaar_agent/telemetry.py"
+        },
+        {
+          "label": "Phoenix UI",
+          "href": "https://phoenix-production-6aa3.up.railway.app"
+        }
+      ]
+    },
+    {
+      "name": "bazaar-live",
+      "command": "node server/index.ts",
+      "role": "Separate presentation repository: agent views, voice narration and operator screens. Server-side credentials protect game views and approval flows.",
+      "sources": [
+        {
+          "label": "Companion repository",
+          "href": "https://github.com/claude-hackaton-madrid-team-1/bazaar-live"
+        },
+        {
+          "label": "Railway declaration",
+          "href": "../.railway/railway.py"
+        }
       ]
     }
   ],
-  "timeline": {
-    "start": "2026-10-02T17:00",
-    "end": "2026-10-04T15:00",
-    "tick_hours": 3,
-    "closed": [
-      [
-        "2026-10-02T23:00",
-        "2026-10-03T09:00"
-      ],
-      [
-        "2026-10-03T23:00",
-        "2026-10-04T09:00"
+  "storage": [
+    {
+      "title": "Operational state",
+      "body": "Postgres stores holdings, feed history, traders, decisions, executions, approvals and the action ledger. The CLI monitor uses SSE plus feed polling; agents also read the market through their runtime.",
+      "sources": [
+        {
+          "label": "Database schema",
+          "href": "../src/bazaar_agent/sql/schema.sql"
+        },
+        {
+          "label": "Holdings",
+          "href": "../src/bazaar_agent/holdings.py"
+        },
+        {
+          "label": "Monitor",
+          "href": "../src/bazaar_agent/monitor.py"
+        }
       ]
-    ],
-    "markers": [
-      {
-        "at": "2026-10-03T06:00",
-        "kind": "deadline",
-        "label": "Sat 06:00 live fixes in",
-        "side": "left"
-      },
-      {
-        "at": "2026-10-03T09:00",
-        "kind": "deadline",
-        "label": "Sat 09:00 market opens"
-      },
-      {
-        "at": "2026-10-04T06:00",
-        "kind": "freeze",
-        "label": "Sun 06:00 build freeze"
-      },
-      {
-        "at": "2026-10-04T14:00",
-        "kind": "deadline",
-        "label": "Sun 14:00 final"
-      }
-    ],
-    "events": [
-      {
-        "at": "2026-10-02T19:00",
-        "label": "Open",
-        "title": "Doors open, Round 1 (Friday · El Rastro), 60 s ticks"
-      },
-      {
-        "at": "2026-10-02T23:00",
-        "label": "Close",
-        "title": "Doors close, Friday counts half"
-      },
-      {
-        "at": "2026-10-03T09:00",
-        "label": "R2",
-        "title": "Round 2 (Saturday · Gran Vía), El Retiro, a pack + 150 primas, 30 s ticks"
-      },
-      {
-        "at": "2026-10-03T10:00",
-        "label": "MT",
-        "title": "Market Test"
-      },
-      {
-        "at": "2026-10-03T11:30",
-        "label": "Duels I",
-        "title": "Duels I: price only, round-robin"
-      },
-      {
-        "at": "2026-10-03T12:00",
-        "label": "MT",
-        "title": "Market Test"
-      },
-      {
-        "at": "2026-10-03T14:00",
-        "label": "MT",
-        "title": "Market Test"
-      },
-      {
-        "at": "2026-10-03T16:00",
-        "label": "MT",
-        "title": "Market Test"
-      },
-      {
-        "at": "2026-10-03T17:55",
-        "label": "MT",
-        "title": "Market Test (round 2)"
-      },
-      {
-        "at": "2026-10-03T19:55",
-        "label": "MT",
-        "title": "Market Test (round 2)"
-      },
-      {
-        "at": "2026-10-03T20:34",
-        "label": "Duels II",
-        "title": "Duels II: price + delivery day, 16 ticks, decay 0.08"
-      },
-      {
-        "at": "2026-10-03T21:55",
-        "label": "MT",
-        "title": "Market Test (round 2)"
-      },
-      {
-        "at": "2026-10-03T23:00",
-        "label": "Close",
-        "title": "Doors close"
-      },
-      {
-        "at": "2026-10-04T09:00",
-        "label": "Open",
-        "title": "Sunday doors open, 15 s ticks; still round 2 until round 3 starts"
-      },
-      {
-        "at": "2026-10-04T09:34",
-        "label": "Hard MT",
-        "title": "Hard Market Test (12 traders), then a Market Test at 09:55: both still count for round 2"
-      },
-      {
-        "at": "2026-10-04T11:34",
-        "label": "R3",
-        "title": "Round 3 starts (Sunday · Chamberí released, 150 primas that do not score); its weight ramps up over about 160 ticks"
-      },
-      {
-        "at": "2026-10-04T11:55",
-        "label": "MT",
-        "title": "Market Test (round 3)"
-      },
-      {
-        "at": "2026-10-04T13:34",
-        "label": "Duels III",
-        "title": "Duels III: price + delivery day, 12 ticks, decay 0.10"
-      },
-      {
-        "at": "2026-10-04T13:55",
-        "label": "MT",
-        "title": "Market Test (round 3)"
-      },
-      {
-        "at": "2026-10-04T15:00",
-        "label": "Close",
-        "title": "The Bazaar closes. The finale, all four stalls closing, the Grand Final and the score freeze are scheduled after the close: watch for the organisers moving the hours"
-      }
-    ],
-    "lanes": [
-      {
-        "name": "Platform",
-        "bars": [
-          {
-            "title": "Railway: Postgres, Phoenix, agents",
-            "start": "2026-10-02T17:00",
-            "end": "2026-10-02T23:30",
-            "status": "done",
-            "priority": "P0"
-          },
-          {
-            "title": "Simulator + BAZAAR_SIM (#55)",
-            "start": "2026-10-02T23:00",
-            "end": "2026-10-03T02:20",
-            "status": "done",
-            "priority": "P0"
-          },
-          {
-            "title": "Review gate /pr-review, Claude-only (#76 #83)",
-            "start": "2026-10-03T01:45",
-            "end": "2026-10-03T02:40",
-            "status": "done",
-            "priority": "P0"
-          },
-          {
-            "title": "Sim smoke = merge gate (#75)",
-            "start": "2026-10-03T02:00",
-            "end": "2026-10-03T03:55",
-            "status": "done",
-            "priority": "P0"
-          },
-          {
-            "title": "IaC: BAZAAR_LIVE kept, no off services (#73)",
-            "start": "2026-10-03T01:50",
-            "end": "2026-10-03T04:10",
-            "status": "done",
-            "priority": "P1"
-          },
-          {
-            "title": "Instant pause on Railway (SSH PAUSE) ✓; shared DB switch later",
-            "start": "2026-10-03T04:15",
-            "end": "2026-10-03T13:00",
-            "status": "partial",
-            "priority": "P1",
-            "owner": "coordinator"
-          },
-          {
-            "title": "Our cards in the DB, real time (N13 #105 approved)",
-            "start": "2026-10-03T03:45",
-            "end": "2026-10-03T10:00",
-            "status": "wip",
-            "priority": "P0",
-            "owner": "worker"
-          },
-          {
-            "title": "Infra clean: bazaar-monitor deleted, IaC 0 drift",
-            "start": "2026-10-03T04:20",
-            "end": "2026-10-03T04:30",
-            "status": "done",
-            "priority": "P2",
-            "owner": "coordinator"
-          },
-          {
-            "title": "Jev picks the desk model per role (N15 #108 approved)",
-            "start": "2026-10-03T03:55",
-            "end": "2026-10-03T10:00",
-            "status": "wip",
-            "priority": "P1",
-            "owner": "worker"
-          }
-        ]
-      },
-      {
-        "name": "Trading (live)",
-        "bars": [
-          {
-            "title": "Live fixes #72 (+#61 #68), #62, #60: before 06:00",
-            "start": "2026-10-02T23:10",
-            "end": "2026-10-03T06:00",
-            "status": "wip",
-            "priority": "P0",
-            "owner": "worker (takeover)"
-          },
-          {
-            "title": "Taker + maker + duels LIVE",
-            "start": "2026-10-03T09:00",
-            "end": "2026-10-04T14:00",
-            "status": "wip",
-            "priority": "P0",
-            "owner": "agents"
-          },
-          {
-            "title": "Dealer ladder: walk, not the opening ask (N14)",
-            "start": "2026-10-03T09:00",
-            "end": "2026-10-03T13:00",
-            "status": "done",
-            "priority": "P1",
-            "owner": "Marius"
-          },
-          {
-            "title": "Duels II/III policy + days (D1)",
-            "start": "2026-10-03T12:00",
-            "end": "2026-10-03T17:30",
-            "status": "todo",
-            "priority": "P2"
-          },
-          {
-            "title": "One agent instead of three (ask Jev)",
-            "start": "2026-10-03T20:00",
-            "end": "2026-10-04T04:00",
-            "status": "todo",
-            "priority": "P2"
-          },
-          {
-            "title": "Bluffing + negotiation psychology in words (N16)",
-            "start": "2026-10-03T04:20",
-            "end": "2026-10-03T17:30",
-            "status": "wip",
-            "priority": "P1",
-            "owner": "worker"
-          },
-          {
-            "title": "Team-to-team swap threads (N17; triage #79 #98 #101)",
-            "start": "2026-10-03T04:30",
-            "end": "2026-10-03T17:30",
-            "status": "wip",
-            "priority": "P1",
-            "owner": "worker"
-          }
-        ]
-      },
-      {
-        "name": "Market making",
-        "bars": [
-          {
-            "title": "Own venue + broker (#71): ON by team decision, v19 open",
-            "start": "2026-10-03T03:20",
-            "end": "2026-10-03T06:00",
-            "status": "done",
-            "priority": "P1",
-            "owner": "worker"
-          },
-          {
-            "title": "Organic market making (M1)",
-            "start": "2026-10-03T13:00",
-            "end": "2026-10-03T20:00",
-            "status": "todo",
-            "priority": "P2"
-          },
-          {
-            "title": "v19 exact broker = stall's 0.5; edge broker (#218) behind BAZAAR_BENCH_POLICY",
-            "start": "2026-10-03T11:30",
-            "end": "2026-10-04T14:00",
-            "status": "partial",
-            "priority": "P1",
-            "owner": "maker"
-          }
-        ]
-      },
-      {
-        "name": "Intelligence",
-        "bars": [
-          {
-            "title": "Feed reader v1 (N12 #89 approved, 09:30 window)",
-            "start": "2026-10-03T02:10",
-            "end": "2026-10-03T10:00",
-            "status": "wip",
-            "priority": "P1",
-            "owner": "worker"
-          },
-          {
-            "title": "Feed reader v2: LLM over free text (#111 in review)",
-            "start": "2026-10-03T03:30",
-            "end": "2026-10-03T13:00",
-            "status": "wip",
-            "priority": "P1",
-            "owner": "worker"
-          },
-          {
-            "title": "Evals inside the agents (#91 approved, 09:30 window)",
-            "start": "2026-10-03T02:30",
-            "end": "2026-10-03T10:00",
-            "status": "wip",
-            "priority": "P2",
-            "owner": "worker"
-          },
-          {
-            "title": "Trade scanner + scarcity (T1, N14)",
-            "start": "2026-10-03T14:00",
-            "end": "2026-10-03T22:00",
-            "status": "todo",
-            "priority": "P2"
-          },
-          {
-            "title": "Learner v1: lessons + hybrid RAG (N3 #96 approved)",
-            "start": "2026-10-03T03:40",
-            "end": "2026-10-03T10:00",
-            "status": "wip",
-            "priority": "P0",
-            "owner": "worker"
-          },
-          {
-            "title": "Auto-evolve: learned dealer curves (N3 #112 in review)",
-            "start": "2026-10-03T04:00",
-            "end": "2026-10-03T20:00",
-            "status": "wip",
-            "priority": "P0",
-            "owner": "worker"
-          }
-        ]
-      },
-      {
-        "name": "Strategy (RAG)",
-        "bars": [
-          {
-            "title": "Hard dealers: learned curves + blockers + walk (N14)",
-            "start": "2026-10-03T12:00",
-            "end": "2026-10-03T18:00",
-            "status": "todo",
-            "priority": "P1",
-            "owner": "worker"
-          },
-          {
-            "title": "Packs: EV with supply, 3/hour (N14)",
-            "start": "2026-10-03T13:00",
-            "end": "2026-10-03T17:00",
-            "status": "wip",
-            "priority": "P1"
-          },
-          {
-            "title": "Supply + scarcity: print runs, holders (N14)",
-            "start": "2026-10-03T14:00",
-            "end": "2026-10-03T20:00",
-            "status": "wip",
-            "priority": "P1"
-          },
-          {
-            "title": "Custom markets: venue choice, our fee, rivals (N14)",
-            "start": "2026-10-03T12:00",
-            "end": "2026-10-03T19:00",
-            "status": "todo",
-            "priority": "P1"
-          },
-          {
-            "title": "Duels: rival profiles + delivery days (N14)",
-            "start": "2026-10-03T15:00",
-            "end": "2026-10-03T21:00",
-            "status": "todo",
-            "priority": "P1"
-          },
-          {
-            "title": "New pages + grants: El Retiro, Chamberí (N14)",
-            "start": "2026-10-03T09:00",
-            "end": "2026-10-03T12:00",
-            "status": "wip",
-            "priority": "P2"
-          },
-          {
-            "title": "Speed: Sunday 15 s ticks, all strategies in budget",
-            "start": "2026-10-03T21:00",
-            "end": "2026-10-04T05:00",
-            "status": "todo",
-            "priority": "P1"
-          }
-        ]
-      },
-      {
-        "name": "Safety",
-        "bars": [
-          {
-            "title": "Public /state leak follow-up (#121, before 06:00, Jev 0.99)",
-            "start": "2026-10-02T23:45",
-            "end": "2026-10-03T06:00",
-            "status": "wip",
-            "priority": "P0",
-            "owner": "worker"
-          },
-          {
-            "title": "Counterparty text hardening (S1)",
-            "start": "2026-10-03T10:00",
-            "end": "2026-10-03T16:00",
-            "status": "todo",
-            "priority": "P1",
-            "owner": "worker"
-          }
-        ]
-      },
-      {
-        "name": "Show & pitch",
-        "bars": [
-          {
-            "title": "Bazaar Live v1 deployed (bazaar-live #1 #2)",
-            "start": "2026-10-03T01:55",
-            "end": "2026-10-03T04:00",
-            "status": "done",
-            "priority": "P3",
-            "owner": "worker"
-          },
-          {
-            "title": "Score tracker (K1)",
-            "start": "2026-10-03T14:00",
-            "end": "2026-10-03T20:00",
-            "status": "todo",
-            "priority": "P2"
-          },
-          {
-            "title": "Web dashboard #43: own repo",
-            "start": "2026-10-03T09:00",
-            "end": "2026-10-03T18:00",
-            "status": "todo",
-            "priority": "P3",
-            "owner": "Marius"
-          },
-          {
-            "title": "Presentation + decision log (P1)",
-            "start": "2026-10-03T22:00",
-            "end": "2026-10-04T13:30",
-            "status": "todo",
-            "priority": "P0",
-            "owner": "Omar + team"
-          },
-          {
-            "title": "Bazaar Live v2: fantasy-RPG art, ES/EN voices (P2)",
-            "start": "2026-10-03T04:10",
-            "end": "2026-10-04T06:00",
-            "status": "wip",
-            "priority": "P2",
-            "owner": "worker"
-          },
-          {
-            "title": "Bazaar Live: real dealer + duel transcripts (Postgres read-only)",
-            "start": "2026-10-03T04:15",
-            "end": "2026-10-03T11:30",
-            "status": "wip",
-            "priority": "P2",
-            "owner": "worker"
-          }
-        ]
-      }
-    ]
-  }
+    },
+    {
+      "title": "Memory for decisions",
+      "body": "Learnings retain their evidence and scope. Retrieval can combine text search with local fastembed vectors when pgvector is available. The simulator keeps its world in a separate database.",
+      "sources": [
+        {
+          "label": "Learning store",
+          "href": "../src/bazaar_agent/learn/store.py"
+        },
+        {
+          "label": "Embeddings",
+          "href": "../src/bazaar_agent/learn/embed.py"
+        },
+        {
+          "label": "Simulator store",
+          "href": "../src/bazaar_sim/store.py"
+        }
+      ]
+    },
+    {
+      "title": "Logs + observability",
+      "body": "Decisions and executions are inspectable records, with local JSONL fallbacks for supported logs. Per-service volumes hold local state and PAUSE files; Phoenix receives traces. A local log does not replace shared write coordination.",
+      "sources": [
+        {
+          "label": "Decision log",
+          "href": "../src/bazaar_agent/decisions.py"
+        },
+        {
+          "label": "Telemetry",
+          "href": "../src/bazaar_agent/telemetry.py"
+        },
+        {
+          "label": "Observability guide",
+          "href": "../docs/observability.md"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "title": "Money and inventory",
+      "body": "GUARDRAILS.md is the checked-in policy source for holdings protection, price limits and approval thresholds. Actions recheck inventory and refuse moves that fail their gates; model verdicts cannot grant an override.",
+      "sources": [
+        {
+          "label": "Policy",
+          "href": "../GUARDRAILS.md"
+        },
+        {
+          "label": "Approvals",
+          "href": "../src/bazaar_agent/approvals.py"
+        }
+      ]
+    },
+    {
+      "title": "One team budget",
+      "body": "Every process shares the game key and its request limits. Game ticks set deadlines; the ledger coordinates action quotas across machines. Local PAUSE files stop writes for the processes using that data directory.",
+      "sources": [
+        {
+          "label": "Tick runtime",
+          "href": "../src/bazaar_agent/ticks.py"
+        },
+        {
+          "label": "Ledger",
+          "href": "../src/bazaar_agent/ledger_pg.py"
+        },
+        {
+          "label": "Service contracts",
+          "href": "../docs/services.md"
+        }
+      ]
+    },
+    {
+      "title": "Public vs privileged",
+      "body": "Agent status endpoints expose a redacted view. Runtime tools require authentication, approvals have a separate privilege, and counterparty messages remain untrusted data. Live mode is an operator-controlled setting.",
+      "sources": [
+        {
+          "label": "Status server",
+          "href": "../src/bazaar_agent/agents/status.py"
+        },
+        {
+          "label": "MCP boundary",
+          "href": "../src/bazaar_agent/runtime/mcp_server.py"
+        }
+      ]
+    }
+  ],
+  "development": [
+    {
+      "title": "Python + Postgres",
+      "body": "Python 3.12, uv, Pydantic, Typer and psycopg form the application stack. Docker Compose supplies local Postgres with pgvector and Phoenix. The presentation UI lives in bazaar-live.",
+      "sources": [
+        {
+          "label": "Dependencies",
+          "href": "../pyproject.toml"
+        },
+        {
+          "label": "Local services",
+          "href": "../docker-compose.yml"
+        }
+      ]
+    },
+    {
+      "title": "Focused CI",
+      "body": "Depot runs the linter, formatter, unit tests and Postgres integration tests. Simulator scenarios and evaluation tools are available for targeted experiments outside the required CI checks.",
+      "sources": [
+        {
+          "label": "Depot workflow",
+          "href": "../.depot/workflows/tests.yml"
+        },
+        {
+          "label": "Tests",
+          "href": "../tests"
+        },
+        {
+          "label": "Evaluations",
+          "href": "../src/bazaar_agent/evals"
+        }
+      ]
+    },
+    {
+      "title": "Reproducible docs",
+      "body": "The README status and this page have deterministic generators. Architectural facts live here; task history and implementation plans remain in the local backlog rather than a stale deployment timeline.",
+      "sources": [
+        {
+          "label": "Page generator",
+          "href": "../scripts/architecture_page.py"
+        },
+        {
+          "label": "Local backlog",
+          "href": "../.ai/specs/02-plan.md"
+        }
+      ]
+    }
+  ],
+  "references": [
+    {
+      "label": "README",
+      "href": "../README.md"
+    },
+    {
+      "label": "Service contracts",
+      "href": "../docs/services.md"
+    },
+    {
+      "label": "Infrastructure declaration",
+      "href": "../.railway/railway.py"
+    },
+    {
+      "label": "Runtime settings",
+      "href": "../RUNTIME.md"
+    },
+    {
+      "label": "Game briefing",
+      "href": "../docs/briefing.md"
+    }
+  ]
 }

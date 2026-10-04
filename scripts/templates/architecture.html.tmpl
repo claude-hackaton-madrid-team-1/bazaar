@@ -1,161 +1,121 @@
-<title>Bazaar Architecture</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Kalam:wght@400;700&family=Atkinson+Hyperlegible:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<style>
-/* Layout: Omar's whiteboard on top (the architecture, status-coloured), then a ledger of what is pending, by who acts next. */
-:root {
-  --bg: #f6f7f4; --paper: #ffffff; --ink: #1d2320; --muted: #5b655f; --line: #c9d0cb;
-  --done: #c6ecd0; --done-ink: #17643a; --wip: #cfe3ff; --wip-ink: #1d4f9c;
-  --part: #ffefb0; --part-ink: #7a5a00; --todo: #e7e9e6; --todo-ink: #4a524d; --accent: #c2410c;
-  --hand: "Kalam", "Comic Sans MS", cursive; --body: "Atkinson Hyperlegible", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
-}
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --bg: #141816; --paper: #1b201d; --ink: #e8ece9; --muted: #9aa59f; --line: #36403b;
-  --done: #1f4a30; --done-ink: #9be3b4; --wip: #1c3557; --wip-ink: #a9cbff; --part: #4a3d10; --part-ink: #ffe08a;
-  --todo: #2b312e; --todo-ink: #c3cbc6; --accent: #fb923c; color-scheme: dark } }
-:root[data-theme="dark"] {
-  --bg: #141816; --paper: #1b201d; --ink: #e8ece9; --muted: #9aa59f; --line: #36403b;
-  --done: #1f4a30; --done-ink: #9be3b4; --wip: #1c3557; --wip-ink: #a9cbff; --part: #4a3d10; --part-ink: #ffe08a;
-  --todo: #2b312e; --todo-ink: #c3cbc6; --accent: #fb923c; color-scheme: dark }
-body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.5 }
-.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 56px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px }
-header { display: grid; gap: 6px }
-.eyebrow { font: 500 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted) }
-h1 { font: 700 34px/1.1 var(--hand); margin: 0; text-wrap: balance }
-.sub { color: var(--muted); max-width: 70ch; margin: 0 }
-.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; color: var(--muted) }
-.legend span { display: inline-flex; align-items: center; gap: 6px }
-.sw { width: 14px; height: 14px; border-radius: 3px; border: 1.5px solid var(--ink) }
-.board { background: var(--paper); border: 1.5px solid var(--line); border-radius: 10px; overflow-x: auto }
-.board svg { display: block; width: 100%; min-width: 760px; height: auto }
-.board text { font-family: var(--hand); fill: var(--ink) }
-.board .t { font-size: 30px; font-weight: 700 } .board .s { font-size: 19px } .board .n { font-size: 17px; fill: var(--muted) }
-.board .edge { stroke: var(--ink); stroke-width: 2.2; fill: none }
-.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px }
-section h2 { font: 700 22px var(--hand); margin: 0 0 10px }
-.list { display: grid; gap: 10px }
-.item { background: var(--paper); border: 1.5px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 4px; min-width: 0 }
-.item b { font-weight: 700 }
-.item p { margin: 0; color: var(--muted); font-size: 14px }
-.pill { justify-self: start; font: 500 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px }
-.p-done { background: var(--done); color: var(--done-ink) } .p-wip { background: var(--wip); color: var(--wip-ink) }
-.p-part { background: var(--part); color: var(--part-ink) } .p-todo { background: var(--todo); color: var(--todo-ink) }
-code, .mono { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere }
-a { color: var(--accent) }
-footer { color: var(--muted); font-size: 13px }
-.tl-wrap { overflow-x: auto; background: var(--paper); border: 1.5px solid var(--line); border-radius: 10px }
-.tl { min-width: 1680px; padding: 6px 14px 14px }
-.tl-row { display: grid; grid-template-columns: 150px 1fr; border-top: 1px solid var(--line) }
-.tl-axis { border-top: 0 } .tl-axis .tl-track { height: 44px }
-.tl-name { font: 700 13px var(--body); padding: 9px 10px 0 0 }
-.tl-track { position: relative; min-height: 38px }
-.tl-events { height: 52px }
-.tl-closed { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(135deg, transparent 0 7px, var(--line) 7px 8px); opacity: .7 }
-.tl-tick { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--line) }
-.tl-tick span { position: absolute; top: 4px; left: 4px; font: 500 11px var(--mono); color: var(--muted); white-space: nowrap }
-.tl-marker { position: absolute; top: 0; bottom: 0; border-left: 2px solid var(--accent); z-index: 2 }
-.tl-marker.freeze { border-left-style: dashed }
-.tl-marker span { position: absolute; bottom: 2px; left: 4px; font: 700 11px var(--mono); color: var(--accent); white-space: nowrap; background: var(--paper); padding: 0 3px }
-.tl-now { position: absolute; top: 0; bottom: 0; border-left: 2px solid #e11d48; z-index: 3 }
-.tl-event { position: absolute; top: 6px; transform: translateX(-50%); text-align: center; z-index: 1 }
-.tl-event.low { top: 28px }
-.tl-event.last { transform: translateX(-100%) }
-.tl-event::before { content: ""; display: block; width: 9px; height: 9px; margin: 0 auto 1px; transform: rotate(45deg); background: var(--ink) }
-.tl-event span { font: 500 10px var(--mono); white-space: nowrap; color: var(--ink); background: var(--paper); padding: 0 2px }
-.tl-bar { position: absolute; min-width: 30px; height: 24px; display: flex; align-items: center; gap: 5px; padding: 0 6px; border: 1.5px solid var(--ink); border-radius: 6px; font-size: 12px; white-space: nowrap; overflow: hidden; z-index: 1; box-sizing: border-box }
-.tl-bar span { overflow: hidden; text-overflow: ellipsis }
-.tl-bar.out { overflow: visible }
-.tl-bar.out span { position: absolute; left: calc(100% + 6px); overflow: visible; color: var(--ink); font-weight: 500 }
-.tl-marker.end span { left: auto; right: 4px }
-.tl-bar.done { background: var(--done); color: var(--done-ink) } .tl-bar.wip { background: var(--wip); color: var(--wip-ink) }
-.tl-bar.part { background: var(--part); color: var(--part-ink) } .tl-bar.todo { background: var(--todo); color: var(--todo-ink) }
-.tl-bar .prio { font-size: 10px; padding: 0 4px }
-.prio { font: 700 11px var(--mono); padding: 1px 6px; border-radius: 4px; border: 1.5px solid var(--ink) }
-.prio.P0 { background: var(--accent); border-color: var(--accent); color: var(--paper) }
-</style>
-
-<div class="wrap">
-  <header>
-    <div class="eyebrow">Team 1 · Causa Prima hackathon · Madrid · status before Saturday 09:00 (30 s ticks)</div>
-    <h1>Bazaar Architecture</h1>
-    <p class="sub">Omar's original design, mapped to what runs today. Every box carries its status: Jev decides inside the guardrails, the LLM proposes and executes, Postgres remembers, and the buy/sell agents act on the game one tick at a time.</p>
-    <div class="legend">
-      <span><i class="sw" style="background:var(--done)"></i>Done / live</span>
-      <span><i class="sw" style="background:var(--wip)"></i>In progress (Orca worker)</span>
-      <span><i class="sw" style="background:var(--part)"></i>Partial</span>
-      <span><i class="sw" style="background:var(--todo)"></i>Pending / blocked</span>
-    </div>
-  </header>
-
-  <div class="board" role="img" aria-label="Architecture diagram: Postgres feeds STATE and the proposer LLM; the LLM proposes to Jev; Jev and the runtime LLM exchange decisions; Jev drives BUY/SELL, which reports back to the runtime; guardrails constrain Jev; Railway hosts the runtime.">
-    <svg viewBox="0 0 2000 1320" xmlns="http://www.w3.org/2000/svg">
-      <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink)"/></marker></defs>
-      <!-- edges -->
-      <path class="edge" marker-end="url(#ah)" d="M372,430 L448,412"/>
-      <path class="edge" marker-end="url(#ah)" d="M782,408 L862,388"/>
-      <path class="edge" marker-end="url(#ah)" marker-start="url(#ah)" d="M1272,380 L1588,380"/>
-      <path class="edge" marker-end="url(#ah)" d="M1160,592 L1480,760"/>
-      <path class="edge" marker-end="url(#ah)" d="M1640,760 L1720,576"/>
-      <path class="edge" marker-end="url(#ah)" d="M330,700 L250,560"/>
-      <path class="edge" marker-end="url(#ah)" d="M600,700 L610,578"/>
-      <path class="edge" marker-end="url(#ah)" d="M860,250 L960,356"/>
-      <path class="edge" marker-end="url(#ah)" d="M1780,322 L1780,376"/>
-
-      <!-- Postgres container -->
-      <rect x="50" y="700" width="790" height="580" rx="12" fill="none" stroke="var(--ink)" stroke-width="2" stroke-dasharray="10 8"/>
-      <text x="74" y="740" class="s">Railway Postgres 18.6 + pgvector 0.8.6 ✓</text>
-      $boxes
-    </svg>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Bazaar's implemented trading agents, safety gates, shared memory and deployment architecture.">
+  <title>Bazaar — architecture</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #f4f3ee; --paper: #fffefa; --ink: #222c2a; --muted: #596963; --line: #cbd4cc; --green: #195942; --soft: #e4ece4; --accent: #a74923; }
+    * { box-sizing: border-box; }
+    html { scroll-padding-top: 1.5rem; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    a { color: var(--green); text-underline-offset: .2em; }
+    a:hover { text-decoration-thickness: 2px; }
+    a:focus-visible, .table-wrap:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; border-radius: 2px; }
+    .skip { position: absolute; left: 1rem; top: -5rem; padding: .6rem 1rem; background: var(--paper); z-index: 2; }
+    .skip:focus { top: 1rem; }
+    .wrap { max-width: 1240px; margin: auto; padding: 0 2.5rem; }
+    header { border-top: 7px solid var(--green); border-bottom: 1px solid var(--line); padding: 3rem 0 2rem; }
+    .eyebrow, .section-label { color: var(--green); font-size: .75rem; font-weight: 750; letter-spacing: .15em; text-transform: uppercase; }
+    .eyebrow { display: flex; gap: 1rem; justify-content: space-between; flex-wrap: wrap; }
+    h1 { font-size: clamp(2.5rem, 7vw, 5rem); letter-spacing: -.04em; line-height: 1.05; margin: 1.4rem 0 1rem; }
+    .lead { max-width: 760px; font-size: 1.15rem; color: var(--muted); margin-bottom: 1.5rem; }
+    .note { max-width: 860px; font-size: .87rem; color: var(--muted); }
+    nav { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; margin-top: 1.5rem; font-size: .9rem; }
+    main { padding-bottom: 3rem; }
+    section { padding-top: 3rem; }
+    h2 { font-size: clamp(1.6rem, 4vw, 2.2rem); letter-spacing: -.035em; line-height: 1.2; margin: .4rem 0 1rem; }
+    h3 { font-size: 1.06rem; line-height: 1.3; margin: 0 0 .6rem; }
+    p { margin: 0 0 1rem; }
+    .section-intro { color: var(--muted); max-width: 820px; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+    .flow { grid-template-columns: repeat(4, minmax(0, 1fr)); list-style: none; padding: 0; margin: 1.3rem 0 0; }
+    .card { border: 1px solid var(--line); background: var(--paper); border-radius: 10px; padding: 1.4rem; min-width: 0; }
+    .card p { font-size: .9rem; }
+    .step { display: block; color: var(--green); font: 600 1.7rem/1.1 ui-monospace, monospace; margin-bottom: 1.5rem; }
+    .flow .card { border-top: 3px solid var(--green); }
+    .sources { font-size: .78rem; line-height: 1.7; overflow-wrap: anywhere; }
+    code { font: .88em/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+    .feedback { color: var(--green); background: var(--soft); border-radius: 6px; padding: .8rem 1rem; margin-top: 1rem; font-size: .86rem; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); }
+    table { border-collapse: collapse; width: 100%; font-size: .87rem; }
+    th, td { padding: 1rem 1.2rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    thead { background: var(--soft); font-size: .75rem; text-transform: uppercase; letter-spacing: .07em; }
+    tbody th { min-width: 130px; width: 15%; }
+    td:nth-child(2) { width: 27%; }
+    tr:last-child > * { border-bottom: 0; }
+    .guard .card { background: var(--soft); }
+    footer { border-top: 1px solid var(--line); padding: 1.5rem 0 2rem; color: var(--muted); font-size: .82rem; }
+    footer p { max-width: 850px; }
+    @media (max-width: 900px) { .grid, .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 600px) {
+      .wrap { padding: 0 1.2rem; } header { padding: 2rem 0 1.5rem; } section { padding-top: 2rem; }
+      .grid, .flow { grid-template-columns: 1fr; } .card { padding: 1.2rem; } .step { margin-bottom: .8rem; }
+      th, td { padding: .8rem; } table { min-width: 560px; } .lead { font-size: 1.05rem; }
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #14201c; --paper: #1c2a24; --ink: #e8eee6; --muted: #b3c3b7; --line: #3c5145; --green: #a3d5b4; --soft: #243a2e; --accent: #f3b28b; }
+    }
+    @media print { body { background: white; color: black; } header { padding-top: 1rem; } nav, .skip { display: none; } .card, tr { break-inside: avoid; } .wrap { max-width: none; padding: 0; } }
+  </style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to architecture</a>
+<header>
+  <div class="wrap">
+    <div class="eyebrow"><span>Bazaar / Team 1</span><a href="../README.md">Repository guide ↗</a></div>
+    <h1>One market.<br>Several agents. Shared limits.</h1>
+    <p class="lead">Autonomous negotiation for the Causa Prima hackathon. Python workers buy, sell and negotiate while a shared ledger and explicit guardrails gate every game action.</p>
+    <p class="note">This is a map of the implemented system and its declared deployment. It does not report current uptime, enabled feature flags or game standings. Source links below identify the code behind each part.</p>
+    <nav aria-label="Architecture sections">
+      <a href="#flow">Decision flow</a><a href="#intelligence">Reasoning</a><a href="#services">Services</a><a href="#memory">Shared memory</a><a href="#boundaries">Boundaries</a><a href="#development">Development</a>
+    </nav>
   </div>
-
-  <section>
-    <h2>Roadmap · Fri 2 → Sun 4 October</h2>
-    <p class="sub" style="margin-bottom:12px">Madrid time. Hatched = doors closed (build time). Solid lines = deadlines: <b>Sat 06:00</b> the live fixes are in (then no merges until ~09:30), <b>Sat 09:00</b> the market opens and every agent is live, Sun 14:00 final. Dashed = Sunday build freeze 06:00. Red = now. Game events follow the organisers' <code>/api/schedule</code> (game hour 4 = Sat 09:00, 18 = Sun 09:00). Hover a bar for its owner and times.</p>
-$timeline
+</header>
+<main id="main" class="wrap">
+  <section id="flow" aria-labelledby="flow-title">
+    <div class="section-label">01 / The trading loop</div>
+    <h2 id="flow-title">Read → decide → check → act</h2>
+    <p class="section-intro">The organisers’ API owns the clock, inventory and settlement. Workers respond to game ticks; they share one team key and one action budget.</p>
+    <ol class="grid flow">$flow</ol>
+    <p class="feedback">↩ Outcomes return through the game feed and fresh inventory reads, updating memory for the next decision.</p>
   </section>
-
-  <div class="cols">
-    <section>
-      <h2>Waiting on you</h2>
-      <div class="list">
-$waiting
-      </div>
-    </section>
-    <section>
-      <h2>Being built now</h2>
-      <div class="list">
-$built
-      </div>
-    </section>
-    <section>
-      <h2>Not started</h2>
-      <div class="list">
-$notstarted
-      </div>
-    </section>
-  </div>
-
-  <section>
-    <h2>Live links</h2>
-    <div class="list">
-$links
+  <section id="intelligence" aria-labelledby="intelligence-title">
+    <div class="section-label">02 / Reasoning paths</div>
+    <h2 id="intelligence-title">Policies, verdicts and operator tools</h2>
+    <p class="section-intro">Autonomous loops and the interactive desk have different entry points. Model output informs choices; validated Python actions own execution.</p>
+    <div class="grid">$intelligence</div>
+  </section>
+  <section id="services" aria-labelledby="services-title">
+    <div class="section-label">03 / Deployment inventory</div>
+    <h2 id="services-title">Workers and their interfaces</h2>
+    <p class="section-intro">The Railway partial declares these services. Deployment variables select live mode and optional capabilities; a declaration is not a health check. The CLI monitor runs separately.</p>
+    <div class="table-wrap" role="region" aria-label="Declared Railway services" tabindex="0">
+      <table><thead><tr><th scope="col">Service</th><th scope="col">Entry point</th><th scope="col">Responsibility and interface</th></tr></thead><tbody>$services</tbody></table>
     </div>
   </section>
-  <section>
-    <h2>Backlog</h2>
-    <div class="list">
-$backlog
-    </div>
+  <section id="memory" aria-labelledby="memory-title">
+    <div class="section-label">04 / State and feedback</div>
+    <h2 id="memory-title">Shared memory, separate records</h2>
+    <p class="section-intro">Postgres is shared by the trading processes and referenced by the Railway partial; the partial does not create or manage that database service.</p>
+    <div class="grid">$storage</div>
   </section>
-  <footer>Source of truth: the bazaar repo (<code>.ai/specs/01-spec.md</code>, <code>02-plan.md</code>, <code>docs/services.md</code>). Editable copy of this diagram: <code>docs/architecture.excalidraw</code>.</footer>
-</div>
-<script>
-(function () {
-  var tl = document.getElementById("tl");
-  if (!tl) return;
-  var s = Number(tl.dataset.start), e = Number(tl.dataset.end), n = Date.now();
-  if (n < s || n > e) return;
-  var left = ((n - s) / (e - s) * 100).toFixed(3) + "%";
-  tl.querySelectorAll(".tl-now").forEach(function (x) { x.style.left = left; x.hidden = false; });
-})();
-</script>
-
+  <section id="boundaries" class="guard" aria-labelledby="boundaries-title">
+    <div class="section-label">05 / Safety boundaries</div>
+    <h2 id="boundaries-title">A proposal is not permission</h2>
+    <div class="grid">$boundaries</div>
+  </section>
+  <section id="development" aria-labelledby="development-title">
+    <div class="section-label">06 / Local development</div>
+    <h2 id="development-title">Test without the live game</h2>
+    <div class="grid">$development</div>
+  </section>
+</main>
+<footer><div class="wrap">
+  <p>Generated from <a href="architecture.status.json">architecture.status.json</a> and a <a href="../scripts/templates/architecture.html.tmpl">static template</a>. Edit those sources, then run <code>python3 scripts/architecture_page.py</code>. No live credentials or browser scripts are needed to view this page.</p>
+  $references
+</div></footer>
+</body>
+</html>

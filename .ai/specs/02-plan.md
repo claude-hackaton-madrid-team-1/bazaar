@@ -732,3 +732,28 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 - Isolate runner and child database targets; validate local administration before connecting.
 - Align schedule clock origins, support the scenario's advertised dealer rarities, and pin the bluff test seed.
 - Review independent slices, run the final integrated gate once with pytest alone, then push `feat/sim-sunday`.
+
+### CI1 — four Depot checks ([spec](CI1-spec.md))
+
+- Scope: unit tests, integration tests, Black formatter and Ruff linter in Depot; remove automated
+  sim smoke and duplicate GitHub test workflows. Keep the simulator script for optional manual use.
+- Step 1: split pytest suites with the `integration` marker and an isolated Postgres 17 + pgvector service.
+- Step 2: update the workflow and documentation in parallel, then regenerate agent docs.
+- Step 3: run the four checks, verify the workflow configuration and complete the CI1 evidence report.
+- Older sim-smoke acceptance entries above are historical; CI1 removes sim smoke as a merge requirement.
+- Status: implementation and verification in progress; evidence belongs in CI1-spec.md.
+
+### DOC1 — repository documentation cleanup ([spec](DOC1-spec.md))
+
+- Replace the sprawling README with setup and navigation; keep practical operations in the docs.
+- Replace the architecture roadmap with an implementation map, checked against current source.
+- Simplify generated metadata, repair references, verify links and desktop/mobile rendering.
+- Parallel slices: README and its generator; architecture and its generator; independent source audit.
+- Status: implementation and local verification complete; evidence in DOC1-spec.md. Awaiting PR merge and post-merge hosted architecture publication.
+
+### SR1 — Sunday scoring, operator control and final presentation ([spec](SR1-spec.md))
+
+- Build gameplay/bench, backend control/evidence, and Live interaction in parallel with disjoint ownership.
+- Build the five-slide presentation against verified source and real images; integrate runtime/UI contracts.
+- Run focused checks, integrated gates and independent review; record evidence and push feature branches.
+- Preserve current duel policy, model/auth, shared budgets and coordinator-only safe deployment.

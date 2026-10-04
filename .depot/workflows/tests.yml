@@ -1,10 +1,7 @@
-# Depot CI Migration
-# Source: .github/workflows/tests.yml
-#
-# Changes made:
-# - Changed runs-on from "blacksmith-4vcpu-ubuntu-2404" to "depot-ubuntu-latest" in job "test"
-
 name: tests
+
+permissions:
+  contents: read
 
 on:
   pull_request:
@@ -14,18 +11,39 @@ on:
 
 jobs:
   test:
-    runs-on: depot-ubuntu-latest # was: blacksmith-4vcpu-ubuntu-2404. Nonstandard GitHub runner label detected, changed to default Depot runner.
+    runs-on: depot-ubuntu-24.04
     timeout-minutes: 10
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: bazaar
+          POSTGRES_DB: bazaar
+          POSTGRES_PASSWORD: bazaar # Disposable fixture credential, same as docker-compose.yml.
+        # Disposable test database, reachable only on the runner's loopback interface.
+        ports:
+          - 127.0.0.1:5433:5432
+        options: >-
+          --health-cmd "pg_isready -U bazaar -d bazaar"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@v6
       - name: Install the project and its dev tools (pyproject.toml + uv.lock)
         run: uv sync --locked
-      - name: Lint and types
+      - name: Linter
+        run: uv run ruff check src tests scripts
+      - name: Formatter
+        run: uv run black --check src tests scripts
+      - name: Unit tests
+        run: uv run pytest tests -m 'not integration' -q -rs
+      - name: Integration tests
+        env:
+          DATABASE_URL: postgresql://bazaar:bazaar@localhost:5433/bazaar
         run: |
-          uv run ruff check src tests scripts
-          uv run ruff format --check src tests scripts
-          uv run black --check src tests scripts
-          uv run mypy src
-      - name: Tests, API calls replayed from tests/fixtures/api (the DB test skips without Postgres)
-        run: uv run pytest tests -v -rs
+          uv run python -c 'import os, psycopg; psycopg.connect(os.environ["DATABASE_URL"], connect_timeout=5).close()'
+          uv run pytest tests -m integration -q -rs
