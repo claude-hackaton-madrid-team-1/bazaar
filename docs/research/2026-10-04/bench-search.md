@@ -15,9 +15,11 @@ against bids descending, cross while bid >= ask, at the midpoint) on session 9 (
 - `lookahead_bold` (a session under the stall weighed at half the fitted 0.5·E/Es) makes **0.70-0.71**, P(above)
   0.43-0.46 but P(below) 0.33-0.41, and **0.52-0.55** if nothing is paid under the stall. Weighing it at the full fit
   (an earlier version) gambled more and did worse under *both* rules (0.68-0.70 / 0.44-0.48).
-- **Recommendation: `lookahead_safe`** if the rule under the stall is uncertain; `lookahead_bold` gains ~0.04 points if
-  Saturday's fit holds. Either beats `exact` under both rules in every world tried except shorter lives (−50 %),
-  where `lookahead_safe` makes 0.604 / 0.497 (one book in four below the stall).
+- **Decision by the rule under the stall** (see the head-to-head with #292 below): if Saturday's fit (0.5·E/Es)
+  holds, `lookahead_bold` is best (0.70-0.72 in the sims against 0.63-0.68 for #292's `lookahead`; replay mean
+  0.80 against 0.70). If a session under the stall may pay nothing, `lookahead_safe` edges #292 in the sims (paired
+  sign test 112/64 books on cal_normal20) but loses the one normal-test replay (b137) badly, so **#292 stays the
+  default call** and the swap is ready on `feat/bench-search-292`.
 - The env flip is a maker-only restart in the 10:42-12:30 window (bench-sim's runbook); `BAZAAR_BENCH_POLICY` unset
   or `exact` keeps today's behaviour. Marius decides; nothing was pushed or set.
 
@@ -44,7 +46,11 @@ max 0.33 s. Both are far inside the ~13 s budget.
 
 **Verdict: no clear winner under the zero-below rule.** `lookahead_safe` wins the calibrated sims by about 0.01-0.05
 points, but the two real replays split hard: b120 is safe +0.23, and b137 (session 8, a normal test like session 9)
-is #292 +0.22, from one large holding gain (#292 margin +0.075 there). The mean of the two replays is level (0.632
+is #292 +0.22, from one large holding gain (#292 margin +0.075 there). The two priors are identical field for field (#292's
+`LookaheadPrior` = the harness's calibrated world = `PosteriorPrior`), so b137 is not in-sample for #292: the split
+comes from the objectives. A paired sign test on the same books, zero-below points, safe against #292:
+cal_normal20 112 better / 64 worse, cal_hard24 124 / 90, uniform 117 / 106; replay b120 192 / 81, replay b137
+1 / 71. The mean of the two replays is level (0.632
 against 0.625). My call is to keep #292 unless the sim worlds are weighted over the single b137 replay. The swap
 is ready: branch `feat/bench-search-292` = `15dc2cfc` + the posterior planner, gates green,
 `BAZAAR_BENCH_POLICY=lookahead_safe`.
@@ -107,7 +113,7 @@ the stall):
 | cal_normal20_uniform | **lookahead_safe** | +0.0040 | 0.372 | 0.256 | -0.281 | **0.677** | **0.558** |
 | cal_normal20_uniform | lookahead_bold | -0.0047 | 0.456 | 0.408 | -0.281 | 0.712 | 0.524 |
 
-`cal_hard24` has 12 traders a side while the planner assumes 10: a mis-specified count costs little.
+`cal_hard24` has 12 traders a side. In this table (branch `feat/bench-search`) the planner assumed 10, and the miscount cost little. The head-to-head passes the true count, as #292's harness does.
 
 The weight of a session under the stall in the planner's own scoring (`below`, 900 books, E[points] / E0):
 

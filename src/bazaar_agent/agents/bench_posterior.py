@@ -238,7 +238,7 @@ def candidate_sets(
                 if all(a[1] <= b[1] for a, b in zip(ss, bs, strict=True)):
                     out.append((tuple(a[0] for a in ss), tuple(b[0] for b in bs)))
     out.sort(key=lambda c: -len(c[0]))
-    return out[:cap]
+    return out[: cap - 1] + [((), ())] if len(out) > cap else out  # holding everything always stays a candidate
 
 
 def pair_up(asks: Mapping[str, int], bids: Mapping[str, int], sells: Sequence[str], buys: Sequence[str]) -> list[Pair]:
@@ -255,7 +255,7 @@ class PosteriorPolicy:
     samples: int = 96
     min_edge: float = 0.01  # points a candidate must gain over the stall's own set
     below: float = 1.0  # the points rule under the stall the samples score with (`points`)
-    max_candidates: int = 64
+    max_candidates: int = 128
     seed: int = 0
     runs: dict[str, dict[str, Seen]] = field(default_factory=dict)
     starts: dict[str, int] = field(default_factory=dict)

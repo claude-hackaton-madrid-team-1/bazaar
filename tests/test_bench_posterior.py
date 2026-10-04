@@ -108,6 +108,13 @@ def test_candidates_are_the_sets_that_cross_together():
     assert (("s2",), ("b2",)) not in cands  # 70 > 40
 
 
+def test_holding_everything_survives_the_cap():
+    asks = [(f"s{k}", 30 + k) for k in range(5)]
+    bids = [(f"b{k}", 80 + k) for k in range(5)]
+    cands = candidate_sets(asks, bids, 16)
+    assert len(cands) == 16 and ((), ()) in cands
+
+
 def test_the_posterior_reads_firmness_and_lives_off_the_path():
     prior = PosteriorPrior()
     firm = posterior(Seen("b1-10", "sell", 2, [80, 80, 80]), prior, now=6, ticks=16)
