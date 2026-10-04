@@ -3,11 +3,13 @@
 import json
 import time
 from copy import deepcopy
+from pathlib import Path
 
 import psycopg
 import pytest
 
 from bazaar_agent.agents.bench_capture import EVIDENCE_FILE, FILE_NAME, BenchBooks, rows_for, run_of, side_and_quote
+from bazaar_agent.agents.matcher import BrokerBook
 from bazaar_agent.sdk import BazaarError
 from tests.agent_fakes import clock
 from tests.test_broker_agent import FakeBroker, agent
@@ -192,3 +194,36 @@ def test_an_unwritable_stats_dir_never_stops_the_tick(tmp_path):
     a.books = BenchBooks(None, blocker / "agents", lines.append)
     a.on_tick(clock(7))
     assert any("bench books: file failed" in x for x in lines)
+
+
+# A real `GET /api/broker/book` of our venue v19 during Saturday's Market Test b52 (session 3, tick ~686), read-only:
+# bench buyers bid `give.cash` and want `bench:cromo`, the seller asks `want.cash`, every offer carries `bench: true`.
+REAL_BOOK = json.loads((Path(__file__).parent / "fixtures" / "broker_book_bench_b52.json").read_text())
+
+
+def test_a_real_bench_book_becomes_one_row_per_trader():
+    book = BrokerBook.model_validate(REAL_BOOK)
+    rows = rows_for("real", 686, book.bench_offers, "v19", book.fee_bps, book.fee_per_card)
+    assert [r[:9] for r in rows] == [
+        ("real", "b52", 686, "b52-2", "buy", 42, "v19", 0, 0),
+        ("real", "b52", 686, "b52-7", "buy", 35, "v19", 0, 0),
+        ("real", "b52", 686, "b52-8", "buy", 26, "v19", 0, 0),
+        ("real", "b52", 686, "b52-10", "sell", 62, "v19", 0, 0),
+    ]
+    assert rows[0][9] == REAL_BOOK["bench_offers"][0]  # the raw offer, whole
+
+
+def test_the_broker_records_a_real_bench_book_for_postgres(tmp_path):
+    sink: list = []
+    broker = FakeBroker(bench=REAL_BOOK["bench_offers"])
+    a = agent(tmp_path, broker)
+    a.books = BenchBooks(lambda: FakeConn(sink), tmp_path, world="real", venue="v19", inline=True)
+    a.on_tick(clock(686))
+    books = [r for r in sink if len(r) == 10]  # bench_books rows; the 6-column ones are bench_evidence
+    assert sorted((r[1], r[3], r[4], r[5]) for r in books) == [
+        ("b52", "b52-10", "sell", 62),
+        ("b52", "b52-2", "buy", 42),
+        ("b52", "b52-7", "buy", 35),
+        ("b52", "b52-8", "buy", 26),
+    ]
+    assert {r[0] for r in books} == {"real"} and {r[2] for r in books} == {686}
