@@ -1399,3 +1399,6 @@ Keep h14.65/h15 tests explicitly UNVERIFIED at opening. A Sunday-focused axis av
 - Final integration exposed an outdated ledger assertion expecting only accept/spend. The new pre-send publication row is intentional; the test now verifies all three and still proves no repeated accept after recovery.
 - Automatic Workshop crafting now holds the shared publication lock, merges pending copies, and reserves all three inputs before dispatch. Definitive rejection releases them; uncertain results keep them until holdings prove consumption. The existing craft accounting event is zero-value spend, not listing.
 - Black/Ruff disagreed on a multiline pytest fixture parameter's noqa placement; moved the suppression to the actual parameter. Legacy manual Workshop commands still require autonomous writers paused.
+
+### [2026-10-04] build-error — Market Test timeout evidence
+- Final review found HTTP 408 labelled as a refused bench match in the new evidence stream. A timeout does not prove refusal; classify it as unknown consistently with publication safety. A 400/408/503 regression passes with the broker tests (33 passed).

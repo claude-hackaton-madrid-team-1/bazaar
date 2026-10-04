@@ -5,8 +5,10 @@ import time
 from copy import deepcopy
 
 import psycopg
+import pytest
 
 from bazaar_agent.agents.bench_capture import EVIDENCE_FILE, FILE_NAME, BenchBooks, rows_for, run_of, side_and_quote
+from bazaar_agent.sdk import BazaarError
 from tests.agent_fakes import clock
 from tests.test_broker_agent import FakeBroker, agent
 from tests.test_matcher import bench_buy, bench_sell
@@ -165,6 +167,20 @@ def test_the_broker_records_the_book_it_read_without_a_second_request(tmp_path):
     assert len(reads) == 1
     row = json.loads((tmp_path / "agents" / FILE_NAME).read_text().splitlines()[0])
     assert row["tick"] == 7 and {o["id"] for o in row["offers"]} == {"b1-1", "b1-2"}
+
+
+@pytest.mark.parametrize("status,state", [(400, "refused"), (408, "unknown"), (503, "unknown")])
+def test_match_evidence_distinguishes_refusal_from_uncertainty(tmp_path, status, state):
+    class FailingBroker(FakeBroker):
+        def match(self, sell, buy, price):
+            raise BazaarError("failed", "no definite result", status)
+
+    broker = FailingBroker(bench=[bench_sell("b1-1", 20), bench_buy("b1-2", 40)])
+    agent(tmp_path, broker, live=True, allow_venue_open=True).on_tick(clock(7))
+    evidence = [json.loads(line) for line in (tmp_path / "agents" / EVIDENCE_FILE).read_text().splitlines()]
+    response = next(row["payload"] for row in evidence if row["kind"] == "match_response")
+    assert response["state"] == state
+    assert response["http_status"] == status
 
 
 def test_an_unwritable_stats_dir_never_stops_the_tick(tmp_path):

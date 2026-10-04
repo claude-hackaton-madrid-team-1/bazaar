@@ -589,7 +589,7 @@ class BrokerAgent:
             answer = self.rec.send(did, tick, "broker_match", request, lambda: self.broker.match(**request))
             refused = answer is None
             if m.sell.bench:
-                state = "refused" if 400 <= self.rec.last_status < 500 else "unknown"
+                state = "refused" if 400 <= self.rec.last_status < 500 and self.rec.last_status != 408 else "unknown"
                 if not refused:
                     state = "queued_or_acknowledged"
                 self.books.evidence(
