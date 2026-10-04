@@ -552,14 +552,16 @@ def ran(k, tick, t_hours, open_=True):
     k.on_tick(s.clock, s, window(open_))
 
 
-def test_our_venue_is_announced_once_then_once_every_10_ticks(tmp_path):
+def test_our_venue_is_announced_once_then_once_every_20_ticks(tmp_path):
     broker = AnnouncingBroker()
     k = announcing(tmp_path, broker)
     ran(k, 400, 6.5)
     ran(k, 401, 6.51)
     ran(k, 409, 6.58)
     assert len(broker.notes) == 1
-    ran(k, 410, 6.59)
+    ran(k, 419, 6.66)
+    assert len(broker.notes) == 1
+    ran(k, 420, 6.67)
     assert len(broker.notes) == 2
     note = broker.notes[0]
     assert note.startswith("Team 1 market (v09): 0 % fee.") and len(note) <= vn.ANNOUNCE_MAX_CHARS

@@ -153,7 +153,7 @@
     {
       "name": "bazaar-taker",
       "command": "bazaar agent taker",
-      "role": "Buys from venue asks and negotiates dealer purchases. Public read-only /health, /state and WebSocket /events.",
+      "role": "Buys from venue asks, checks official values before dealer openings, and negotiates structured swaps or cash offers with teams. Public read-only /health, /state and WebSocket /events.",
       "sources": [
         {
           "label": "Taker source",

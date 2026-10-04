@@ -411,6 +411,8 @@ broker match; `uv run bazaar venue close <id> --live` closes it (the bond comes 
 Market Test session counts the best venue open during it, and a session with no venue open counts 0, per
 RULES.md). The kill switch stops all of it.
 
+The automatic venue notice waits at least 20 game ticks between announcements and honors the server's next-tick cooldown hint. Feed history restores this cadence after a restart.
+
 **By hand** (laptop, dry run unless `--live`): `uv run bazaar venue status | open | close | fee | announce`
 and `uv run bazaar broker run`. **Prove it on the simulator**: `uv run python scripts/sim_market_test.py`
 (an in-process `bazaar_sim`, the maker live against it, our efficiency next to the stall's per session).

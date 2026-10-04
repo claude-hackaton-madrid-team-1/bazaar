@@ -146,14 +146,36 @@ def notice_keeper(tmp_path, broker, source=None, **kw):
     return k
 
 
-def test_a_notice_then_one_every_10_ticks_the_servers_window(tmp_path):
+def test_a_notice_then_one_every_20_ticks_the_servers_window(tmp_path):
     broker = AnnouncingBroker()
     k = notice_keeper(tmp_path, broker)
-    for tick in range(400, 420):
+    for tick in range(400, 440):
         run(k, tick)
-    assert len(broker.notes) == 2  # ticks 400 and 410
-    run(k, 420)
+    assert len(broker.notes) == 2  # ticks 400 and 420
+    run(k, 440)
     assert len(broker.notes) == 3
+
+
+def test_sunday_server_cooldown_has_no_avoidable_wait_refusals(tmp_path):
+    class SundayBroker(AnnouncingBroker):
+        tick = 0
+        last = -20
+        refused = 0
+
+        def announce(self, text):
+            if self.tick - self.last < 20:
+                self.refused += 1
+                raise BazaarError("wait", "one notice per venue every 20 ticks", 429)
+            self.last = self.tick
+            return super().announce(text)
+
+    broker = SundayBroker()
+    k = notice_keeper(tmp_path, broker)
+    for tick in range(400, 520):
+        broker.tick = tick
+        run(k, tick, tick_seconds=15)
+    assert len(broker.notes) == 6
+    assert broker.refused == 0
 
 
 def test_at_most_24_notices_per_game_hour_when_ticks_are_short(tmp_path):
@@ -172,10 +194,10 @@ def test_a_restarted_keeper_waits_for_the_notice_the_feed_shows_instead_of_retry
     broker = AnnouncingBroker()
     k = notice_keeper(tmp_path, broker)
     feed = [announced(380, "v02"), announced(396), announced(399, "v07")]
-    for tick in range(400, 406):
+    for tick in range(400, 416):
         run(k, tick, feed)
     assert broker.notes == []
-    run(k, 406, feed)
+    run(k, 416, feed)
     assert len(broker.notes) == 1
 
 
@@ -191,7 +213,7 @@ class WaitBroker(AnnouncingBroker):
         return super().announce(text)
 
 
-@pytest.mark.parametrize(("extra", "next_try"), [(None, 410), ({"next_tick": 450}, 450)])
+@pytest.mark.parametrize(("extra", "next_try"), [(None, 420), ({"next_tick": 450}, 450)])
 def test_a_wait_refusal_is_honoured_and_never_retried_tick_after_tick(tmp_path, extra, next_try):
     broker = WaitBroker(extra)
     k = notice_keeper(tmp_path, broker)
@@ -205,9 +227,9 @@ def test_a_wait_refusal_is_honoured_and_never_retried_tick_after_tick(tmp_path, 
 def test_the_keeper_names_the_matrix_cards_and_falls_back_to_the_generic_notice(tmp_path):
     named = AnnouncingBroker()
     k = notice_keeper(tmp_path / "named", named, source=lambda tick: matrix(tick, DEMAND, ("t03", "t05")))
-    run(k, 400)  # turn 40: the pool of 5 (LAV-04, RET-10, LAT-08, LAT-09, LAV-08) starts at 40 * 4 % 5 = 0
+    run(k, 400)  # turn 20: the pool of 5 (LAV-04, RET-10, LAT-08, LAT-09, LAV-08) starts at 20 * 4 % 5 = 0
     assert named.notes and "Wanted now: LAV-04, RET-10, LAT-08, LAT-09 (teams" in named.notes[0]
-    run(k, 410)  # the next turn starts 4 further on
+    run(k, 420)  # the next turn starts 4 further on
     assert "Wanted now: LAV-08, LAV-04, RET-10, LAT-08 (" in named.notes[1]
     rows_ = [d for d in rows(tmp_path / "named") if d.get("kind") == "venue_announce"]
     assert rows_[0]["inputs"]["cards"] == ["LAV-04", "RET-10", "LAT-08", "LAT-09"]

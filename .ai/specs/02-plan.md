@@ -774,3 +774,11 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 - Keep zero-cap planning bounded by available uncommitted cash; preserve positive-cap behavior.
 - Audit runtime call paths and review safety in parallel; validate disabled approval-service access.
 - Update operating guidance, run the full gate and create a separate PR.
+
+### TT1 — Trading throughput on 15-second ticks ([spec](TT1-spec.md))
+
+- Repair incoming-team inactivity, structured cash negotiation and dealer slot accounting.
+- Apply fresh official value before dealer openings; skip known infeasible final prices.
+- Refresh strategy decisions on state change/failure; honor20tick announcement cooldown.
+- Integrate and test real agent paths, obtain independent reviews and run the full gate once frozen.
+- Use guarded rollout and verify live timing without claiming unobserved trades or score gains.
