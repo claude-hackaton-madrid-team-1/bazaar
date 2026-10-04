@@ -678,8 +678,7 @@ class Maker:
         return self._refund_at(offer, run.snap.clock)
 
     def _refund_at(self, offer: OpenOffer, clock: Clock) -> LedgerRow:
-        """A bid's refund, dated exactly at its spend when this process booked it (it then leaves the hour's
-        window with it), else at `refund_row`'s conservative date (from its created tick)."""
+        """Fallback refund date; the ledger atomically recovers a persisted exact date when known."""
         if offer.id in self._spent_at:
             tick, t_hours = self._spent_at[offer.id]
             return ("spend", tick, t_hours, -offer.price, offer.ref)
@@ -717,14 +716,18 @@ class Maker:
         )
         if status != "approved":
             return False
+        refunded = self._refunded(run, offer) if not self.live else 0
         if self.live:
             if self.rec.send(did, tick, "cancel", {"offer": offer.id}, lambda: self.team.cancel(offer.id)) is None:
                 return False
             if self.jev is not None:
                 self.jev.watch.cancelled(offer.id)
             if offer.side == "bid":  # a bid's cash was counted as spend when posted: give it back
-                self.ledger.record(*self._refund(run, offer))
-        run.spent -= self._refunded(run, offer)  # `base` was read before the refund: later checks see it here
+                _, spent_tick, at, _, item = self._refund(run, offer)
+                refunded_at = self.ledger.refund_bid(spent_tick, at, offer.price, item)
+                if refunded_at is not None and refunded_at > run.base.t_hours - 1.0:
+                    refunded = offer.price
+        run.spent -= refunded  # `base` was read before the refund: later checks see it here
         self._forget(offer.id)  # after `_refunded`, which dates the refund as the ledger row above
         run.offers = [o for o in run.offers if o.get("id") != offer.id]
         run.open_total -= 1
@@ -1146,8 +1149,11 @@ class Maker:
                 and not paused
                 and feed_ok
             ):
-                self.ledger.record(*self._refund_at(bid.offer, clock))
-                self.log(f"tick {clock.tick} maker: bid {oid} for {ref} at {bid.offer.price} lapsed unfilled: refunded")
+                _, spent_tick, at, _, item = self._refund_at(bid.offer, clock)
+                if self.ledger.refund_bid(spent_tick, at, bid.offer.price, item) is not None:
+                    self.log(
+                        f"tick {clock.tick} maker: bid {oid} for {ref} at {bid.offer.price} lapsed unfilled: refunded"
+                    )
             self._spent_at.pop(oid, None)
         for oid, bid in self._bids.items():
             if oid in present or oid in self._lapsing:

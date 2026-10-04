@@ -1402,3 +1402,27 @@ Keep h14.65/h15 tests explicitly UNVERIFIED at opening. A Sunday-focused axis av
 
 ### [2026-10-04] build-error — Market Test timeout evidence
 - Final review found HTTP 408 labelled as a refused bench match in the new evidence stream. A timeout does not prove refusal; classify it as unknown consistently with publication safety. A 400/408/503 regression passes with the broker tests (33 passed).
+
+### [2026-10-04] build-error
+LF1 live audit: dealer conversations at ticks 1522–1537 reached 24/23 P finals with only 18 P hourly room → ordinary plans bypassed the room cap when final-lift/policies were absent → apply room to every dealer plan and skip known negotiated fills above it. Independent focused regression: 79 passed. The 160 P MAL-11 bid was verified open, not a stale reservation; do not refund it or raise the cap.
+
+### [2026-10-04] finding
+At tick 1539 rank 9, score 23.63, cash 561; only LAV-04 was a spare. Current-round raw duel/team points were 0 at 1540. Six bench evidence rows at 1516 were historical start replays, not live Sunday books. `book_levels` empty means missing stored evidence, not an empty market. Production Live tick updates and two actual TTS/browser playback samples passed; physical mic/speakers remain untested. LF1-report.md has bounded evidence and limitations.
+
+### [2026-10-04] gotcha
+Sunday schedule changed after the pre-opening audit: round 3 actually started tick 1446. The live schedule read at now_hours 14.037 gives hard bench14.65, bench15, DuelsIII15.367, final duels18.367 and freeze19.367. Replace the obsolete h16.65 opening anchor in active operating guidance; always use current clock/schedule and deploy guard.
+
+### [2026-10-04] build-error
+LF1 documentation update initially searched for a section after the final schedule section → substring lookup failed before saving briefing changes → use the verified end of the file, rerun and regenerate agent docs. Focused regression initially retained an obsolete zero-room expectation and changed denied-plan skip logging → correct the expectation and preserve the existing aggregate skip row; 79 tests pass.
+
+### [2026-10-04] build-error
+LF1 diff check flagged a trailing blank line in briefing.md → documentation replacement retained a second terminal newline → normalize to one newline and rerun diff check.
+
+### [2026-10-04] build-error
+LF1 expiry refund: restart lost the original timestamp; max_tick_seconds=60 backdated a Sunday15s bid's -160 refund outside the hour → recover unique persisted listing/spend timestamp and atomically refuse prior credits. Independent review caught a race in the first lookup-only patch → replace it with transactional/flock check-and-insert; concurrent PG regression proves one credit. Existing wrong-date credit blocks another.
+
+### [2026-10-04] finding
+LF1 coordinator correction tick1592: ledger431 kept price-160 and adopted ledger422 timestamp13.7208; exact three-row predicates/table lock/count checks, fresh real offers/holdings and zero captured matching settlements preceded the update. Hourly spend250→90, row count unchanged; independent reconnect verified paired +/-160. No game action or guardrail change. Taker/maker ordinary15s ticks1552–1582 had no gaps, minimum4.4s/4.8s left; future peak-event load remains unverified.
+
+### [2026-10-04] build-error
+LF1 full gate: two continuation fixtures expected18P opening despite new planner correctly choosing8P common → open with adequate cash, then lower cash for the continuation assertion;19passed. Local PG fixture connection timed out before test body → isolated holdings rerun26passed. Refund integration initially used /dev/null as envfile → use regular emptyfile;5PGpassed. Read-only audit queried nonexistent snapshot.ts → use actual schema. Repair runner passed SecretStr to psycopg before connecting → unwrap in memory without logging; guarded correction then verified. Railway query from unlinked worktree → use linked original checkout and explicit environment/service.

@@ -78,10 +78,11 @@ The mechanics the rules audit corrected on Sat 3 Oct (commit 8dbf50b7) live in `
   opening price scores 0, the dealer's final scores the whole range; best 3 per level; restarts every
   round). Per round, market-making is about 22.5 × Market Test `bench_points` + 7.5 × organic, and
   negotiating is about ladder 7.5 + duels 7.5 + team trades 15, each capped at the top-3 mean. A
-  round starts on the organisers' `round` action in `/api/schedule` (round 2 at tick 160, round 3 at
-  game hour 16.65, Sun 09:00 CEST, coinciding with Sunday opening). The live schedule on 4 Oct
-  quotes "Sunday opens" and "Round 3 starts" at h16.65. One game hour is one real hour on Sunday;
-  "Scores freeze" is h22.65, 15:00 CEST. Source: `docs/briefing.md`.
+  round starts on the organisers' `round` action (round 2 at tick 160, round 3 observed at tick
+  1446, "Sunday · Chamberí"). The organisers changed Sunday's schedule after the pre-opening read.
+  Use live `/api/clock` and `/api/schedule`, not the obsolete h16.65 opening anchor. The read at
+  `now_hours=14.037` schedules Duels III at h15.367 and scores freeze at h19.367; doors close at
+  15:00 CEST. Source and remaining event windows: `docs/briefing.md`.
 - **Page cards still cost points when sold:** `your_value` is the collection value lost by removing
   that copy, and on a complete page our only copy of a page card carries the whole page bonus. On
   Sat 3 Oct (tick 948) selling such a copy dropped `neg_points` 134.7 → 44.6 although "holdings never

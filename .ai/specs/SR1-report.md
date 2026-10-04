@@ -12,9 +12,9 @@ Existing presentation files remain local and are excluded from the PR.
 | 3. Bench request/response/terminal evidence | Verified | `test_bench_capture.py` and broker tests exercise distinct correlated evidence, database/file recording and non-blocking failure behavior. Included in `5535 passed, 1 skipped, 2 xfailed, 42 subtests passed`. A submitted match is not labelled settled. |
 | 4. Truthful operator snapshot | Verified | Independent runtime/integration run: `103 passed`. `test_runtime_operator.py` covers provenance, fresh state, score, unknown activity and pending promises. |
 | 5. Exact-term MCP approval and uncertain submissions | Verified | Independent review run: `76 passed in 1.90s` across runtime operator/human tools/publication/Postgres tests. Covers single-use dispatch, world/team binding, stale terms, human authority, pre-send reservation and no blind retry. |
-| 6. Live operator input and bounded truthful narration | Verified | Bazaar Live [PR 58](https://github.com/claude-hackaton-madrid-team-1/bazaar-live/pull/58), final head `74a5b4e`: hosted Depot `CI / check pass 52s`, with `1217` unit and `132` Postgres integration tests. Local formatter/linter/typecheck/build passed. |
+| 6. Live operator input and bounded truthful narration | Verified | Bazaar Live [PR 58](https://github.com/claude-hackaton-madrid-team-1/bazaar-live/pull/58), final head `2f87ac94`: hosted Depot `CI / check pass 50s`, with `1226` unit and `132` Postgres integration tests. Local formatter/linter/typecheck/build passed. |
 
-Implementation metric: **6/6 verified, 100%** for the accepted implementation criteria. No deployment or score improvement is claimed.
+Implementation metric: **6/6 verified, 100%** for the accepted implementation criteria. Implementation checks and production rollout are recorded separately below. No score improvement is claimed.
 
 ## Validation
 
@@ -30,11 +30,17 @@ Gameplay, backend, UI and documentation were split across independent workers. R
 
 The branch includes the existing CI and documentation work from PRs 266/267 and current main `235f296e`. CI has four categories: unit, integration, formatter and linter. No Blacksmith or simulator smoke gate remains.
 
-The coordinator must pause all writers, apply the idempotent schema migration, upgrade every writer, and resume only in a safe event window. Older writer processes do not honor the new durable promises. See [operations](../../docs/operations.md).
+The coordinator completed this rollout on 4 October. All four writers were paused; the additive schema delta was applied transactionally and independently read back; `scripts/merge_safe.sh 272` passed the live guard before merging. Backend merge `56ec5b682a39f71a81c418b21b7d06332d167e1a` and Live merge `256c373849ba1cb9cb365fcb5f42660f67b11f26` reached Railway `SUCCESS`. Source hashes were checked on the new backend instances before resuming them. See [operations](../../docs/operations.md).
+
+Final independent backend gate after three additional HTTP 408 regression cases: `5538 passed, 1 skipped, 2 xfailed, 42 subtests passed in 120.85s`. Hosted backend CI passed in `2m10s`.
+
+Production readback: taker and maker returned `HTTP 200`, `paused: false`, shared ledgers and advancing ticks `1520 → 1523`; duels advanced through `1522`. Bounded logs contained no ERROR/Traceback/schema/ledger/publication exception signatures. MCP returned `HTTP 200` and exposed 23 tools. This is a bounded health check, not a claim that every future event succeeds.
+
+Authenticated Live validation at ticks `1540 → 1541 → 1542` observed real clock, dealer and incident updates, plus historical team, Jev, duel, settlement and Market Test records. Two short production voice requests returned `200 audio/mpeg`: narrator `66,499 bytes`, `4.08 s`, `1,254 ms`; Jev `46,019 bytes`, `2.8 s`, `908 ms`. Both decoded and completed browser playback. The check made zero game writes; the temporary credential file was deleted.
 
 ## Unverified
 
-- Production migration/deployment, post-deployment throughput and any effect on score.
+- Sustained post-deployment throughput, fresh occurrences of every scheduled event category and any effect on score.
 - A real microphone session; voice input only edits a proposal and cannot authorize it.
 - Automatic reconciliation proves uniquely matching new posted offers. Other uncertain actions remain blocked for evidence review.
 - Team-cash automation accepts eligible existing offers. It does not add a new autonomous multi-round negotiation policy.
@@ -43,5 +49,5 @@ The coordinator must pause all writers, apply the idempotent schema migration, u
 
 ## Could-not-do
 
-- No live game writes or Railway deployment were performed. Production rollout belongs to the coordinator under the repository contract.
-- Hosted architecture republication is a post-merge step and has not been performed.
+- Physical microphone/speaker interaction was not available to the automated playback check.
+- The required Claude architecture artifact is read-only in the available account. Republish requires the artifact owner; no replacement was published.

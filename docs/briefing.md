@@ -26,7 +26,7 @@ The four quests from slide 3: **Collect · Haggle · Trade · Run a market**. Th
 - **Never counts:** number of trades, fees collected, pack luck, gifts, easter eggs, organiser grants.
 - **Rounds:** rounds are averaged; Friday counts half. The organisers on Sunday: Friday 20 %, Saturday 40 %, Sunday 40 % of the game score ([Sun 09:18](transcripts/2026-10-04-invofox-3.md), 03:09). *[audit, Sat 3 Oct: fitted on `/me` snapshots]* A round starts on the organisers' `round` action in `/api/schedule`:
   - round 2 started at tick 160;
-  - round 3 starts at game hour 16.65, **Sun 09:00 CEST**, coinciding with Sunday opening and Chamberí release. The h14.65/h15 Market Tests precede the opening anchor; whether they fire at opening or are skipped, and their round attribution if fired, are UNVERIFIED;
+  - round 3, "Sunday · Chamberí", was observed starting at tick 1446. The organisers revised the Sunday schedule after the pre-opening read; the old h16.65 opening anchor is obsolete. See the current schedule evidence below;
   - a new round's weight ramps from 0 to full over about 160 ticks;
   - Friday had 0 market-making for every team and stays in the average.
 - **How the 30-point blocks split** *[audit, fitted]*:
@@ -81,7 +81,7 @@ The four quests from slide 3: **Collect · Haggle · Trade · Run a market**. Th
   - L3 Doña Pilar: a collector who prefers SAL and RET and sells only the Gold pack, list 420, opening ask 504, 1 per team per hour.
   - L4 Los Pícaros: sell no packs and swap the card in the offer (read the structure; flag it).
   - A `banco` dealer, Don Ernesto: on Sunday morning the organisers said he is "definitely now open to everyone" and that most teams had already traded with him ([Sun 09:18](transcripts/2026-10-04-invofox-3.md), 01:00).
-  - At the finale, game hour 21.65, about Sun 14:00 CEST, **all dealer stalls close**, including Banco. El Rastro and the team markets stay open in that last hour *[reading of a misheard line, Sun 09:18, 03:09]*.
+  - At the finale, currently scheduled at game hour 18.367, **all dealer stalls close**, including Banco. El Rastro and the team markets stay open in that last hour *[reading of a misheard line, Sun 09:18, 03:09]*.
 - **Some dealers lie.** `POST /api/flags`: a correct flag adds points and a wrong one subtracts. In the audio: *"there might be even some occurrences where you can track bad behavior by the API. If you're correct, you can earn extra points."*
 
 ## Duels
@@ -99,8 +99,8 @@ One-on-one between teams, under aliases. Each pair plays twice, as seller and as
   - The audit's hedge sends both forms (branch `fix/audit-duel-days-top-level`).
 - **Sessions:**
   - Duels II, about Sat 20:34: 16 ticks, decay 0.08, `rounds: 2` (68 duels for us), at most 6 at once.
-  - Duels III, h18.65, about Sun 11:00 CEST: two issues, price and days, 12-tick duels, decay 0.10, `rounds: 2`, at most 4 at once.
-  - The Grand Final is scheduled at h21.65, about Sun 14:00 CEST: two issues, 12-tick duels, decay 0.10, `rounds: 1`, at most 4 at once.
+  - Duels III, currently h15.367: two issues, price and days, 12-tick duels, decay 0.10, `rounds: 2`, at most 4 at once.
+  - The final duel wave is currently scheduled at h18.367: two issues, 12-tick duels, decay 0.10, `rounds: 1`, at most 4 at once.
 - The first session is practice and does not score. Details in #4, #5 and #7.
 - **Asked on Sunday, not answered:** a team asked whether staying silent after the rival's reply counts as a round. The organiser said "I think it counts the messages" and would double-check ([Sun 09:18](transcripts/2026-10-04-invofox-3.md), 07:37–10:01). The audit's rule above (68 of 68 payloads) stands until Duels III payloads say otherwise.
 
@@ -177,32 +177,26 @@ In the audio:
 
 More in #16.
 
-## Windows this weekend (live `/api/schedule`, Sun 4 Oct)
+## Remaining Sunday windows, live schedule evidence
 
-The [live schedule](https://bazaar.causaprima.ai/api/schedule), read with one keyless GET on 4 Oct,
-returned `now_hours: 13.367`. Its Sunday opening anchor is h16.65 at `2026-10-04T09:00:00+02:00`,
-with `tick_seconds: 15`; closing is h22.65 at `2026-10-04T15:00:00+02:00`.
-One game hour is one real hour on Sunday. Intermediate times below are calculated from that anchor,
-assuming no further pause or schedule change; they are scheduled times, not observed events.
+The [live schedule](https://bazaar.causaprima.ai/api/schedule) returned `now_hours: 14.037`
+during the 4 October 07:38:39–07:40:11 UTC audit. This supersedes the pre-opening response that
+placed Sunday opening at h16.65. Round 3, "Sunday · Chamberí", actually started at tick 1446.
+At tick 1539 the clock was open, unpaused and using 15-second ticks.
 
-| Game hour | Sunday CEST | Schedule entry / action |
-|---|---|---|
-| 14.65 | Before opening anchor; execution UNVERIFIED | "The hard Market Test: firmer and more impatient traders"; `bench`, 12 traders, 16 ticks |
-| 15 | Before opening anchor; execution UNVERIFIED | "The Market Test: every venue gets the same synthetic book"; `bench`, 10 traders, 16 ticks |
-| 16.65 | 09:00 | "Sunday opens"; `day_opens`, 15 s ticks. "Round 3 starts"; `round`, ladder restarts. "Chamberí released"; `set_release`, CHA |
-| 16.7 | ~09:03 | "The Sunday allowance: 150 primas for everyone"; `grant_all`, does not score |
-| 17 | ~09:21 | "The Market Test: every venue gets the same synthetic book"; `bench`, 10 traders, 16 ticks |
-| 18.65 | ~11:00 | "Duels III: two issues, shorter clock, harder decay"; `duels`, price + days, 12-tick duels, decay 0.10, 2 rounds, at most 4 concurrent |
-| 19 | ~11:21 | "The Market Test: every venue gets the same synthetic book"; `bench`, 10 traders, 16 ticks |
-| 21 | ~13:21 | "The Market Test: every venue gets the same synthetic book"; `bench`, 10 traders, 16 ticks |
-| 21.45 | ~13:48 | "finale warning"; `announce` |
-| 21.65 | ~14:00 | "Finale: stalls close"; `persona`, disables abuela, chato, pilar, picaros and banco. "The Grand Final: the last duel wave, on the big screen"; `duels`, price + days, 12-tick duels, decay 0.10, 1 round, at most 4 concurrent |
-| 22.55 | ~14:54 | "freeze warning"; `announce` |
-| 22.65 | 15:00 | "Scores freeze"; `end_round`. "The Bazaar closes"; `day_closes` |
+| Game hour | Schedule entry / action |
+|---|---|
+| 14.65 | Hard Market Test, `bench`, 12 traders, 16 ticks |
+| 15.0 | Market Test, `bench`, 10 traders, 16 ticks |
+| 15.367 | Duels III, price + days, 12-tick duels, decay 0.10, 2 rounds, at most 4 concurrent |
+| 17.0 | Market Test, `bench`, 10 traders, 16 ticks |
+| 18.167 | Finale warning |
+| 18.367 | All five dealer personas disabled; final duels, price + days, 12-tick duels, decay 0.10, 1 round, at most 4 concurrent |
+| 19.267 | Freeze warning |
+| 19.367 | Scores freeze, `end_round` |
+| 19.378 | Sunday closes, `day_closes`, explicit wall time `2026-10-04T15:00:00+02:00` |
 
-The h14.65 hard Market Test and h15 Market Test are dated before the Sunday opening anchor.
-Whether they fire at opening or are skipped is **UNVERIFIED**. Do not assign them a Sunday wall time
-or assume which round receives them. Check the feed and active round when the doors open.
-The `set_release` entry carries h16.649999999999995, displayed as h16.65 above.
-The schedule also places Saturday's "Closed until Sunday 09:00" at h16.65, with wall time
-`2026-10-03T23:00:00+02:00`. The organisers can move events; re-read the schedule before acting.
+These are scheduled future events, not proof of execution. Re-read `/api/clock` and `/api/schedule`
+before acting; use `bazaar deploy-guard` before merging. Do not reconstruct deadlines from the
+obsolete opening anchor. The six stored Market Test evidence rows at tick 1516 are historical
+session-start replays, not proof that a Sunday synthetic book was received or settled.

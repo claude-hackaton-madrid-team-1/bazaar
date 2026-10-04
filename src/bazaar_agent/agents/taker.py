@@ -1689,20 +1689,22 @@ class Taker:
         strategy's, never above its start nor its top, and a class priced above what we may pay is skipped (N3);
         with `dealer_final_lift` on, a final above the cap may close it (the patience play). Each plan is kept in
         `run.plans` for the open's `changed_by`. One `dealer_skip` row per dealer, class and reason (not per
-        tick), with keys the public status view does not list. No policy and the lift off: unchanged."""
+        tick), with keys the public status view does not list. Remaining cash/hourly room always applies."""
         learner = self.outcome_learner
         policies = learner.policies if learner is not None else {}
-        if not policies and self.rules.dealer_final_lift <= 0:
-            return moves
         last = getattr(learner, "last", None)  # the last pass's curves (none before the first pass)
         curves = last.curves if last is not None else {}
-        if not curves and self.rules.dealer_final_lift > 0:  # no pass yet: this tick's feed window is the history
+        if not curves:  # the same negotiated fills also keep ordinary bids inside the remaining cash/hourly budget
             curves = curve_stats(dealer_threads(run.snap.events, run.snap.us or None))
         kept: list[StrategyMove] = []
         skipped: dict[tuple[str, str], tuple[StrategyMove, str]] = {}
         for mv in moves:
             cls = price_class(mv.ref)
-            if mv.ladder is None or cls is None:
+            if (
+                mv.ladder is None
+                or cls is None
+                or (mv.guardrail.startswith("denied") and not policies and self.rules.dealer_final_lift <= 0)
+            ):
                 kept.append(mv)
                 continue
             key = (mv.source, cls)

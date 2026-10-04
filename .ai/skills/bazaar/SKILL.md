@@ -38,14 +38,11 @@ The official `vendor/bazaar-kit/RULES.md` wins on any clash.
 - Holding cards, the album and `collection_value` never score by themselves. A card scores only when it moves: a team
   trade (price minus our `your_value`, into `neg_points`) or a dealer deal (ladder share of that dealer's own range,
   buying or selling; the opening price scores 0, the dealer's final the whole range; best 3 deals per level).
-- A round starts on the organisers' `round` action in `/api/schedule`; the ladder restarts every round.
-  The schedule read on 4 Oct says "Sunday opens" and "Round 3 starts" at h16.65, 09:00 CEST, with Chamberí released.
-  Sunday has 15 s ticks and one game hour equals one real hour. The 150 P grant is h16.7, about 09:03;
-  Market Tests are h17/h19/h21, about 09:21/11:21/13:21; Duels III is h18.65, about 11:00, with two issues,
-  12-tick duels and decay 0.10. Finale warning is h21.45, about 13:48; all dealer stalls close and Grand Final
-  duels start at h21.65, about 14:00; "Scores freeze" and doors close at h22.65, 15:00.
-  The h14.65 hard Market Test and h15 Market Test precede Sunday opening. Whether they fire at opening or
-  are skipped is UNVERIFIED. Read the live schedule before acting; full entries are in `docs/briefing.md`.
+- A round starts on the organisers' `round` action; the ladder restarts every round. Round 3, "Sunday · Chamberí",
+  started at tick 1446. The pre-opening h16.65 anchor is obsolete. At `now_hours=14.037`, the live schedule lists
+  Market Tests at h14.65/h15/h17, Duels III at h15.367 and final duels/dealer closure at h18.367. Duels III has
+  price and days, 12-tick duels and decay 0.10. Scores freeze is h19.367; doors close at the explicit wall time
+  15:00 CEST. Re-read clock/schedule before acting; use the deploy guard. Evidence is in `docs/briefing.md`.
 - `your_value` is the collection value lost by removing that copy. On a complete page our only copy of a page card
   already carries the whole page bonus; a duplicate never does.
 - Market-making per round = 22.5 x bench points + 7.5 x organic value on our venue (the free stall is bench 0.5).

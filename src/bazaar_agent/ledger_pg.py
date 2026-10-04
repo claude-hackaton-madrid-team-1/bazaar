@@ -30,7 +30,7 @@ from urllib.parse import urlsplit
 import psycopg
 from psycopg.conninfo import conninfo_to_dict
 
-from bazaar_agent.guardrails import HANDS_OFF, Ledger, LedgerStore, hands_off_id, is_pack
+from bazaar_agent.guardrails import HANDS_OFF, Ledger, LedgerStore, hands_off_id, is_pack, matching_bid_spend
 from bazaar_agent.pgconn import RETRY_EVERY_S, DatabaseUrlError, Reconnector, Target, describe
 
 ACCEPT_LOCK = "bazaar_agent.ledger.accept"
@@ -137,6 +137,30 @@ class PgLedger:
             ).fetchall(),
         )
         return [(str(kind), str(item)) for kind, item in rows]
+
+    def refund_bid(self, tick: int, t_hours: float, price: int, item: str) -> float | None:
+        if price <= 0:
+            raise ValueError("bid refund price must be positive")
+
+        def refund(conn: psycopg.Connection) -> float | None:
+            with conn.transaction():
+                conn.execute("select pg_advisory_xact_lock(hashtext('bazaar.ledger.bid_refund'))")
+                rows = conn.execute(
+                    "select kind,t_hours,price from ledger where tick=%s and item=%s "
+                    "and kind in ('spend','listing') and abs(price)=%s and (source=%s or price<0)",
+                    (tick, item, price, self._source),
+                ).fetchall()
+                if any(p < 0 for _, _, p in rows):
+                    return None
+                exact = matching_bid_spend([(str(k), float(t), int(p)) for k, t, p in rows])
+                at = t_hours if exact is None else exact
+                conn.execute(
+                    "insert into ledger(kind,tick,t_hours,price,item,source) values ('spend',%s,%s,%s,%s,%s)",
+                    (tick, at, -price, item, self._source),
+                )
+                return at
+
+        return self._run("bid refund", refund)
 
     def spent_since(self, t_hours: float, prefix: str = "") -> int:
         if not prefix:
@@ -270,6 +294,9 @@ class FallbackLedger:
 
     def publication_rows(self) -> list[tuple[str, str]]:
         return self._use(lambda ledger: ledger.publication_rows())
+
+    def refund_bid(self, tick: int, t_hours: float, price: int, item: str) -> float | None:
+        return self._use(lambda ledger: ledger.refund_bid(tick, t_hours, price, item))
 
     def spent_since(self, t_hours: float, prefix: str = "") -> int:
         return self._use(lambda ledger: ledger.spent_since(t_hours, prefix))
