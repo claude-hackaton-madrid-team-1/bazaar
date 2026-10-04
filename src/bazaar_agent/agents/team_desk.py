@@ -59,6 +59,14 @@ HOUSE_VENUE = "rastro"
 TOPIC = {"trade": "cards"}  # public with the thread: never the card we want
 REST_TICKS = 20  # after a walk, the team is left alone this long (no reopening every few ticks)
 DEAD = ("cancelled", "expired", "failed")  # an offer of ours in one of these will never settle: its spend comes back
+# What a team trade is worth, for Jev (Marius, Sun 4 Oct: "Jev should decide but we need to give more info"); facts
+# from the rules and Saturday's board (docs/research/2026-10-04/dealing.md), not instructions.
+SWAP_SCORING = {
+    "rule": "a team trade scores neg_points = what we receive at our official value minus what we give at ours (cash "
+    "included); a game founder: trading with teams is the main lever; holding cards or cash never scores",
+    "measured_saturday": "about 0.03 to 0.05 board points per neg_point; our 13 team trades added ~+190 neg_points "
+    "while our 83 swap threads made 0 deals (none answered)",
+}
 CHECK_TICKS = 10  # how long an offer whose end we have not seen is re-read before its spend is simply kept
 TEAM_SPEND = "team:"  # the item prefix of the cash we add to swaps: `team_swap_max_cash_per_hour` sums these rows
 INFERRED_EVERY = 10  # ticks between two writes of the inferred multipliers (`team_affinity`)
@@ -940,6 +948,7 @@ class TeamDesk:
             "history": {"settled_with_team": self.deals[trade.counterparty], "proposal_step": step},
             "cash_above_floor": ctx.cash - self.rules.cash_floor,
             "market_teams": self._teams(trade),
+            "scoring": SWAP_SCORING,
         }
 
     def _teams(self, trade: Trade) -> dict[str, Any] | None:

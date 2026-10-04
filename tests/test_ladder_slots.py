@@ -144,3 +144,12 @@ def test_an_empty_level_is_probed_and_a_gate_no_is_named_on_its_slot_row(tmp_pat
     assert [s for s in no.sent if s[0] == "open_thread"] == []
     (row,) = slot_rows(tmp_path / "no")
     assert row["inputs"]["dealer"] == "abuela" and "gate is not a decided yes" in row["reason"]
+
+
+def test_jev_reads_what_a_slot_is_worth_and_how_much_of_our_cash_the_probes_take():
+    from bazaar_agent.agents.team_desk import SWAP_SCORING
+
+    state = probe_state([], 400, 5, 130, 0, {}, LadderSlots({"abuela": 1, "chato": 2}, {"abuela": 1}))
+    assert state["ladder"]["empty_slots_this_round"] == 5 and state["probes_spend_share_of_cash_room"] == 0
+    assert "an empty slot scores 0" in state["scoring"]["rule"] and "+1.1" in state["scoring"]["measured_saturday"]
+    assert "neg_points" in SWAP_SCORING["rule"]

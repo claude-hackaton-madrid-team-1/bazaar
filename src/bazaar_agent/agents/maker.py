@@ -46,7 +46,7 @@ from typing import Any, Literal
 
 from bazaar_agent import buy_targets
 from bazaar_agent import buyers as buyer_rank
-from bazaar_agent.agents import counter_bids, publication
+from bazaar_agent.agents import counter_bids, outreach_bids, publication
 from bazaar_agent.agents.dealer_sell_data import SellMarket
 from bazaar_agent.agents.dealer_sell_desk import Candidate, SellDesk, SellHooks, standard_hooks
 from bazaar_agent.agents.maker_jev import (
@@ -121,6 +121,9 @@ class MakerConfig:
     # A bid another team addresses to us below our floor gets an ask addressed back to that team, stepping from an
     # anchor down to our floor like a duel (`agents/counter_bids.py`). BAZAAR_COUNTER_BIDS=0 turns it off.
     counter_bids: bool = True
+    # Bids for cards we want go addressed to the teams holding a spare, stepping up to our ceiling, holder after
+    # holder (`agents/outreach_bids.py`). BAZAAR_OUTREACH_BIDS=0 turns it off.
+    outreach_bids: bool = True
 
 
 HOLDERS_EVERY = 10  # ticks between two walks of the feed for a buy target's holders (a hint for the record)
@@ -142,7 +145,7 @@ class Target:
     to: str | None = None  # addressed to this team (`max_counterparty_share`); None: anyone on the venue
     final: bool = False  # a buyer-rank fallback: posted for anyone at this exact price (no addressee, no Jev price)
     min_price: int = 0  # asks: a relist's floor (`agents.relist`); no Jev pick may go under it
-    counter: bool = False  # asks: a counter to a team's bid to us (`counter_bids`): its own price path, no Jev pick
+    counter: bool = False  # a counter (`counter_bids`) or an outreach bid (`outreach_bids`): own price path, no Jev
 
 
 def targets_from(book: Playbook) -> list[Target]:
@@ -320,6 +323,7 @@ class Maker:
         self._holder_notes: dict[str, tuple[int, str]] = {}  # card -> (tick, the teams the feed places it with)
         self._seen: dict[tuple[str, str], counter_bids.Seen] = {}  # (team, card) -> its bids to us (`counter_bids`)
         self._counter_said: dict[tuple[str, str], str] = {}  # (team, card) -> why it is not countered (said once)
+        self._turns: dict[str, outreach_bids.Turn] = {}  # card -> the holder our addressed bid goes to, and since when
         # Selling spares to dealers (`dealer_sell_enabled`, off by default): one sell thread at a time.
         self._run: _MakerRun | None = None
         self._dealer_promises: dict[int, str] = {}
@@ -422,6 +426,8 @@ class Maker:
         targets = self._with_buy_targets(snap, targets, held)
         if self.config.counter_bids:
             targets = self._with_counters(snap, targets, params)
+        if self.config.outreach_bids:
+            targets = self._with_outreach(snap, targets)
         rarities = card_rarities(snap.catalog)
 
         def above_value(o: OpenOffer) -> str | None:  # our bids, re-capped every tick (review #177 P2)
@@ -530,6 +536,42 @@ class Maker:
         ]  # fmt: skip
         countered = {t.asset_id for t in made}
         return made + [t for t in targets if not (t.side == "ask" and t.asset_id in countered)]
+
+    def _with_outreach(self, snap: Snapshot, targets: list[Target]) -> list[Target]:
+        """Up to `outreach_bids.MAX_CARDS` of our public bids go addressed to a team the team matrix places a spare
+        copy with, from START_SHARE of the bid up to it, holder after holder. No matrix (or a stale one): every bid
+        stays public. No request: the matrix is the one the taker stores."""
+        tick = snap.clock.tick
+        m = self.latest_matrix.current(tick) if self.latest_matrix is not None else None
+        if m is None:
+            self._turns = {}
+            return targets
+        public = [t for t in targets if t.side == "bid" and t.to is None and not t.counter]
+        held = Counter(str(a.get("ref")) for a in snap.me.get("assets") or [] if a.get("kind") == "card")
+
+        def ceiling(t: Target) -> int:
+            """The bid, never above the official value of one more copy less its margin (the post's own cap): read
+            from the per-tick cache the maker's bid re-cap fills anyway. Unread: the bid itself (the post refuses)."""
+            official = self.values.value(t.ref, tick, held.get(t.ref, 0))
+            if official is None:
+                return t.price
+            return min(t.price, math.floor(official - self.rules.value_margin_for(t.rarity) + 1e-9))
+
+        def holders(ref: str) -> list[str]:
+            return [str(row.get("team")) for row in m.card(ref).get("spare") or [] if row.get("team")]
+
+        # Only the cards worked this tick read their official value (the same cards the post's cap reads anyway).
+        ranked = sorted((t for t in public if holders(t.ref)), key=lambda t: (-t.score, t.ref))
+        wants = [outreach_bids.Want(t.ref, t.rarity, ceiling(t), t.score) for t in ranked[: outreach_bids.MAX_CARDS]]
+
+        made, self._turns = outreach_bids.plan_outreach(wants, holders, self._turns, self.rules, snap.us, tick)
+        by_ref = {t.ref: t for t in public}
+        addressed = [
+            replace(by_ref[o.ref], price=o.price, reason=f"{o.reason}; {by_ref[o.ref].reason}", to=o.team, counter=True)
+            for o in made
+        ]
+        worked = {o.ref for o in made}
+        return addressed + [t for t in targets if not (t.side == "bid" and t.to is None and t.ref in worked)]
 
     # ------------------------------------------------------------ buy targets (`buy_targets.py`)
 

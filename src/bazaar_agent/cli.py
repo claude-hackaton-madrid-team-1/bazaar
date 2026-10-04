@@ -3301,6 +3301,13 @@ def agent_maker(
         help="Answer a team's bid to us below our floor with an ask addressed to it, stepping down to our floor "
         "(BAZAAR_COUNTER_BIDS=0: off)",
     ),
+    outreach_bids: bool = typer.Option(
+        True,
+        "--outreach-bids/--no-outreach-bids",
+        envvar="BAZAAR_OUTREACH_BIDS",
+        help="Address our bids for wanted cards to the teams holding a spare, stepping up to our ceiling, holder "
+        "after holder (BAZAAR_OUTREACH_BIDS=0: off)",
+    ),
 ) -> None:
     """Every tick: our venue's broker (and its one opening), then asks for sell candidates and bids for missing
     cards; reprice or cancel stale offers."""
@@ -3327,7 +3334,7 @@ def agent_maker(
             sell_market=sell_market,
             strategy_jev=_strategy_jev(settings, kw["rules"]) if jev else None,  # no Jev: no new dealer sell thread
             latest_matrix=matrix,
-            config=MakerConfig(counter_bids=counter_bids),
+            config=MakerConfig(counter_bids=counter_bids, outreach_bids=outreach_bids),
             **kw,
         )
 

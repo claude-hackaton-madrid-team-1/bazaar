@@ -290,6 +290,7 @@ def main(ctx=None):
         "BAZAAR_BENCH_POLICY": preserve(),
         "BAZAAR_BENCH_GUARD_MARGIN": preserve(),
         "BAZAAR_COUNTER_BIDS": preserve(),  # set by hand to 0 to stop countering bids addressed to us
+        "BAZAAR_OUTREACH_BIDS": preserve(),  # set by hand to 0 to keep every bid public
         "BAZAAR_BENCH_MATCH_PROBE": preserve(),  # once: ONE non-crossing match probe (agents/bench_match_probe.py)
     }
     maker = agent("bazaar-maker", "agent maker", maker_data, bench_env)
