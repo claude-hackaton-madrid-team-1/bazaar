@@ -1,7 +1,8 @@
 """The live learner: what an agent's tick loop calls (the taker on Railway owns one).
 
 Per tick, BEFORE the sends: read the new feed events (the ones the agent already holds: no extra game
-call) and answer which dealers are blocked for us, from memory only (no database I/O). AFTER the sends
+call) and answer which dealers are blocked for us. The first tick bootstraps shared blockers from
+Postgres before opening any thread; later ticks read memory only. AFTER the sends
 (`flush`): write what was learned and pull what other processes learned, for the next tick. Our own
 closed threads and refused `open_thread` calls are learned the moment they happen. Every method fails
 open: an error is logged and the agent carries on exactly as it would without learnings.
@@ -43,6 +44,7 @@ class LiveLearner:
         self._failed: set[str] = set()
         self._last: tuple[int, float] | None = None  # the previous clock reading: (tick, t_hours)
         self._per_tick: float | None = None  # the game-hour pace observed between two readings
+        self._bootstrapped_team: str | None = None
         self._us: str | None = None
         self._tick: int | None = None
         self._memory_pulled: int | None = None  # the tick the dealers' memory was last pulled from the store
@@ -64,13 +66,27 @@ class LiveLearner:
     def blocks(
         self, events: Iterable[dict[str, Any]], us: str, clock: Any, known: Mapping[str, SubjectKind] | None = None
     ) -> Blocks:
-        """Read the new events, then the blockers in force for us at this tick. Empty on any error.
+        """Read events and current blockers, loading shared rules once per team before its first send.
+        Empty on any error.
 
         `known` (dealer and venue ids → kind) lets the LLM pass check the subjects it reports."""
         try:
             tick = int(clock.tick)
             self.store.begin_tick(tick)
             self._us, self._tick = us, tick
+            if self._bootstrapped_team != us:
+                self.store.remember(
+                    self.store.recall(
+                        None,
+                        BLOCKER_RECALL_KINDS,
+                        tick,
+                        subject_kind="dealer",
+                        team=us,
+                        limit=RECALL_LIMIT,
+                        source="rules",
+                    )
+                )
+                self._bootstrapped_team = us
             if self.reader is None or self.reader.us != us:
                 self.reader = FeedReader(us)
             pool = list(events)

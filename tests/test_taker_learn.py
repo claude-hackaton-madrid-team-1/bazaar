@@ -159,3 +159,29 @@ def test_the_refusal_kept_for_learning_has_no_traceback(tmp_path):
     refused = t.rec.last_error
     assert refused is not None and refused.code == "cooloff" and refused.extra == {"until_tick": TICK + 5}
     assert not isinstance(refused, BaseException)
+
+
+def test_restart_loads_shared_dealer_quota_before_first_open(tmp_path):
+    from bazaar_agent.learn.reader import GameHour
+
+    learned = from_refusal(
+        "abuela",
+        "persona_quota",
+        "at most 10 conversations per hour with abuela",
+        {},
+        US,
+        GameHour(tick=TICK - 1, t_hours=1.25, tick_seconds=15),
+        "sobre_barrio",
+    )
+
+    class Persisted(LearningStore):
+        def _recall_db(self, *args, **kwargs):
+            return [learned]  # only the shared database has the row: new process memory starts empty
+
+    team = FakeTeam()
+    store = Persisted()
+    assert not store.memory
+    t, _ = taker(tmp_path, team, store)
+    t.on_tick(clock())
+    assert not opened(team)
+    assert any(r.get("kind") == "dealer_skip" and "quota" in r.get("reason", "") for r in rows(tmp_path))

@@ -1480,3 +1480,9 @@ Coordinator's guarded pack negotiation 2670 at ticks 1804–1809 offered 17→20
 ### [2026-10-04] build-error — TT2 focused test selection and pending holdings
 
 Initial focused commands named nonexistent test_taker_targets.py (and earlier review test_taller_publication.py); no tests ran in those commands. Re-ran actual tracked test files. Keeping the full bid commitment initially also counted its hoped-for card as already held; exclude only that exact still-open bid's expected card while retaining cash/exposure and all real/settling holdings.
+
+### [2026-10-04] finding — Abuela limits conversations separately from pack purchases
+Railway open_thread1884 returned `persona_quota` with “at most 10 conversations per hour with abuela”. This is dealer-wide, not the3-pack purchase quota. Shared learning was present but scoped to sobre_barrio and shortened by60-tick retry cap to1944; at15s the actual next game hour was about2014. Q1 preserves trusted server/game-clock expiry and records10 from the fixed server message; generic legacy/LLM caps remain. It preloads persisted blockers before the first opening after restart. The original database evidence remains intact; coordinator may record a separate corrected typed fact after code rollout.
+
+### [2026-10-04] gotcha — quota audit queries
+The learnings timestamp is created_tick, not tick; qualifying public.learnings avoids duplicate information_schema results from temporary test schemas. Read-only audit queries corrected these assumptions; no production mutation occurred.

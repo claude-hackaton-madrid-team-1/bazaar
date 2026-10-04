@@ -134,7 +134,8 @@ def blocker(
     kind = REASON_KINDS.get(reason)
     if kind is None or _subject(dealer) is None or _subject(team) is None:
         return None  # a blocker binds a known team, or nobody
-    confidence, detail = 1.0, {"code": reason, "origin": origin}
+    confidence = 1.0
+    detail: dict[str, Any] = {"code": reason, "origin": origin}
     if kind == "cooloff":
         found = _UNTIL.search(message or "")
         until_tick = until_tick or (_int(found.group(1)) if found else None)
@@ -144,7 +145,17 @@ def blocker(
     elif kind == "blocker":
         until_tick = tick + LOCKED_RECHECK_TICKS
     else:  # quota / sold out: until the game hour ends (an older event's hour is over), retried within the cap
-        until_tick = min(hour.end_for(tick) if hour is not None else tick + 1, tick + HOURLY_CAP_TICKS)
+        end = hour.end_for(tick) if hour is not None else tick + 1
+        if kind == "quota" and origin == "refusal" and hour is not None:
+            # A server refusal uses the game clock, not the old 60-tick retry shortcut (15 s ticks need 240).
+            until_tick = until_tick if until_tick is not None and until_tick > tick else end
+            detail["quota_until_tick"] = until_tick
+            limit = re.fullmatch(r"at most ([1-9][0-9]*) conversations per hour with " + re.escape(dealer), message)
+            if limit:
+                detail["conversations_per_hour"] = int(limit.group(1))
+                item = None  # this quota covers every topic with the dealer, not only the attempted pack
+        else:
+            until_tick = min(end, tick + HOURLY_CAP_TICKS)
         # a pack's hourly allotment, or one item sold out, blocks that item only; a card's quota the dealer
         if item is not None and (kind == "sold_out" or "-" not in item):
             detail["item"] = item

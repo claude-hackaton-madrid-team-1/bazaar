@@ -806,3 +806,9 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 - Stop treating an unfilled cheaper bid as an executable alternative to a profitable ask.
 - Retain full pending cash/exposure and settling-card protection until confirmed cancellation.
 - Verify actual public/addressed taker paths, independent review and CI before guarded rollout.
+
+## Q1 — Persist dealer quota through the actual game hour
+
+- Spec: [Q1-spec.md](Q1-spec.md).
+- Trusted server refusal uses game-hour expiry, records the observed dealer-wide10-conversation limit, and loads shared blockers before first opening after restart. Pack purchase quota remains separate.
+- Focused51 tests passed; independent review/full gate and coordinator rollout pending.
