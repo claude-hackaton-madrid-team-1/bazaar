@@ -205,7 +205,15 @@ class ThreadStore:
             self._fail("buffer", e)
 
     def sent(
-        self, tid: int, counterpart: str, us: str, tick: int, message_id: int, text: str, offer: dict[str, Any]
+        self,
+        tid: int,
+        counterpart: str,
+        us: str,
+        tick: int,
+        message_id: int,
+        text: str,
+        offer: dict[str, Any],
+        venue: str = "rastro",
     ) -> None:
         """Buffer only an SDK-acknowledged outgoing message (no game request or database I/O)."""
         if (
@@ -214,6 +222,8 @@ class ThreadStore:
             or type(tid) is not int
             or tid < 0
             or not isinstance(text, str)
+            or not isinstance(venue, str)
+            or re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", venue) is None
             or counterpart == us
             or re.fullmatch(r"t[0-9]+", counterpart) is None
             or re.fullmatch(r"t[0-9]+", us) is None
@@ -225,7 +235,7 @@ class ThreadStore:
                 "kind": "team",
                 "team": us,
                 "with": counterpart,
-                "venue": "rastro",
+                "venue": venue,
                 "status": "open",
                 "topic": {"trade": "cards"},
                 "messages": [{"id": message_id, "sender": us, "tick": tick, "text": text, "offer": offer}],

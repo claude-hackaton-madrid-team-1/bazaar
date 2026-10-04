@@ -844,3 +844,9 @@ See [SALES1](SALES1-spec.md). In progress: team outreach ownership, Opus 5.5, OT
 - Spec: [SC1-spec.md](SC1-spec.md).
 - Runtime advisers and strategy docs distinguish team surplus, ladder, duels and market points from album inventory estimates.
 - Live strategy shows these scoring mechanisms before album context. Focused backend and frontend checks pass; coordinator review/deployment pending.
+
+## SALES2 — Target real market offers and introduce buyers to existing supply
+
+- [Spec](SALES2-spec.md): structured sale outreach first on eligible low-fee alliance venues; shared reservations coordinate with Maker.
+- When inventory is already listed, introduce matching buyers to exact fresh public quotes without making a second financial promise.
+- Fake actor checks, independent review, integrated gate and guarded coordinator rollout.
