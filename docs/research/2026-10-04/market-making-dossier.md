@@ -1,6 +1,6 @@
 # Market making and the Market Test: the dossier (Team 1)
 
-*Sun 4 Oct 2026, written 11:10–11:xx Madrid by the `mm-dossier` session. Read-only on the game, Railway and Postgres.
+*Sun 4 Oct 2026, written 11:10–11:30 Madrid (session 9 added after it ran, §2) by the `mm-dossier` session. Read-only on the game, Railway and Postgres.
 It collects what the team already measured; it does not redo the work. Every number carries its source. Short names
 for sources:*
 
@@ -19,20 +19,22 @@ for sources:*
 
 ## TL;DR
 
-The market-making criterion is 30 % of the game score, split (fitted, not published) into the **Market Test** (22.5)
-and **organic** trades between other teams on our venue (7.5) (BASE Q1). On the Market Test we scored exactly the free
-auto stall's level, `bench_points` 0.5, in **all 8 sessions so far** (efficiency 0.854–0.967, BASE Q2 + session 8),
-and so did every other team that kept a working venue: nobody has ever beaten the stall, and two teams (t07, t08)
-scored ~0 in session 8: t07 had just swapped its stall for a board with no broker ready, t08's board matched nothing (BASE "Session 8"). We found why we tie: our `exact` broker sends
-the same pairs the stall crosses, and the server refuses any pair whose quotes do not cross (one-shot probe, tick 1692,
-`400 bad_match`), so the only lever left is **which** crossing traders to match and **when** (SIM TL;DR 1–2). We
-recorded the real books (`bench_books`, sessions 7–8), fitted a simulator to them, and built a `lookahead` broker that
-plans over 128 sampled futures; in the calibrated world it scores E[bench_points] 0.64 vs 0.50 (P above the stall
-0.29, P below 0.14), and on a replay of session 8's real book it would have held one cheap seller for a better buyer
-and scored 0.90 in expectation (SIM §4–5; on drawn hidden limits and lives: that seller's real life is unobserved, so this is a model estimate; the buyer it waited for did arrive and left
-unmatched, but the replay's stall level is 0.12 below the server's, so the size of the edge is not trustworthy, §4.3–4.4). It ships for session 9 (~12:37, the last bench) via PR #292 +
-`BAZAAR_BENCH_POLICY=lookahead`, if merged in the window. Organic flow on v19 has been **0 trades all weekend** (PROBE
-§2.3, BASE Q4): routers post on older venues and no buyer ever sat on v19.
+Market making is 30 % of the game score, split (fitted, not published) into the **Market Test** (22.5) and **organic**
+trades between other teams on our venue (7.5) (BASE Q1). On the Market Test we scored exactly the free auto stall's
+level, `bench_points` 0.5, in **all 8 sessions so far** (efficiency 0.854–0.967; BASE Q2, §4.2). So did every team
+with a working matcher: nobody has ever beaten the stall, and t07 and t08 scored ~0 in session 8 because their boards
+matched nothing (BASE, §4.5). We found why we tie: our `exact` broker sends the same pairs the stall crosses (replayed
+on session 8's recorded quotes: same 4 pairs, same ticks, same prices, §4.2), and the server refuses any pair whose
+quotes do not cross (one-shot probe, tick 1692, `400 bad_match`). The only lever left is **which** crossing traders to
+match and **when** (SIM TL;DR 1–2). We recorded the real books (`bench_books`, sessions 7–8), fitted a simulator to
+them and built a `lookahead` broker that plans over 128 sampled futures: in the calibrated world it scores
+E[bench_points] 0.64 vs 0.50 (P above the stall 0.29, P below 0.14; SIM §2). On session 8's real book `exact` had
+exactly one choice that mattered: at tick 1783 it spent cheap seller b137-12 on a 46 bid, and one tick later a buyer
+bidding 68 → 74 arrived and left unmatched (+22 P of quoted surplus, if the seller would have waited, which nobody can
+know; §4.3). The simulator's "0.90 on b137" is a mean over sampled hidden limits whose stall level sits 0.12 below the
+server's, so its size is not trustworthy (§4.4). `lookahead` ships for session 9 (~12:37, the last bench) via PR #292
++ `BAZAAR_BENCH_POLICY=lookahead`, if merged in the window (§6). Organic flow on v19 has been **0 trades all weekend**
+(§5): other teams' routers post on older venues and no buyer ever sat on v19.
 
 ## 1. How scoring works
 
@@ -264,10 +266,12 @@ draws (the rules say "the same synthetic book").
 ## 7. Open questions
 
 1. The points curve **below** the stall (linear 0.5·E/Es or zero) and **between** the stall and the top-3 mean.
-2. Whether the server's efficiency denominator is time-aware (the sim's stall sits at 0.80, real 0.85–0.97; SIM §1).
+2. Whether the server's efficiency denominator is time-aware: the sim's stall sits at 0.80 vs real 0.85–0.97 (SIM §1),
+   and the b137 replay's stall at 0.777 vs the server's 0.895 (§4.4).
 3. Whether a held trader can leave before a queued match settles (`settles_at_tick` = T+1; SEARCH caveats).
 4. Whether another team beats the stall in session 9 (then the top-3 mean rises and a small win earns < 1.0).
-5. Whether lookahead's b137 gain is real: seller b137-12's life is censored by our own match.
+5. Whether lookahead's b137 gain is real: seller b137-12's life is censored by our own match (§4.3).
+7. Why `who_oracle` scores below the stall on the b137 replay (§4.4); a harness check before trusting replay levels.
 6. Whether `/me bench_efficiency` is per session or the running round average. If it is Sunday's round average,
    session 8 alone was ≈ 2 × 0.895 − 0.967 = 0.823, not 0.895 (Saturday has the same ambiguity, §2 notes).
 
@@ -286,7 +290,7 @@ Judges' share is 40 %; market making is a scored criterion. No private values be
 4. **We recorded every bench book from session 7 and fitted a simulator to them** (two-bump sellers, relaxing quotes,
    lives 2–6 ticks) that reproduces the real quote paths; in it, an all-knowing broker beats the stall by +8–10 %,
    all of it from timing.
-5. **We shipped a lookahead broker** that plans over 128 sampled futures each tick: E[bench points] 0.64 vs 0.50 in
+5. **We built a lookahead broker** (PR #292, for the last session) that plans over 128 sampled futures each tick: E[bench points] 0.64 vs 0.50 in
    the calibrated world, P(above the stall) 0.29. On the real session-8 book it would have held one cheap seller for
    a better buyer who arrived one tick later and, under the stall's rule, left unmatched (+22 P of quoted surplus).
 
