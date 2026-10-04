@@ -45,8 +45,19 @@ from bazaar_agent.agents.bench_edge import DEFAULT_GUARD_MARGIN, BenchEdge, edge
 from bazaar_agent.agents.bench_lookahead import BenchLookahead
 from bazaar_agent.agents.bench_match_probe import PROBE_ENV, PROBE_MODES, pick_probe
 from bazaar_agent.agents.bench_model import PRIORS
+from bazaar_agent.agents.bench_posterior import PosteriorPolicy
 from bazaar_agent.agents.bench_probe import BenchProbe
-from bazaar_agent.agents.matcher import BrokerBook, Fee, Match, Quote, Quotes, plan_matches, quotes_from
+from bazaar_agent.agents.matcher import (
+    BrokerBook,
+    Fee,
+    Match,
+    Quote,
+    Quotes,
+    feasible,
+    match_price,
+    plan_matches,
+    quotes_from,
+)
 from bazaar_agent.agents.runtime import Recorder, TickWindow, window_for
 from bazaar_agent.agents.seller import offers_in
 from bazaar_agent.config import REPO_ROOT
@@ -69,7 +80,10 @@ class BrokerConfig:
     # (-inf: whenever it has at least as many pairs, #84 as it was). "probe": the exact plan, then a few
     # non-crossing bench pairs priced between their quotes (`agents/bench_probe.py`). "lookahead":
     # `agents/bench_lookahead.py`, the exact plan unless another matching of quote-crossing pairs (hold, re-pair, one
-    # more pair) earns more true surplus in rollouts over the fitted bench model.
+    # more pair) earns more true surplus in rollouts over the fitted bench model. "lookahead_safe" /
+    # "lookahead_bold": `agents/bench_posterior.py`, the quote-crossing set most likely to end the session above the
+    # stall in worlds sampled from each trader's posterior; a session under the stall scores 0 (safe) or half of
+    # Saturday's fitted 0.5 x E/Es (bold).
     bench_policy: BenchPolicy = "exact"
     bench_guard_margin: float = DEFAULT_GUARD_MARGIN
     # BAZAAR_BENCH_MATCH_PROBE=once: after the exact matches, ONE request ever for a pair whose quotes do not cross
@@ -77,8 +91,18 @@ class BrokerConfig:
     match_probe: bool = False
 
 
-BenchPolicy = Literal["exact", "edge", "probe", "lookahead"]
-BENCH_POLICIES: dict[str, BenchPolicy] = {"exact": "exact", "edge": "edge", "probe": "probe", "lookahead": "lookahead"}
+BenchPolicy = Literal["exact", "edge", "probe", "lookahead", "lookahead_safe", "lookahead_bold"]
+BENCH_POLICIES: dict[str, BenchPolicy] = {
+    "exact": "exact",
+    "edge": "edge",
+    "probe": "probe",
+    "lookahead": "lookahead",
+    "lookahead_safe": "lookahead_safe",
+    "lookahead_bold": "lookahead_bold",
+}
+# `PosteriorPolicy.below`: bold weighs a session under the stall at half of Saturday's fitted 0.5 x E/Es; at the full
+# fit it gambles more and does worse under both rules (900 books a world, docs/research/2026-10-04/bench-search.md)
+POSTERIOR_BELOW: dict[str, float] = {"lookahead_safe": 0.0, "lookahead_bold": 0.5}
 BENCH_POLICY_ENV = "BAZAAR_BENCH_POLICY"
 BENCH_MARGIN_ENV = "BAZAAR_BENCH_GUARD_MARGIN"
 UNGUARDED = ("none", "-inf", "-infinity")  # BAZAAR_BENCH_GUARD_MARGIN values for no guard at all
@@ -92,6 +116,8 @@ def bench_text(config: BrokerConfig) -> str:
         return "probe (exact + non-crossing probes)"
     if config.bench_policy == "lookahead":
         return "lookahead (exact unless a crossing matching earns more in rollouts)"
+    if config.bench_policy in POSTERIOR_BELOW:
+        return f"{config.bench_policy} (posterior samples; the stall's pairs unless others end above it more often)"
     if config.bench_policy != "edge":
         return "exact"
     margin = config.bench_guard_margin
@@ -125,7 +151,7 @@ def bench_config_from_env(
         policy = BENCH_POLICIES.get(value)
         if policy is None:
             say(
-                f"broker: IGNORED {BENCH_POLICY_ENV} ({len(value)} chars; exact, edge, probe or lookahead); "
+                f"broker: IGNORED {BENCH_POLICY_ENV} ({len(value)} chars; {', '.join(BENCH_POLICIES)}); "
                 f"it stays {base.bench_policy}"
             )
         else:
@@ -299,6 +325,8 @@ class BrokerAgent:
         self.probe = BenchProbe()  # used only with bench_policy = "probe"
         self.lookahead = BenchLookahead()  # used only with bench_policy = "lookahead"
         self.lookahead_pairs: set[tuple[str, str]] = set()  # this tick's bench pairs the lookahead chose over exact
+        self.posterior: PosteriorPolicy | None = None  # used only with bench_policy = "lookahead_safe" / "_bold"
+        self.posterior_pairs: set[tuple[str, str]] = set()  # this tick's bench pairs the posterior planner sent
         self.bench_runs: set[str] = set()  # "b87-": bench runs seen, to spot their rows in the book's settlements
         self.probe_pairs: set[tuple[str, str]] = set()  # this tick's bench pairs that are probes (quotes do not cross)
         self.stats_dir = stats_dir
@@ -440,7 +468,9 @@ class BrokerAgent:
         """Today's exact matching of everything or, with `bench_policy = "edge"`, the edge's bench plan (the exact
         one unless the edge beats it by its guard margin) and the exact public matching with the slots left."""
         cap = self.config.max_matches_per_tick
-        self.edge_pairs, self.probe_pairs, self.lookahead_pairs = set(), set(), set()
+        self.edge_pairs, self.probe_pairs, self.lookahead_pairs, self.posterior_pairs = set(), set(), set(), set()
+        if self.config.bench_policy in POSTERIOR_BELOW:
+            return self._posterior_plan(quotes, fee, tick, book, cap)
         if self.config.bench_policy == "probe":
             return self._with_probes(plan_matches(quotes.quotes, fee, cap), quotes, fee, tick, cap)
         if self.config.bench_policy == "lookahead":
@@ -482,6 +512,41 @@ class BrokerAgent:
         if chosen != {(str(m.sell.id), str(m.buy.id)) for m in exact}:
             self.lookahead_pairs = chosen
         public = [q for q in quotes.quotes if not q.bench]
+        return picked + plan_matches(public, fee, cap - len(picked))
+
+    def _posterior_plan(self, quotes: Quotes, fee: Fee, tick: int, book: BrokerBook, cap: int) -> list[Match]:
+        """The posterior planner's bench pairs (only quote-crossing ones, priced as the exact plan prices), then the
+        exact public matching with the slots left. A failing planner loses nothing: today's matching that tick, and
+        its models restart."""
+        below = POSTERIOR_BELOW[self.config.bench_policy]
+        if self.posterior is None or self.posterior.below != below:
+            self.posterior = PosteriorPolicy(below=below)
+        bench = {str(q.id): q for q in quotes.quotes if q.bench}
+        public = [q for q in quotes.quotes if not q.bench]
+        try:
+            ends = {str(o.get("id")): o.get("expires_tick") for o in book.bench_offers}
+            offers = [
+                {"id": i, ("want" if q.side == "sell" else "give"): {"cash": q.price}, "expires_tick": ends.get(i)}
+                for i, q in bench.items()
+            ]
+            picked = []
+            for sell, buy, _ in self.posterior({"tick": tick, "bench_offers": offers}):
+                s, b = bench.get(str(sell)), bench.get(str(buy))
+                if s is not None and b is not None and feasible(s, b, fee):
+                    price = match_price(s.price, b.price, fee)
+                    picked.append(Match(s, b, price, fee.of(price)))
+        except Exception as e:  # never lose the tick to the planner
+            self.log(f"tick {tick} broker: bench posterior failed ({type(e).__name__}); exact matching this tick")
+            self.posterior = None
+            return plan_matches(quotes.quotes, fee, cap)
+        picked = picked[:cap]
+        self.posterior_pairs = {(str(m.sell.id), str(m.buy.id)) for m in picked}
+        for run, choice in self.posterior.last_choice.items():
+            if choice.get("deviates") and choice.get("tick") == tick:
+                self.log(
+                    f"tick {tick} broker: bench posterior leaves the stall's pairs in {run}: score "
+                    f"{choice['pick']:.3f} against {choice['stall']:.3f} ({len(picked)} pair(s))"
+                )
         return picked + plan_matches(public, fee, cap - len(picked))
 
     def _log_bench_settlements(self, tick: int, book: BrokerBook, found: list[Quote]) -> None:
@@ -594,7 +659,11 @@ class BrokerAgent:
                     else (
                         "bench lookahead: crossing matching with the most true surplus in rollouts, midpoint price"
                         if (str(m.sell.id), str(m.buy.id)) in self.lookahead_pairs
-                        else "maximum-surplus matching (exact), midpoint price"
+                        else (
+                            "bench posterior: the crossing set most likely to end above the stall (sampled limits)"
+                            if (str(m.sell.id), str(m.buy.id)) in self.posterior_pairs
+                            else "maximum-surplus matching (exact), midpoint price"
+                        )
                     )
                 )
             ),
