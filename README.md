@@ -1,17 +1,34 @@
 # Bazaar · Team 1
 
+> **Start here.** Team 1's autonomous trading agent for The Bazaar (Causa Prima, Madrid, 2–4 Oct 2026).
+> It negotiates in natural language, but only structured offers that pass [`GUARDRAILS.md`](GUARDRAILS.md)
+> and one shared ledger bind money or cards.
+> - **Pitch:** [3-minute deck and script](docs/pitch/motion/README.md) (offline `index.html`,
+>   [`deck.pptx`](docs/pitch/motion/deck.pptx) fallback); the script names each slide's sources, mostly [claims ledger](docs/pitch/claims.md) rows.
+>   Reading order: [docs/pitch/](docs/pitch/README.md); all docs: [docs/](docs/README.md)
+> - **Architecture:** [docs/architecture.html](docs/architecture.html) (download to view; GitHub shows the source)
+> - **Demo:** [Bazaar Live](https://bazaar-live-production.up.railway.app/?lang=en&tts=off) acts out our agents'
+>   public moves. The game ended Sun 4 Oct 15:00, so live mode is idle: add `&mock=1&speed=2` for a recorded replay
+> - **One real result:** Duels I, 27 deals, 15.02 official duel points ([claim C35](docs/pitch/claims.md)).
+>   We claim no rank and no live learning gain.
+> - **Size:** ~71k lines of Python in `src/`, ~62k in `tests/`; 5,882 tests pass, 0 fail (full suite with Postgres, Sun 4 Oct)
+> - **Try it without a game key**, two terminals: `SIM_TICK_SECONDS=2 SIM_DATABASE_URL=memory uv run bazaar-sim serve`,
+>   then `BAZAAR_SIM=local uv run bazaar agent taker --max-ticks 5` (a dry run)
+
 Autonomous trading agents for **The Bazaar**, Causa Prima's Madrid hackathon
 (2–4 October 2026). We negotiate with dealers and other teams, trade collectible
 cards, and run a market that matches other players' orders.
 
 The system combines tick-driven trading, a shared Postgres memory and ledger,
 Jev or Claude verdicts, and guarded execution through the organisers' Python SDK.
+Jev is TypeSafe's typed-judgment service ([`jev/`](src/bazaar_agent/jev/)): a verdict
+informs a move, never authorizes one.
 The [Bazaar Live](https://github.com/claude-hackaton-madrid-team-1/bazaar-live)
 frontend lives in a separate repository.
 
 [Architecture](docs/architecture.html) · [Operations](docs/operations.md) ·
 [Service contracts](docs/services.md) · [Game rules](vendor/bazaar-kit/RULES.md) ·
-[Presentation](docs/pitch/story.md)
+[Presentation](docs/pitch/motion/README.md)
 
 ## What is here
 
@@ -107,8 +124,9 @@ real game require the team's `BAZAAR_KEY`; use `BAZAAR_SIM=local` for developmen
 - **The game clock drives every loop.** All processes share one team's API and
   action budgets. The ledger coordinates accepts, listings and spend.
 - **Inventory is checked before a trade.** Never sell or swap our only copy of a
-  page card, or sell below the configured floor. Trades at the human-approval
-  threshold require explicit approval.
+  card on a complete page (dealer sells keep every only copy), or sell below the
+  configured floor. Amount-based approval is set by `human_approval_above`; it is 0
+  (off) since Sun 4 Oct, as is the hourly cap `max_spend_per_game_hour`.
 - **Writes are guarded.** A live writer needs the shared ledger. Missing ledger,
   expired tick budget or a guardrail denial prevents the send.
 - **Pause applies per data directory.** `touch .local/PAUSE` stops writes for this
@@ -161,6 +179,16 @@ with `uv run black src tests scripts`. The manual
 | Find work or historical decisions | [Local backlog](.ai/specs/02-plan.md), [decision log](docs/decisions.md), [team memory](.ai/memory.md) |
 | Connect a teammate’s MCP client | [MCP skill](.ai/skills/bazaar-mcp/SKILL.md), [reviewed operator proposals](docs/operations.md#exact-operator-proposals) |
 | Contribute with an AI agent | [AGENTS.md](AGENTS.md), [agent harness](docs/agent-harness.md) |
+| Read the history | [Docs index](docs/README.md), [night shift](docs/night/README.md), [Sunday research](docs/research/2026-10-04/), [transcripts](docs/transcripts/) |
+
+Terms: **Jev** = typed judgments (above). **Dealer desk**
+([`agents/desk.py`](src/bazaar_agent/agents/desk.py)): the taker's parallel dealer buy threads,
+one move per tick each; the maker's dealer sell desk
+([`agents/dealer_sell_desk.py`](src/bazaar_agent/agents/dealer_sell_desk.py)) is off (`dealer_sell_enabled`).
+**Team desk** ([`agents/team_desk.py`](src/bazaar_agent/agents/team_desk.py)): swap threads with other teams.
+**Trade desk** ([`trade_desk.py`](src/bazaar_agent/trade_desk.py)): an offline dry-run plan of team trades;
+sends nothing. **The desk** behind `bazaar ask` ([`runtime/desk.py`](src/bazaar_agent/runtime/desk.py)):
+the Claude Agent SDK operator session. **Primas (P)** are the in-game currency; **points** are the score.
 
 `src/` holds runtime code; `tests/` holds unit and integration tests; `scripts/`
 holds development and maintenance tools. `vendor/` contains the organisers' kit

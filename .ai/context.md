@@ -1,4 +1,4 @@
-# Agent Operating Contract — <PROJECT_NAME>
+# Agent Operating Contract — Bazaar
 
 ## Source-of-truth convention (READ FIRST)
 - The ONLY hand-edited spec files are `.ai/context.md` (the project contract) and
