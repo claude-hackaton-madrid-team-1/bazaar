@@ -6,7 +6,7 @@ import json
 
 from bazaar_agent.agents.dealer_sell import AskPlan, SellNegotiation, decide_sell
 from bazaar_agent.agents.runtime import JevAdvice, Recorder
-from bazaar_agent.agents.strategy_gate import DEALER_SELL, LADDER_PROBE, StrategyGate, closed_gate
+from bazaar_agent.agents.strategy_gate import DEALER_SELL, LADDER_PROBE, StrategyGate, closed_gate, holdings_key
 from bazaar_agent.decisions import DecisionLog
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.jev import load_questions
@@ -88,6 +88,33 @@ def test_a_broken_state_keeps_the_strategy_off_without_asking(tmp_path):
     assert g.allows(LADDER_PROBE, 100, state) is False and asked == []
 
 
+def test_failed_judgments_retry_after_four_ticks_not_the_full_window(tmp_path):
+    g, asked = gate(tmp_path, [RuntimeError("timeout"), JevAdvice("undecided", 0.4), JevAdvice("yes", 0.9)], 120)
+    for tick in range(100, 108):
+        assert not g.allows(LADDER_PROBE, tick, lambda: {})
+    assert len(asked) == 2
+    assert g.allows(LADDER_PROBE, 108, lambda: {})
+    assert len(asked) == 3
+
+
+def test_cash_and_inventory_invalidate_but_order_and_score_do_not(tmp_path):
+    g, asked = gate(tmp_path, [JevAdvice("no", 0.1), JevAdvice("yes", 0.9), JevAdvice("no", 0.1)], 120)
+    me = {"cash": 40, "assets": [{"id": 1, "ref": "LAV-01", "your_value": 8}, {"id": 2, "ref": "LAV-02"}]}
+    key = holdings_key(me)
+    assert not g.allows(LADDER_PROBE, 100, lambda: me, state_key=key)
+    me["assets"].reverse()
+    me["score"] = 99
+    assert holdings_key(me) == key
+    assert not g.due(LADDER_PROBE, 104, state_key=holdings_key(me))
+    me["cash"] = 400
+    assert not g.due(LADDER_PROBE, 103, state_key=holdings_key(me))
+    assert g.due(LADDER_PROBE, 104, state_key=holdings_key(me))
+    assert g.allows(LADDER_PROBE, 104, lambda: me, state_key=holdings_key(me))
+    me["assets"].pop()
+    assert not g.allows(LADDER_PROBE, 108, lambda: me, state_key=holdings_key(me))
+    assert len(asked) == 3
+
+
 # ---------------------------------------------------------------- the maker's dealer sells
 
 
@@ -111,6 +138,22 @@ def test_jev_reads_our_duplicates_and_the_backoff_rules(tmp_path):
     assert any(d["card"] == "LAV-08" and d["copies"] == 3 for d in state["duplicates"])
     assert state["rules"]["taker_window_ticks"] == Guardrails().dealer_sell_taker_window_ticks
     json.dumps(state)  # JSON-safe for Jev
+
+
+def test_maker_reconsiders_a_cached_no_after_cash_arrives(tmp_path):
+    seen = []
+
+    def jev(name, state):
+        seen.append(state["cash"])
+        return JevAdvice("yes" if len(seen) > 1 else "no", 0.9)
+
+    team = FakeTeam(me=ME_DUP)
+    m, _ = maker(tmp_path, team, live=True, strategy_jev=jev, dealer_sell_enabled=True)
+    m.on_tick(clock(tick=100))
+    assert opened(team) == []
+    team._me["cash"] += 100
+    m.on_tick(clock(tick=104))
+    assert len(seen) == 2 and len(opened(team)) == 1
 
 
 def taker_row(tmp_path, tick, kind, **inputs):
@@ -188,3 +231,21 @@ def test_an_llm_decider_asks_the_dealer_sell_gate_only_with_its_timeout_of_the_t
     assert SellDesk.gate_on(llm_desk, roomy) is True and len(llm_asked) == 1
     stale, stale_asked = desk()  # the snapshot says 20 s, the maker's live window 2 s: no ask
     assert SellDesk.gate_on(stale, roomy, left=lambda: 2.0) is False and stale_asked == []
+
+
+def test_changed_holdings_still_need_the_llm_deadline_budget(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from bazaar_agent.agents.dealer_sell_desk import SellDesk
+
+    g, asked = gate(tmp_path, [JevAdvice("no", 0.1), JevAdvice("yes", 0.9)], refresh=120)
+    desk = SimpleNamespace(gate=g, gate_state=lambda snap: snap.me)
+    snap = SimpleNamespace(clock=SimpleNamespace(tick=100, next_tick_in=20.0), me={"cash": 40})
+    assert not SellDesk.gate_on(desk, snap)
+    monkeypatch.setenv("BAZAAR_DECIDER", "llm")
+    snap.clock.tick = 104
+    snap.me = {"cash": 400}
+    assert not SellDesk.gate_on(desk, snap, left=lambda: 2.0)
+    assert len(asked) == 1
+    assert SellDesk.gate_on(desk, snap, left=lambda: 20.0)
+    assert len(asked) == 2

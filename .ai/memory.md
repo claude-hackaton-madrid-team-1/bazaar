@@ -1432,3 +1432,11 @@ AT1: Omar explicitly removed amount-based human approval and the global250P/hour
 
 ### [2026-10-04] build-error
 AT1: legacy restart fixtures used hourlycap0 as 'disable trading', conflicting with requested zero/off semantics → use an empty dealer catalog to preserve their no-new-thread scenario. Initial focused tests had two expected config assertion failures until GUARDRAILS0/0 landed; final318passed. Review caught an overbroad comment replacement on three unrelated rules → restore their original zero/off notes.
+
+### [2026-10-04] build-error — TT1 trading throughput
+
+- Cash-counter test initially constructed `BazaarError` with the wrong argument order; corrected the fixture to the SDK signature.
+- `BAZAAR_ENV_FILE=.local/empty-test.env` was rejected because the override requires an absolute regular-file path; reran the rules check with the absolute path successfully.
+- Independent cash-counter review reproduced a late send after slow ledger writes (`expired_before_send=True`, `say_calls=1`). Added a final deadline check after reservations, releasing only a proven unsent promise; `test_cash_counter_drops_tick_expiring_during_reservation` covers it.
+- Dealer continuation tests previously set a low value before opening; now they lower it after opening so they still exercise mid-conversation revalidation. The new opening fixture initially lost its feed through `parts()`; binding `MarketFeed` made the regression exercise the intended negotiated fills.
+- Depot caught one more pre-opening low-value fixture in `test_ladder_tolerance`: it expected a now-infeasible dealer opening. Reproduced locally (`1 failed, 6 passed`), then lowered the value after opening to preserve the mid-thread tolerance assertion.

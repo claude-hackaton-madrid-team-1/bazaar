@@ -52,7 +52,7 @@ from bazaar_agent.agents.dealer_sell_data import (
     ladder_deals,
     market_from_feed,
 )
-from bazaar_agent.agents.strategy_gate import DEALER_SELL, StrategyGate
+from bazaar_agent.agents.strategy_gate import DEALER_SELL, StrategyGate, holdings_key
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.jev.decider import needed_budget_s
 from bazaar_agent.news import EVENTS_FILE, MarketEvent, active_signals, load_market_events
@@ -564,9 +564,10 @@ class SellDesk:
         # (Jev keeps its 3 s budget unchecked here, as before: needed_budget_s(0.0) is 0 for Jev). The live
         # window, not the snapshot's: the maker's own Jev price calls may have used most of the tick.
         now_left = left() if left is not None else float(getattr(snap.clock, "next_tick_in", 0.0) or 0.0)
-        if self.gate.due(DEALER_SELL, tick) and now_left < needed_budget_s(0.0):
+        state_key = holdings_key(getattr(snap, "me", {}) or {})
+        if self.gate.due(DEALER_SELL, tick, state_key=state_key) and now_left < needed_budget_s(0.0):
             return False
-        return self.gate.allows(DEALER_SELL, tick, lambda: self.gate_state(snap))
+        return self.gate.allows(DEALER_SELL, tick, lambda: self.gate_state(snap), state_key=state_key)
 
     def gate_state(self, snap: Any) -> dict[str, Any]:
         """What Jev reads: our spare copies (a page keeps one) with `your_value`, the score guard's estimate of

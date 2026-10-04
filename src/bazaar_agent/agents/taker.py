@@ -22,6 +22,7 @@ open and resume when the switch goes off. Dry run (the default) sends nothing an
 
 from __future__ import annotations
 
+import math
 import re
 import time
 from collections import Counter
@@ -113,7 +114,7 @@ from bazaar_agent.agents.seller import (
     trade_book,
     unsettled_accepts,
 )
-from bazaar_agent.agents.strategy_gate import LADDER_PROBE, AskFn, StrategyGate
+from bazaar_agent.agents.strategy_gate import LADDER_PROBE, AskFn, StrategyGate, holdings_key
 from bazaar_agent.agents.tactics import private_numbers
 from bazaar_agent.agents.taller import LEVEL_ID as TALLER_LEVEL
 from bazaar_agent.agents.taller import (
@@ -140,9 +141,11 @@ from bazaar_agent.guardrails import (
     Context,
     Guardrails,
     LedgerStore,
+    Verdict,
     check,
     effective_cash_floor,
     kill_switch,
+    ladder_tolerance,
     refund_row,
 )
 from bazaar_agent.holdings import Holdings
@@ -150,7 +153,7 @@ from bazaar_agent.injection_log import InjectionLog
 from bazaar_agent.intel import Print, book_values, dealer_threads, listed_makers, settled_volume, tape
 from bazaar_agent.jev.decider import needed_budget_s
 from bazaar_agent.learn.blockers import Blocks
-from bazaar_agent.learn.curves import curve_stats
+from bazaar_agent.learn.curves import curve_stats, informative_fill
 from bazaar_agent.learn.live import LiveLearner
 from bazaar_agent.learn.outcomes import OutcomeLearner
 from bazaar_agent.learn.recall import Lessons
@@ -942,6 +945,7 @@ class Taker:
     def _team_view(self, run: _TickRun, threads: list[dict[str, Any]]) -> DeskView:
         snap, listed = run.snap, {t.get("id") for t in threads}
         opened_now = sum(1 for c in self.convs.values() if c.thread_id not in listed)  # this tick's dealer opens
+        dealers = {str(d.get("id")) for d in snap.dealers}
         return DeskView(
             tick=snap.clock.tick,
             t_hours=snap.clock.t_hours,
@@ -954,7 +958,9 @@ class Taker:
             offers=run.offers,
             params=run.params,
             max_threads=snap.clock.limits.max_open_threads_per_team,
+            max_open_offers=snap.clock.limits.max_open_offers_per_team,
             in_use=len(threads) + opened_now,
+            dealer_in_use=sum(str(t.get("with")) in dealers for t in threads) + opened_now,
             ctx=lambda thread: self._ctx(run, skip_thread=thread),
             window_open=run.window.open,
             listing_cap=snap.clock.limits.offers_per_team_per_tick,
@@ -1434,8 +1440,18 @@ class Taker:
         chosen = openings(moves, busy, busy_items, room)
         if not chosen:
             self._all_denied(run, moves)
-        for op in chosen:
-            self._open_one(run, op, ctx)
+        # At most the existing dealer-opening budget of value reads, including rejected candidates.
+        # A known unaffordable first choice must not starve an affordable alternative for that dealer.
+        for _ in range(self.config.max_dealer_threads):
+            chosen = openings(moves, busy, busy_items, room)
+            if not chosen or not run.window.open():
+                break
+            op = chosen[0]
+            moves = [mv for mv in moves if mv is not op.move]
+            if self._open_one(run, op, ctx):
+                busy.add(op.dealer)
+                busy_items.add(op.item)
+                room -= 1
 
     def _with_probes(
         self, run: _TickRun, book: Playbook, ctx: Context, threads: list[dict[str, Any]], market: Market
@@ -1458,7 +1474,10 @@ class Taker:
         if not plan_probes(market, opens, self.rules, room, skip, slots=slots):
             self._empty_slots(run, slots, ())
             return book
-        if gate.due(LADDER_PROBE, clock.tick) and run.window.left() < needed_budget_s(self.config.jev_min_budget_s):
+        state_key = holdings_key(run.snap.me)
+        if gate.due(LADDER_PROBE, clock.tick, state_key=state_key) and run.window.left() < needed_budget_s(
+            self.config.jev_min_budget_s
+        ):
             return book
         values = ctx.values
 
@@ -1470,7 +1489,7 @@ class Taker:
             deals = our_dealer_deals(run.snap.events, run.snap.us)
             return probe_state(planned, ctx.cash, floor, room, ctx.spent_last_hour, deals, slots)
 
-        if not gate.allows(LADDER_PROBE, clock.tick, state):
+        if not gate.allows(LADDER_PROBE, clock.tick, state, state_key=state_key):
             self._empty_slots(run, slots, (), "the ladder probe gate is not a decided yes (Jev or the LLM decider)")
             return book
         probes = plan_probes(market, opens, self.rules, room, skip, value_of, slots)  # values cached for the tick
@@ -1732,11 +1751,55 @@ class Taker:
             )
         return kept
 
-    def _open_one(self, run: _TickRun, op: Opening, ctx: Context) -> None:
+    def _official_opening(self, run: _TickRun, op: Opening, ctx: Context) -> tuple[Opening, Verdict]:
+        """Read the official value once before opening and bound the whole ladder, not just its first bid.
+
+        Only negotiated fills for this card/dealer since the latest round constrain feasibility. An unknown
+        final still gets a chance to concede. The send's guard reuses this tick/copy-keyed value cache.
+        """
+        action = Action("buy", op.item, op.rarity, op.plan.start, dealer=op.dealer)
+        verdict = check(action, ctx, self.rules)
+        official = self.values.cached(op.item, ctx.tick, ctx.held.get(op.item, 0))
+        if not verdict.allowed or official is None or op.rarity == "pack":
+            return op, verdict
+        ceiling = math.floor(
+            official - self.rules.value_margin_for(op.rarity) + ladder_tolerance(action, ctx, self.rules) + 1e-9
+        )
+        since = max(
+            (int(e.get("tick") or 0) for e in run.snap.events if e.get("type") in ("day.opened", "round.started")),
+            default=0,
+        )
+        fills = [
+            t.fill_price
+            for t in dealer_threads(run.snap.events, run.snap.us)
+            if t.dealer == op.dealer
+            and t.item == op.item
+            and t.side == "buy"
+            and t.opened_tick >= since
+            and informative_fill(t)
+            and t.fill_price is not None
+        ]
+        if fills and min(fills) > min(ceiling, op.plan.final_cap):
+            return op, Verdict(
+                False,
+                (
+                    f"official value ceiling {ceiling} cannot reach {op.dealer} {op.item} "
+                    f"negotiated fills from {min(fills)}",
+                ),
+            )
+        top = min(op.plan.max_price, ceiling)
+        final = min(op.plan.final_max, ceiling) if op.plan.final_max is not None else None
+        plan = replace(op.plan, max_price=top, final_max=final)
+        if plan != op.plan:
+            op = replace(op, plan=plan, reason=f"{op.reason}; official value {official:g} caps the ladder at {ceiling}")
+        return op, verdict
+
+    def _open_one(self, run: _TickRun, op: Opening, ctx: Context) -> bool:
+        """Return whether this candidate used the dealer slot; a refused plan permits another bounded try."""
         tick = run.snap.clock.tick
         if stops := kill_switch(self.rules):  # the pack gate's Jev calls may take seconds: read it again
             self.log(f"tick {tick} taker: kill switch on: no thread opened with {op.dealer} ({'; '.join(stops)})")
-            return
+            return True
         lower = self.reopen_at.get((op.dealer, op.item))
         if lower is not None and lower < op.plan.start:  # she held her opening ask last time: start lower
             op = replace(op, plan=replace(op.plan, start=lower), reason=f"{op.reason}; reopened lower")
@@ -1745,7 +1808,7 @@ class Taker:
             op = replace(op, plan=replace(op.plan, final_max=dp.final_max, lift_after=LIFTED_FINAL_MIN_BIDS))
         if (forgiving := self._forgiving(run, op.dealer, op.item, op.rarity, op.plan)) != op.plan:  # last: no lift
             op = replace(op, plan=forgiving, reason=f"{op.reason}; {forgiving_note(forgiving)}")
-        verdict = check(Action("buy", op.item, op.rarity, op.plan.start, dealer=op.dealer), ctx, self.rules)
+        op, verdict = self._official_opening(run, op, ctx)
         if not verdict.allowed and not verdict.halted and op.item in run.boost and self.cards is not None:
             self.cards.unboost(op.item)  # a refused release never holds this dealer's slot again
         plan = f"{op.plan.start}→{op.plan.max_price} step {op.plan.step}"
@@ -1789,7 +1852,7 @@ class Taker:
             move={"open_thread": op.dealer, "topic": {"buy": op.item}},
         )
         if status != "approved" or not self.live:
-            return
+            return verdict.allowed or verdict.halted
         topic = topic_for(op.item)
         body = self.rec.send(
             did,
@@ -1820,6 +1883,7 @@ class Taker:
                 memory_lines=memory.lines(),
             )
             self._opened(run, op.dealer, op.item, int(body["id"]))
+        return True
 
     def _dealer_memory(self, run: _TickRun, dealer: str) -> DealerMemory:
         """The dealer's newest learnings (the live learner's store, memory only) and its last words to us in the

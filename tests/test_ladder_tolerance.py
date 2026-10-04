@@ -78,17 +78,19 @@ def test_the_taker_bids_over_the_official_value_only_while_the_level_has_an_empt
     # tests/test_official_value_agents: with LAV-08 at 18.5, her ask 24 calls for 19, refused by the cap. With a
     # tolerance of 1 and Abuela's level 1 still open this round, 19 goes; with her level full it is refused again.
     monkeypatch.setattr(taker_module, "ladder_deals", lambda events, us: {})
-    team = ValuedTeam(values={"LAV-08": 18.5})
+    team = ValuedTeam(values={"LAV-08": 40.0})
     t, _ = taker(tmp_path / "open", team, FakePublic(), live=True, dealers=3, dealer_ladder_value_tolerance=1.0)
     t.on_tick(clock())
+    team.values["LAV-08"] = 18.5  # Revalidate a lower value during an existing conversation.
     her_ask(team, 5000, 800, 24)
     t.on_tick(at(team, TICK + 1))
     assert [s for s in team.sent if s[0] == "say"] == [("say", 5000, 18), ("say", 5000, 19)]
 
     monkeypatch.setattr(taker_module, "ladder_deals", lambda events, us: {"abuela": 3})
-    full = ValuedTeam(values={"LAV-08": 18.5})
+    full = ValuedTeam(values={"LAV-08": 40.0})
     t, lines = taker(tmp_path / "full", full, FakePublic(), live=True, dealers=3, dealer_ladder_value_tolerance=1.0)
     t.on_tick(clock())
+    full.values["LAV-08"] = 18.5
     her_ask(full, 5000, 800, 24)
     t.on_tick(at(full, TICK + 1))
     assert [s for s in full.sent if s[0] == "say"] == [("say", 5000, 18)]

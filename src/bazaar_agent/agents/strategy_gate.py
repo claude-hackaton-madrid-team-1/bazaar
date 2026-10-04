@@ -15,6 +15,7 @@ from bazaar_agent.agents.runtime import JevAdvice
 QUESTIONS_FILE = "strategies.json"  # under questions/
 LADDER_PROBE = "ladder_probe_worth_it"
 DEALER_SELL = "dealer_sell_duplicates_worth_it"
+RECHECK_TICKS = 4  # bounded retry after uncertainty or changed funds/holdings; never an inference loop
 
 AskFn = Callable[[str, dict[str, Any]], JevAdvice]
 
@@ -24,27 +25,48 @@ class GateAnswer:
     tick: int
     on: bool
     advice: JevAdvice
+    state_key: tuple[Any, ...] | None = None
+
+
+def holdings_key(me: Mapping[str, Any]) -> tuple[Any, ...]:
+    """Only decision-relevant holdings, not the tick, asset order or changing public score."""
+    return (
+        me.get("cash"),
+        tuple(
+            sorted(
+                (str(a.get("id")), str(a.get("ref")), str(a.get("your_value")))
+                for a in me.get("assets") or ()
+                if isinstance(a, Mapping)
+            )
+        ),
+    )
 
 
 class StrategyGate:
     """The cached Jev gate of each strategy. `allows(name, tick, state)` asks Jev at most once per
-    `refresh_ticks` per strategy (a failed or undecided ask is asked again on the next refresh, not every tick:
-    a Jev call costs tick budget). `state` is built only when an ask is due."""
+    `refresh_ticks` per strategy. Changed holdings or an uncertain answer use a shorter bounded retry;
+    the full `state` is still built only when an ask is due."""
 
     def __init__(self, ask: AskFn, rec: Any, refresh_ticks: int, posture: str = "") -> None:
         self.ask, self.rec, self.refresh_ticks = ask, rec, max(1, refresh_ticks)
         self.posture = posture  # `risk_posture` (GUARDRAILS.md): every state Jev reads carries it
         self.answers: dict[str, GateAnswer] = {}
 
-    def due(self, name: str, tick: int) -> bool:
+    def due(self, name: str, tick: int, *, state_key: tuple[Any, ...] | None = None) -> bool:
         last = self.answers.get(name)
         # No model answered when the tick budget ran out. Retry on the next tick,
         # but still coalesce repeated callers in this tick.
-        refresh = 1 if last and last.advice.reason == "no tick budget for jev" else self.refresh_ticks
+        refresh = self.refresh_ticks
+        if last and (last.advice.verdict == "undecided" or state_key != last.state_key):
+            refresh = min(refresh, RECHECK_TICKS)
+        if last and last.advice.reason == "no tick budget for jev":
+            refresh = 1
         return last is None or tick - last.tick >= refresh or tick < last.tick
 
-    def allows(self, name: str, tick: int, state: Callable[[], Mapping[str, Any]]) -> bool:
-        if not self.due(name, tick):
+    def allows(
+        self, name: str, tick: int, state: Callable[[], Mapping[str, Any]], *, state_key: tuple[Any, ...] | None = None
+    ) -> bool:
+        if not self.due(name, tick, state_key=state_key):
             return self.answers[name].on
         try:
             facts = dict(state())
@@ -54,7 +76,7 @@ class StrategyGate:
         except Exception as e:  # noqa: BLE001 - a broken state or Jev call keeps the strategy off
             facts, advice = {}, JevAdvice("undecided", 0.0, reason=f"gate error: {type(e).__name__}")
         on = advice.verdict == "yes"
-        self.answers[name] = GateAnswer(tick, on, advice)
+        self.answers[name] = GateAnswer(tick, on, advice, state_key)
         why = f"Jev {name}: {advice.verdict} ({advice.value:.2f})" + (f", {advice.reason}" if advice.reason else "")
         self.rec.decide(
             tick,
