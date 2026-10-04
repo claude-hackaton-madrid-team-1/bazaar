@@ -157,3 +157,80 @@ def test_late_price_change_rechecks_card_specific_demand(tmp_path, monkeypatch):
     m.on_tick(clock())
     ask = next(p for p in posted(team) if p[1].get("assets") == [4])
     assert ask[2] == {"cash": 15} and ask[3] == "rastro"
+
+
+def test_existing_public_ask_moves_to_crossing_demand_after_confirmed_cancel(tmp_path):
+    from tests.agent_fakes import our_ask
+
+    team = Team(offers=[our_ask(800, 4, "LAT-03", 10)])
+    m, _ = maker(tmp_path, team, FakePublic(venues=(RASTRO, T10)), live=True)
+    m.feed = MarketFeed(lambda n: [listed(bid(901, "LAT-03", 12, venue="v07", maker="t04"))])
+    m.on_tick(clock(tick_seconds=15))
+    copies = [p for p in posted(team) if p[1].get("assets") == [4]]
+    assert copies == [("list_offer", {"assets": [4]}, {"cash": 10}, "v07", None)]
+    assert team.sent.index(("cancel", 800)) < team.sent.index(copies[0])
+    assert team.reads.count("me") >= 2  # fresh holdings under publication lock before the replacement
+
+
+@pytest.mark.parametrize("reason", ["empty", "below_ask", "equal_demand", "addressed", "unknown_expiry", "hands_off"])
+def test_existing_ask_does_not_rotate_without_better_eligible_crossing_demand(tmp_path, reason):
+    from tests.agent_fakes import our_ask
+
+    own = our_ask(800, 4, "LAT-03", 10)
+    other = bid(901, "LAT-03", 12, venue="v07", maker="t04")
+    events = [listed(other)]
+    if reason == "empty":
+        from tests.test_strategy import EVENTS
+
+        events = list(EVENTS)
+    elif reason == "below_ask":
+        other["give"]["cash"] = 9
+    elif reason == "equal_demand":
+        events.append(listed(bid(902, "LAT-03", 14, maker="t04")))  # Rastro14-fee2 == v07's12
+    elif reason == "addressed":
+        own["to"] = "t04"
+    elif reason == "unknown_expiry":
+        other.pop("expires_tick")
+    team = Team(offers=[own])
+    m, _ = maker(tmp_path, team, FakePublic(venues=(RASTRO, T10)), live=True)
+    m.feed = MarketFeed(lambda n: events)
+    if reason == "hands_off":
+        m.ledger.record("listing", 99, 1.4, 10, "hands-off:800")
+    m.on_tick(clock(tick_seconds=15))
+    assert ("cancel", 800) not in team.sent
+    assert not any(p[1].get("assets") == [4] for p in posted(team))
+
+
+@pytest.mark.parametrize(
+    "failure", ["unknown", "refused", "still_open", "lost_asset", "no_budget", "request_budget", "deadline"]
+)
+def test_relocation_never_duplicates_an_uncertain_cancel_or_skips_fresh_guards(tmp_path, failure):
+    from bazaar_agent.sdk import BazaarError
+    from tests.agent_fakes import our_ask
+
+    class CancelTeam(Team):
+        def cancel(self, offer_id):
+            if failure in ("unknown", "refused"):
+                self.sent.append(("cancel", offer_id))
+                if failure == "unknown":
+                    raise BazaarError("transport_error", "response lost", 0)
+                raise BazaarError("offer_not_open", "already accepted", 409)
+            result = super().cancel(offer_id)
+            if failure == "still_open":
+                self.offers.append(our_ask(800, 4, "LAT-03", 10))
+            if failure == "lost_asset":
+                self._me["assets"] = [a for a in self._me["assets"] if a["id"] != 4]
+            return result
+
+    team = CancelTeam(offers=[our_ask(800, 4, "LAT-03", 10)])
+    m, _ = maker(tmp_path, team, FakePublic(venues=(RASTRO, T10)), live=True)
+    m.feed = MarketFeed(lambda n: [listed(bid(901, "LAT-03", 12, venue="v07", maker="t04"))])
+    if failure == "no_budget":
+        for _ in range(12):
+            m.ledger.record("listing", 100, 1.5, 1, "other")
+    m.on_tick(
+        clock(tick_seconds=5 if failure == "request_budget" else 15, next_tick_in=0 if failure == "deadline" else 12)
+    )
+    assert not any(p[1].get("assets") == [4] for p in posted(team))
+    if failure in ("no_budget", "request_budget", "deadline"):
+        assert ("cancel", 800) not in team.sent

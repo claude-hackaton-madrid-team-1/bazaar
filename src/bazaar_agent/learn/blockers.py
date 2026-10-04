@@ -30,7 +30,14 @@ def in_force(lr: Learning, tick: int) -> bool:
     A fact learned "in the future" (a tick counter reset, simulator rows) is not believed (one tick of slack
     for an event that lands just before the clock read)."""
     cap = CAP_TICKS.get(lr.kind)
-    return lr.active(tick) and (cap is None or lr.tick <= tick + 1 < lr.tick + cap + 1)
+    if (
+        lr.kind == "quota"
+        and lr.source == "rules"
+        and lr.detail.get("origin") == "refusal"
+        and lr.detail.get("quota_until_tick") == lr.until_tick
+    ):
+        cap = None  # explicit server refusal dated by our game clock; legacy/LLM rows keep their caps
+    return lr.active(tick) and lr.tick <= tick + 1 and (cap is None or tick + 1 < lr.tick + cap + 1)
 
 
 @dataclass(frozen=True)

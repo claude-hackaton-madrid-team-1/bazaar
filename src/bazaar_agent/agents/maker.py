@@ -102,6 +102,7 @@ from bazaar_agent.holdings import Holdings
 from bazaar_agent.intel import book_values, card_rarities, listed_makers, settled_volume, tape
 from bazaar_agent.learn.venues import VenueNotices
 from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable, trade_lock
+from bazaar_agent.move_impact import our_cards
 from bazaar_agent.official_values import OfficialValues, over_cap
 from bazaar_agent.rate_budget import maker_post_attempts
 from bazaar_agent.sdk import BazaarError
@@ -164,15 +165,16 @@ def targets_from(book: Playbook) -> list[Target]:
 
 
 def _leave_desk_copy(targets: Iterable[Target], me: dict[str, Any], rules: Guardrails) -> list[Target]:
-    """Keep one page copy, without reserving stock for a dormant swap strategy.
+    """Keep the page copies protected by the current album policy.
 
     Actual standing and uncertain offers are checked again under the publication lock.
     """
     held = Counter(str(a.get("ref")) for a in me.get("assets") or [])
+    complete = our_cards(me).complete if me.get("album") else None
     kept: list[Target] = []
     for target in targets:
         if target.side == "ask":
-            if held[target.ref] <= 1 and rules.protects(target.ref, target.rarity, 1):
+            if held[target.ref] <= 1 and rules.protects(target.ref, target.rarity, 1, complete):
                 continue
             held[target.ref] -= 1
         kept.append(target)
@@ -443,6 +445,7 @@ class Maker:
         if self.rules.buyer_rank_enabled:
             self._refresh_ranks(clock.tick)
             actions = self._with_fallbacks(actions, targets, mine, clock.tick)
+        actions = self._with_relocations(run, actions, targets, mine)
         for action in actions:
             self._do(run, action)
         # Dealer sales last: never a copy an open offer of ours lists (it is locked) or one the maker wants listed.
@@ -797,8 +800,11 @@ class Maker:
         the card without an offer for a tick. Not repostable: an offer that cannot stand is cancelled anyway
         (a cancel needs no listing slot), any other keeps its price."""
         advice: JevAdvice | None = None
+        cap = maker_post_attempts(run.snap.clock.tick_seconds, run.snap.clock.limits.offers_per_team_per_tick)
         if run.listings_left <= 0:
             refused: str | None = "no listing left"
+        elif self.live and run.post_attempts >= cap:
+            refused = "no publication request budget left"
         else:
             hold, advice = (False, None) if t.final or t.counter else self._jev_hold(run, offer, t)
             if hold:
@@ -883,7 +889,40 @@ class Maker:
         run.open_total -= 1
         return True
 
-    def _venue(self, snap: Snapshot, target: Target, venues: list[Venue] | None = None) -> Venue | None:
+    def _with_relocations(
+        self, run: _MakerRun, actions: list[MakerAction], targets: list[Target], mine: list[OpenOffer]
+    ) -> list[MakerAction]:
+        """Move an unchanged public ask only toward strictly better crossing demand.
+
+        ponytail: reuse cancel-confirm/repost; no polling or venue rotation without a bid.
+        """
+        busy = {a.offer.id for a in actions if a.offer is not None}
+        addressed = {o.get("id") for o in run.offers if o.get("to")}
+        asks = {t.asset_id: t for t in targets if t.side == "ask" and t.to is None}
+        venues = run.snap.venues
+        if self.notices is not None:
+            venues = self.notices.adjust(venues, run.snap.clock.tick, self.config.offer_ttl_ticks)
+        relocations = []
+        for offer in mine:
+            target = asks.get(offer.asset_id)
+            if (
+                offer.side != "ask"
+                or target is None
+                or offer.id in busy | addressed
+                or offer.expires_tick is None
+                or offer.expires_tick <= run.snap.clock.tick
+            ):
+                continue
+            target = replace(target, price=offer.price, final=True)
+            venue = self._venue(run.snap, target, venues, better_than=offer.venue)
+            if venue is not None:
+                why = f"crossing net demand: move {offer.venue} → {venue.id} at unchanged {offer.price}"
+                relocations.append(MakerAction("reprice", why, target, offer))
+        return [a for a in actions if a.kind != "post"] + relocations + [a for a in actions if a.kind == "post"]
+
+    def _venue(
+        self, snap: Snapshot, target: Target, venues: list[Venue] | None = None, *, better_than: str | None = None
+    ) -> Venue | None:
         """Use already-loaded feed bids as routing hints; no extra per-market requests.
 
         The taker still reads and revalidates the actual book before accepting. A stale
@@ -914,6 +953,12 @@ class Maker:
                 ):
                     net = bid.price - venue.fee(bid.price)
                     demand[bid.venue] = max(demand.get(bid.venue, 0), net)
+        if better_than is not None:
+            eligible = [
+                v
+                for v in eligible
+                if demand.get(v.id, 0) >= target.price and demand.get(v.id, 0) > demand.get(better_than, 0)
+            ]
         return best_venue(eligible, snap.us, target.price, to=target.to, demand=demand)
 
     def _listing(self, run: _MakerRun, t: Target, venue: str) -> Listing:
