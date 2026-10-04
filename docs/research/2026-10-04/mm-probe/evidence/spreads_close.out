@@ -1,0 +1,6 @@
+open offers 40, addressed 0; cards with asks 22, with bids 11
+cards quoted on both sides: 1
+  LAT-08  best bid    5 (rastro) best ask   30 (rastro) gap   25 =   83% of ask
+median gap 25 P; crossing 0; gap <= 5 P 0
+ask-only cards 21; bid-only cards 10: LAV-10, MAL-02, MAL-05, MAL-09, MAL-10, MAL-11, RET-02, RET-06, SAL-06, SAL-12
+venues holding public offers: ['rastro', 'v21']

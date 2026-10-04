@@ -1,0 +1,8 @@
+rarity     | public asks n / median | public bids n / median | addressed asks n / median | team trades n / median
+common     |           2929 /     9 |            756 /     3 |              1153 /    10 |             57 /     7
+uncommon   |            638 /    28 |            345 /    14 |               235 /    26 |             39 /    20
+rare       |             93 /    84 |            369 /    42 |                77 /    93 |             20 /    73
+epic       |             73 /   315 |             35 /   114 |                 5 /   117 |              4 /   201
+legendary  |              0 /     - |             58 /     1 |                 0 /     - |              0 /     -
+team-to-team settlements (cash > 0 or swaps): {'rastro': 89, 'team venues': 42}
+our listings (venue class, side, addressed): {('rastro', 'ask', False): 161, ('team venue', 'bid', False): 1, ('team venue', 'ask', False): 10, ('rastro', 'ask', True): 39, ('rastro', 'bid', False): 4}

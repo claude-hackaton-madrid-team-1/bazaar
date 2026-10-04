@@ -1,0 +1,91 @@
+=== b52 window [687, 700]; traders 17: buy 8 sell 9; fates {'matched': 10, 'departed_unmatched': 5, 'gone_at_session_end': 2}
+ tick nB nS bestbid bestask crossing ours
+ 683 1 1 86 71 1 [('b52-14', 'b52-0')]  bids=[86] asks=[71]
+ 684 1 1 63 31 1 [('b52-17', 'b52-5')]  bids=[63] asks=[31]
+ 686 1 1 51 36 1 [('b52-19', 'b52-3')]  bids=[51] asks=[36]
+ 687 0 2 - 74 0 []  bids=[] asks=[74, 103]
+ 688 0 2 - 38 0 []  bids=[] asks=[38, 70]
+ 689 1 1 41 38 1 [('b52-13', 'b52-4')]  bids=[41] asks=[38]
+ 690 2 1 62 93 0 []  bids=[62, 35] asks=[93]
+ 691 3 2 62 42 1 [('b52-16', 'b52-1')]  bids=[62, 35, 25] asks=[42, 93]
+ 692 3 1 42 62 0 []  bids=[42, 35, 26] asks=[62]
+ 693 2 1 47 60 0 []  bids=[47, 27] asks=[60]
+ 694 2 1 51 59 0 []  bids=[51, 28] asks=[59]
+ 695 2 1 56 57 0 []  bids=[56, 30] asks=[57]
+ 696 1 1 30 55 0 []  bids=[30] asks=[55]
+ co-present pairs 13; crossed by quote 5; never crossed 8 {5: 1, 10: 2, 20: 3}; never crossed & both unmatched 5 {5: 1, 10: 1, 20: 1}
+   b52-2(bid 56) x b52-10(ask 57) gap 1 @695 co 692-695 | buy departed_unmatched last 695 | sell gone_at_session_end last 696
+   b52-7(bid 35) x b52-16(ask 42) gap 7 @691 co 691-691 | buy departed_unmatched last 692 | sell matched@691 w/ b52-1 last 691
+   b52-8(bid 25) x b52-16(ask 42) gap 17 @691 co 691-691 | buy gone_at_session_end last 696 | sell matched@691 w/ b52-1 last 691
+   b52-8(bid 30) x b52-10(ask 55) gap 25 @696 co 692-696 | buy gone_at_session_end last 696 | sell gone_at_session_end last 696
+   b52-7(bid 35) x b52-10(ask 62) gap 27 @692 co 692-692 | buy departed_unmatched last 692 | sell gone_at_session_end last 696
+ dynamics:
+   b52-18  sell [74, 70] steps [-4] limit <= 70 fate departed_unmatched
+   b52-13  sell [38, 38] steps [0] limit <= 38 fate matched
+   b52-1   buy  [62, 62] steps [0] limit >= 62 fate matched
+   b52-7   buy  [35, 35, 35] steps [0, 0] limit >= 35 fate departed_unmatched
+   b52-15  sell [93, 93] steps [0] limit <= 93 fate departed_unmatched
+   b52-8   buy  [25, 26, 27, 28, 30, 30] steps [1, 1, 1, 2, 0] limit >= 30 fate gone_at_session_end
+   b52-2   buy  [42, 47, 51, 56] steps [5, 4, 5] limit >= 56 fate departed_unmatched
+   b52-10  sell [62, 60, 59, 57, 55] steps [-2, -1, -2, -2] limit <= 55 fate gone_at_session_end
+=== b69 window [918, 940]; traders 20: buy 10 sell 10; fates {'matched': 12, 'departed_unmatched': 8}
+ tick nB nS bestbid bestask crossing ours
+ 922 1 2 45 42 1 [('b69-16', 'b69-6')]  bids=[45] asks=[42, 71]
+ 923 1 1 29 63 0 []  bids=[29] asks=[63]
+ 924 1 1 30 56 0 []  bids=[30] asks=[56]
+ 925 2 1 78 51 1 [('b69-12', 'b69-4')]  bids=[78, 31] asks=[51]
+ 926 1 0 32 - 0 []  bids=[32] asks=[]
+ 927 4 1 50 94 0 []  bids=[50, 38, 36, 33] asks=[94]
+ 928 4 1 55 78 0 []  bids=[55, 48, 40, 33] asks=[78]
+ 929 3 3 83 63 3 [('b69-11', 'b69-7')]  bids=[83, 61, 42] asks=[63, 75, 81]
+ 930 4 2 66 71 0 []  bids=[66, 52, 45, 44] asks=[71, 78]
+ 931 4 3 57 29 8 [('b69-13', 'b69-1'), ('b69-14', 'b69-9')]  bids=[57, 56, 48, 45] asks=[29, 30, 75]
+ 932 2 2 51 36 2 [('b69-19', 'b69-3')]  bids=[51, 47] asks=[36, 72]
+ co-present pairs 35; crossed by quote 15; never crossed 20 {5: 2, 10: 2, 20: 7}; never crossed & both unmatched 11 {5: 1, 10: 1, 20: 2}
+   b69-8(bid 61) x b69-11(ask 63) gap 2 @929 co 929-929 | buy departed_unmatched last 930 | sell matched@929 w/ b69-7 last 929
+   b69-8(bid 66) x b69-10(ask 71) gap 5 @930 co 928-930 | buy departed_unmatched last 930 | sell departed_unmatched last 930
+   b69-8(bid 66) x b69-17(ask 78) gap 12 @930 co 929-930 | buy departed_unmatched last 930 | sell departed_unmatched last 932
+   b69-1(bid 57) x b69-17(ask 75) gap 18 @931 co 930-931 | buy matched@931 w/ b69-13 last 931 | sell departed_unmatched last 932
+   b69-1(bid 52) x b69-10(ask 71) gap 19 @930 co 930-930 | buy matched@931 w/ b69-13 last 931 | sell departed_unmatched last 930
+   b69-9(bid 56) x b69-17(ask 75) gap 19 @931 co 931-931 | buy matched@931 w/ b69-14 last 931 | sell departed_unmatched last 932
+   b69-0(bid 31) x b69-12(ask 51) gap 20 @925 co 924-925 | buy departed_unmatched last 928 | sell matched@925 w/ b69-4 last 925
+   b69-2(bid 42) x b69-11(ask 63) gap 21 @929 co 929-929 | buy departed_unmatched last 932 | sell matched@929 w/ b69-7 last 929
+   b69-3(bid 51) x b69-17(ask 72) gap 21 @932 co 930-932 | buy matched@932 w/ b69-19 last 932 | sell departed_unmatched last 932
+   b69-2(bid 47) x b69-17(ask 72) gap 25 @932 co 929-932 | buy departed_unmatched last 932 | sell departed_unmatched last 932
+   b69-6(bid 45) x b69-15(ask 71) gap 26 @922 co 922-922 | buy matched@922 w/ b69-16 last 922 | sell departed_unmatched last 923
+   b69-3(bid 45) x b69-10(ask 71) gap 26 @930 co 930-930 | buy matched@932 w/ b69-19 last 932 | sell departed_unmatched last 930
+   b69-2(bid 44) x b69-10(ask 71) gap 27 @930 co 928-930 | buy departed_unmatched last 932 | sell departed_unmatched last 930
+   b69-5(bid 48) x b69-10(ask 78) gap 30 @928 co 928-928 | buy departed_unmatched last 928 | sell departed_unmatched last 930
+ dynamics:
+   b69-15  sell [71, 63] steps [-8] limit <= 63 fate departed_unmatched
+   b69-0   buy  [29, 30, 31, 32, 33, 33] steps [1, 1, 1, 1, 0] limit >= 33 fate departed_unmatched
+   b69-12  sell [56, 51] steps [-5] limit <= 51 fate matched
+   b69-2   buy  [38, 40, 42, 44, 45, 47] steps [2, 2, 2, 1, 2] limit >= 47 fate departed_unmatched
+   b69-5   buy  [36, 48] steps [12] limit >= 48 fate departed_unmatched
+   b69-8   buy  [50, 55, 61, 66] steps [5, 6, 5] limit >= 66 fate departed_unmatched
+   b69-10  sell [78, 75, 71] steps [-3, -4] limit <= 71 fate departed_unmatched
+   b69-17  sell [81, 78, 75, 72] steps [-3, -3, -3] limit <= 72 fate departed_unmatched
+   b69-1   buy  [52, 57] steps [5] limit >= 57 fate matched
+   b69-3   buy  [45, 48, 51] steps [3, 3] limit >= 51 fate matched
+=== b87 window None; traders 12: buy 6 sell 6; fates {'matched': 12}
+ tick nB nS bestbid bestask crossing ours
+ 1163 1 1 31 30 1 [('b87-12', 'b87-8')]  bids=[31] asks=[30]
+ 1164 1 1 66 46 1 [('b87-18', 'b87-4')]  bids=[66] asks=[46]
+ 1167 1 1 90 54 1 [('b87-10', 'b87-3')]  bids=[90] asks=[54]
+ 1168 2 2 85 35 4 [('b87-17', 'b87-5'), ('b87-19', 'b87-9')]  bids=[85, 73] asks=[35, 58]
+ 1169 1 1 80 37 1 [('b87-13', 'b87-6')]  bids=[80] asks=[37]
+ co-present pairs 8; crossed by quote 8; never crossed 0 {5: 0, 10: 0, 20: 0}; never crossed & both unmatched 0 {5: 0, 10: 0, 20: 0}
+ dynamics:
+
+=== limit bands and never-crossed pairs under a limit rule
+ b52 b52-2 band (56, 70) x b52-10 band (48, 55) gap 1@695 provable=True mid-gain 11.5 both_unmatched=True
+ b52 b52-7 band (35, 47) x b52-16 band (32, 42) gap 7@691 provable=False mid-gain 4.0 both_unmatched=False
+ b52 b52-8 band (30, 35) x b52-16 band (32, 42) gap 17@691 provable=False mid-gain -4.5 both_unmatched=False
+ b52 b52-1 band (62, 83) x b52-15 band (72, 93) gap 31@691 provable=False mid-gain -10.0 both_unmatched=False
+ b69 b69-8 band (66, 82) x b69-11 band (48, 63) gap 2@929 provable=True mid-gain 18.5 both_unmatched=False
+ b69 b69-8 band (66, 82) x b69-10 band (64, 71) gap 5@930 provable=False mid-gain 6.5 both_unmatched=True
+ b69 b69-8 band (66, 82) x b69-17 band (63, 72) gap 12@930 provable=False mid-gain 6.5 both_unmatched=True
+ b69 b69-9 band (56, 75) x b69-17 band (63, 72) gap 19@931 provable=False mid-gain -2.0 both_unmatched=False
+ b69 b69-2 band (47, 56) x b69-11 band (48, 63) gap 21@929 provable=False mid-gain -4.0 both_unmatched=False
+ b69 b69-6 band (45, 60) x b69-15 band (55, 63) gap 26@922 provable=False mid-gain -6.5 both_unmatched=False
+ b69 b69-8 band (66, 82) x b69-18 band (72, 94) gap 44@927 provable=False mid-gain -9.0 both_unmatched=True
