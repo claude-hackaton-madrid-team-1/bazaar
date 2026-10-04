@@ -105,10 +105,11 @@ from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable, trade_loc
 from bazaar_agent.official_values import OfficialValues, over_cap
 from bazaar_agent.rate_budget import maker_post_attempts
 from bazaar_agent.sdk import BazaarError
-from bazaar_agent.strategy import Playbook, StrategyParams, build_market, build_playbook
+from bazaar_agent.strategy import Playbook, StrategyParams, build_market, build_playbook, buy_case
 from bazaar_agent.team_matrix_store import LatestMatrix
 from bazaar_agent.ticks import Clock
 
+CEILING_TICKS = 20  # an outreach card's official value is read again after this many ticks (it moves with our album)
 LEADERBOARD_EVERY = 10  # ticks between leaderboard reads for the buyer rank (it refreshes every few minutes)
 
 
@@ -324,6 +325,7 @@ class Maker:
         self._seen: dict[tuple[str, str], counter_bids.Seen] = {}  # (team, card) -> its bids to us (`counter_bids`)
         self._counter_said: dict[tuple[str, str], str] = {}  # (team, card) -> why it is not countered (said once)
         self._turns: dict[str, outreach_bids.Turn] = {}  # card -> the holder our addressed bid goes to, and since when
+        self._ceilings: dict[str, tuple[int, float | None]] = {}  # card -> (tick read, official value) for outreach
         # Selling spares to dealers (`dealer_sell_enabled`, off by default): one sell thread at a time.
         self._run: _MakerRun | None = None
         self._dealer_promises: dict[int, str] = {}
@@ -427,7 +429,7 @@ class Maker:
         if self.config.counter_bids:
             targets = self._with_counters(snap, targets, params)
         if self.config.outreach_bids:
-            targets = self._with_outreach(snap, targets)
+            targets = self._with_outreach(snap, targets, params)
         rarities = card_rarities(snap.catalog)
 
         def above_value(o: OpenOffer) -> str | None:  # our bids, re-capped every tick (review #177 P2)
@@ -537,41 +539,69 @@ class Maker:
         countered = {t.asset_id for t in made}
         return made + [t for t in targets if not (t.side == "ask" and t.asset_id in countered)]
 
-    def _with_outreach(self, snap: Snapshot, targets: list[Target]) -> list[Target]:
-        """Up to `outreach_bids.MAX_CARDS` of our public bids go addressed to a team the team matrix places a spare
-        copy with, from START_SHARE of the bid up to it, holder after holder. No matrix (or a stale one): every bid
-        stays public. No request: the matrix is the one the taker stores."""
+    def _with_outreach(self, snap: Snapshot, targets: list[Target], params: StrategyParams) -> list[Target]:
+        """Up to `outreach_bids.MAX_CARDS` cards we want get a bid addressed to a team the team matrix places a spare
+        copy with, from START_SHARE of the ceiling up to it, holder after holder. The cards: our public bids, then
+        every missing page card of a released set that some team holds spare (the strategy may route those to a
+        dealer and bid nothing: Sunday 10:25, the maker had no bid at all). No matrix (or a stale one): nothing
+        changes. Requests: none for the matrix; the official value of at most MAX_CARDS cards, cached CEILING_TICKS."""
         tick = snap.clock.tick
         m = self.latest_matrix.current(tick) if self.latest_matrix is not None else None
         if m is None:
             self._turns = {}
             return targets
-        public = [t for t in targets if t.side == "bid" and t.to is None and not t.counter]
+        public = {t.ref: t for t in targets if t.side == "bid" and t.to is None and not t.counter}
         held = Counter(str(a.get("ref")) for a in snap.me.get("assets") or [] if a.get("kind") == "card")
-
-        def ceiling(t: Target) -> int:
-            """The bid, never above the official value of one more copy less its margin (the post's own cap): read
-            from the per-tick cache the maker's bid re-cap fills anyway. Unread: the bid itself (the post refuses)."""
-            official = self.values.value(t.ref, tick, held.get(t.ref, 0))
-            if official is None:
-                return t.price
-            return min(t.price, math.floor(official - self.rules.value_margin_for(t.rarity) + 1e-9))
 
         def holders(ref: str) -> list[str]:
             return [str(row.get("team")) for row in m.card(ref).get("spare") or [] if row.get("team")]
 
-        # Only the cards worked this tick read their official value (the same cards the post's cap reads anyway).
-        ranked = sorted((t for t in public if holders(t.ref)), key=lambda t: (-t.score, t.ref))
-        wants = [outreach_bids.Want(t.ref, t.rarity, ceiling(t), t.score) for t in ranked[: outreach_bids.MAX_CARDS]]
-
+        market = build_market(snap.me, snap.catalog, snap.events, snap.dealers, snap.scan)
+        wanted: dict[str, tuple[str, float]] = {ref: (t.rarity, t.score) for ref, t in public.items()}
+        for card in market.cards.values():
+            missing = card.page and card.set_code in market.released and market.held.get(card.ref, 0) == 0
+            if missing and card.ref not in wanted:
+                wanted[card.ref] = (card.rarity, buy_case(market, card, params).value)
+        ranked = sorted((r for r in wanted if holders(r)), key=lambda r: (r not in public, -wanted[r][1], r))
+        wants = []
+        for ref in ranked[: outreach_bids.MAX_CARDS]:
+            rarity, score = wanted[ref]
+            top = self._outreach_ceiling(ref, rarity, public[ref].price if ref in public else None, held, tick, params)
+            if top is not None and top > 0:
+                wants.append(outreach_bids.Want(ref, rarity, top, score))
         made, self._turns = outreach_bids.plan_outreach(wants, holders, self._turns, self.rules, snap.us, tick)
-        by_ref = {t.ref: t for t in public}
-        addressed = [
-            replace(by_ref[o.ref], price=o.price, reason=f"{o.reason}; {by_ref[o.ref].reason}", to=o.team, counter=True)
-            for o in made
-        ]
+        addressed = []
+        for o in made:
+            base = public.get(o.ref)
+            if base is not None:
+                addressed.append(
+                    replace(base, price=o.price, reason=f"{o.reason}; {base.reason}", to=o.team, counter=True)
+                )
+            else:
+                score = wanted[o.ref][1]
+                addressed.append(Target("bid", o.ref, o.rarity, o.price, None, score, score, o.reason, (o.team,),
+                                        to=o.team, counter=True))  # fmt: skip
         worked = {o.ref for o in made}
         return addressed + [t for t in targets if not (t.side == "bid" and t.to is None and t.ref in worked)]
+
+    def _outreach_ceiling(
+        self, ref: str, rarity: str, bid: int | None, held: Counter[str], tick: int, params: StrategyParams
+    ) -> int | None:
+        """The most an outreach bid offers: under the official value of one more copy by at least `min_buy_surplus`
+        and its margin (a fill always gains us neg_points), the rarity cap, just under `human_approval_above` (no bid
+        a human must approve first), and our public bid when there is one. The official value is read at most once
+        per card every CEILING_TICKS (it moves with our album, not by the tick). Unread: our public bid, else None."""
+        cached = self._ceilings.get(ref)
+        if cached is None or tick - cached[0] >= CEILING_TICKS:
+            cached = (tick, self.values.value(ref, tick, held.get(ref, 0)))
+            self._ceilings[ref] = cached
+        official, cap = cached[1], self.rules.max_price_for(rarity)
+        if official is None or cap is None:  # a public bid keeps its own price (the post's cap refuses it unread)
+            return bid
+        top = min(cap, math.floor(official - max(self.rules.value_margin_for(rarity), params.min_buy_surplus) + 1e-9))
+        if self.rules.human_approval_above > 0:
+            top = min(top, self.rules.human_approval_above - 1)
+        return top if bid is None else min(top, bid)
 
     # ------------------------------------------------------------ buy targets (`buy_targets.py`)
 
