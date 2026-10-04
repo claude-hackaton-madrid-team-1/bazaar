@@ -807,6 +807,14 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 - Retain full pending cash/exposure and settling-card protection until confirmed cancellation.
 - Verify actual public/addressed taker paths, independent review and CI before guarded rollout.
 
+## TR1 — Team negotiation surplus first
+
+- Spec: [TR1-spec.md](TR1-spec.md).
+- One all-page swap search; expected gain before album/rival-rank ties. Existing dealer/team message ordering and commitment safety remain unchanged.
+- Focused 107 ranking/team tests passed after withdrawing message reordering; independent review/full gate and rollout pending coordinator.
+
+- TR1 pack follow-up: cap30 permits observed final24; pack snapshot reads promised asset IDs without reconciling durable reservations. Pack/supply50 and config12 tests pass.
+
 ## Q1 — Persist dealer quota through the actual game hour
 
 - Spec: [Q1-spec.md](Q1-spec.md).

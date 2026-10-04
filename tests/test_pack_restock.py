@@ -106,7 +106,7 @@ def test_taker_buys_opens_then_maker_lists_duplicate_for_guarded_resale(tmp_path
         config=TakerConfig(max_dealer_threads=1),
         pack_restock_enabled=True,
         open_sealed_packs=True,
-        max_price_pack=22,
+        max_price_pack=30,
         cash_floor=5,
         venue_bond_reserve=0,
     )
@@ -117,13 +117,13 @@ def test_taker_buys_opens_then_maker_lists_duplicate_for_guarded_resale(tmp_path
     opening["give"] = {"types": ["pack:sobre_barrio"]}
     her(team, 5000, opening)
     t.on_tick(at(team, TICK + 1))
-    offer = dealer_ask(800, 22, final=True)
+    offer = dealer_ask(800, 24, final=True)
     offer["give"] = {"types": ["pack:sobre_barrio"]}
     her(team, 5000, offer)
     t.on_tick(at(team, TICK + 2))
     assert ("accept", 800) in team.sent
     # The fake server settles next tick; only then can fresh /me reveal the acquired pack.
-    team._me["cash"] -= 22
+    team._me["cash"] -= 24
     team._me["assets"].append({"id": 6, "kind": "pack", "ref": "sobre_barrio"})
     settled = {**offer, "status": "settled"}
     her(team, 5000, settled, status="deal")
@@ -156,7 +156,7 @@ def test_taker_restock_respects_expired_tick(tmp_path):
 
 def test_deployed_policy_is_explicit_and_quota_stays_three():
     rules = load_guardrails().rules
-    assert rules.pack_restock_enabled and rules.max_price_pack == 22
+    assert rules.pack_restock_enabled and rules.max_price_pack == 30
     assert rules.max_packs_per_game_hour == 3 and rules.cash_floor == 5
 
 
@@ -185,4 +185,37 @@ def test_restock_does_not_open_pack_promised_in_offer_or_unknown_publication(tmp
             }
         ]
     t.on_tick(clock())
+    assert not any(sent[0] == "open_pack" for sent in team.sent)
+
+
+@pytest.mark.parametrize("synthetic", [False, True])
+def test_pack_snapshot_check_never_releases_unknown_promises(tmp_path, monkeypatch, synthetic):
+    from bazaar_agent.agents import publication
+
+    team = FakeTeam()
+    t, _, ledger = taker(tmp_path, team, FakePublic(), live=True, pack_restock_enabled=True, open_sealed_packs=True)
+    publication.reserve(ledger, TICK, clock().t_hours, "t01", {"assets": [6]}, {"cash": 22})
+    # Another worker may have read newer holdings than this tick's snapshot. Absence is no release proof.
+    publication.reserve(ledger, TICK, clock().t_hours, "t01", {"assets": [777], "cash": 30}, {"cards": ["LAV-02"]})
+    before = ledger.publication_rows()
+    if synthetic:
+
+        def snapshot(run, threads):
+            run.offers.append(
+                {
+                    "id": -99,
+                    "maker": "t01",
+                    "status": "open",
+                    "publication_pending": True,
+                    "give": {"assets": [{"id": 6, "ref": "sobre_barrio"}]},
+                    "want": {"cash": 22},
+                    "thread": None,
+                    "to": None,
+                    "created_tick": TICK,
+                }
+            )
+
+        monkeypatch.setattr(t, "_workshop", snapshot)
+    t.on_tick(clock())
+    assert ledger.publication_rows() == before
     assert not any(sent[0] == "open_pack" for sent in team.sent)
