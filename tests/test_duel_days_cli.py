@@ -58,12 +58,13 @@ def test_a_signed_text_is_cross_checked_against_a_scored_deal_after_the_sends(du
     cli, _, _, tmp_path = duel_cli
     with_rules(cli, monkeypatch, duel_policy="v2", duel_days_auto=True)
     (tmp_path / "duels").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "duels" / "days_sign.json").write_text(json.dumps({"verdict": "signed", "duel": 1, "text": "x"}))
+    signed = {"verdict": "signed", "duel": 1, "text": "x", "formed": 1}  # this session's text, before a restart
+    (tmp_path / "duels" / "days_sign_seller.json").write_text(json.dumps(signed))
     client = DoneClient([{**LIVE}], [scored_cost_deal()])
     monkeypatch.setattr(cli, "team_client", lambda settings: client)
     result = CliRunner().invoke(cli.app, ["duel", "run", "--max-ticks", "1", "--no-jev"])
     assert result.exit_code == 0, result.output
-    assert dd.latch(tmp_path).verdict == "conflict"  # the text said signed, the game scored a cost
+    assert dd.latch(tmp_path).for_role("seller").verdict == "conflict"  # the text said signed, the game scored a cost
     assert client.calls[0] == "live" and client.calls[-1] == "done"  # the live read first, the done read last
 
 
@@ -91,16 +92,20 @@ def test_real_evidence_against_the_sign_overrides_a_hand_set_signed(tmp_path):
     from bazaar_agent import guardrails as gr
 
     switch = dd.latch(tmp_path)
-    switch.observe([scored_cost_deal() | {"days_meaning": None}], True)
-    assert switch.verdict == "cost"
+    switch.observe([{**LIVE}, scored_cost_deal() | {"days_meaning": None}], True)
+    assert switch.for_role("seller").verdict == "cost"
     rules = gr.Guardrails(duel_policy="v2", duel_days_signed=True)
     assert not dd.effective_rules(rules, switch).duel_days_signed
 
 
-def test_a_latch_file_that_is_not_an_object_is_a_conflict(tmp_path):
+def test_a_latch_file_that_is_not_an_object_is_a_conflict_until_the_next_live_session(tmp_path):
     (tmp_path / "duels").mkdir()
-    (tmp_path / "duels" / "days_sign.json").write_text("[1, 2]")
-    assert dd.latch(tmp_path).verdict == "conflict"  # never silently undo a recorded conflict (security P3)
+    (tmp_path / "duels" / "days_sign_seller.json").write_text("[1, 2]")
+    switch = dd.latch(tmp_path)
+    assert switch.for_role("seller").verdict == "conflict"  # never silently undo a recorded conflict (security P3)
+    switch.observe([{**LIVE}], True)  # ... but it names no session: the first live duel starts the session fresh
+    assert switch.verdict == "seller=unknown buyer=unknown"
+    assert json.loads((tmp_path / "duels" / "days_sign_seller.json").read_text())["verdict"] == "unknown"
 
 
 def test_one_done_read_per_tick_when_the_store_already_read_the_finished_duels(duel_cli, monkeypatch):  # noqa: F811

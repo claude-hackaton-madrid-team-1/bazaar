@@ -70,7 +70,7 @@ def test_a_failed_observe_keeps_the_previous_verdict_for_the_policy_and_the_guar
     monkeypatch.setattr(dd, "effective_rules", spy)
     monkeypatch.setattr(dd.DaysSwitch, "observe", broken_observe([]))
     _, output = run_one_tick(cli)
-    assert seen == ["unknown"]  # not the "signed" the failed call left half-written
+    assert seen == ["seller=unknown buyer=unknown"]  # not the "signed" the failed call left half-written
     assert "duel days sign: signed" not in output and client.sent == [("accept", 95)]
 
 
@@ -94,7 +94,7 @@ def test_a_failed_observe_still_keeps_a_safer_verdict_it_found(duel_cli, monkeyp
     monkeypatch.setattr(dd, "effective_rules", spy)
     monkeypatch.setattr(dd.DaysSwitch, "observe", observe)
     run_one_tick(cli)
-    assert seen == [safe] and client.sent == [("accept", 95)]
+    assert seen == [f"seller={safe} buyer=unknown"] and client.sent == [("accept", 95)]  # the seller switch raised
 
 
 def test_the_latch_failure_is_printed_once_per_tick(duel_cli, monkeypatch):  # noqa: F811
@@ -136,14 +136,15 @@ def test_a_new_verdict_whose_text_holds_a_lone_surrogate_never_costs_the_tick(du
     monkeypatch.setattr(dd.DaysSwitch, "observe", observe)
     _, output = run_one_tick(cli)
     assert client.sent == [("accept", 95)]
-    assert "duel days sign: cost (duel 95: 'x\\ud800')" in output  # ascii(): printable, never raises
+    assert "duel days sign: seller=cost buyer=cost" in output
+    assert "seller duel 95: 'x\\ud800'" in output  # ascii(): printable, never raises
 
 
 def test_a_switch_that_cannot_be_copied_skips_the_latch_and_still_plays(duel_cli, monkeypatch, tmp_path):  # noqa: F811
     # #165 security review P3-2: the rollback copy ran outside the protection; a pathological value (a 500-deep
     # nested `days_meaning`) broke `deepcopy` with RecursionError and every later tick failed.
     cli, client, _, _ = duel_cli
-    with_rules(cli, monkeypatch, duel_policy="v2", duel_days_auto=True)
+    with_rules(cli, monkeypatch, duel_policy="v2", duel_days_auto=True, duel_days_signed_roles="none")
     client.payload = [{**ENDGAME, "session": 1}]
     confirmed = dd.DaysSwitch(verdict="signed", path=tmp_path / "x.json", texts=[1], scored=[[1, 9, 5]], session=1)
     assert confirmed.signed(True)  # corroborated in this very session: only a cleared session turns it off
@@ -153,7 +154,7 @@ def test_a_switch_that_cannot_be_copied_skips_the_latch_and_still_plays(duel_cli
 
     def spy(rules, days):
         out = effective(rules, days)
-        seen.append(bool(out.duel_days_signed))
+        seen.append(gr.days_signed_for(out, "seller"))
         return out
 
     def no_copy(value):
@@ -229,17 +230,20 @@ def test_a_rolled_back_latch_never_carries_signed_into_a_new_session(duel_cli, m
     # #165 review P2: the rollback restored the old switch with its old `session`, so session 1's corroborated sign
     # signed session 2's duels (policy and guard) on a tick whose latch save failed.
     cli, client, _, _ = duel_cli
-    with_rules(cli, monkeypatch, duel_policy="v2", duel_days_auto=True)
+    with_rules(cli, monkeypatch, duel_policy="v2", duel_days_auto=True, duel_days_signed_roles="none")
     client.payload = [{**ENDGAME, "session": 2}]
-    confirmed = dd.DaysSwitch(verdict="signed", path=tmp_path / "x.json", texts=[1], scored=[[1, 9, 5]], session=1)
+    confirmed = dd.DaysSwitch(
+        verdict="signed", path=tmp_path / "x.json", texts=[1], scored=[[1, 9, 5]], session=1, role="seller", formed=1
+    )
     assert confirmed.signed(True)  # corroborated in session 1
-    monkeypatch.setattr(dd, "latch", lambda data_dir: confirmed)
+    held = dd.DaysLatch({"seller": confirmed, "buyer": dd.DaysSwitch(path=tmp_path / "y.json", role="buyer")})
+    monkeypatch.setattr(dd, "latch", lambda data_dir: held)
     seen: list[bool] = []
     effective = dd.effective_rules
 
     def spy(rules, days):
         out = effective(rules, days)
-        seen.append(bool(out.duel_days_signed))
+        seen.append(gr.days_signed_for(out, "seller"))
         return out
 
     def observe(self, duels, real_game):
