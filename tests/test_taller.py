@@ -246,7 +246,9 @@ def test_the_hourly_cap_stops_a_second_craft_in_the_same_game_hour(tmp_path):
     team, _ = run_taker(tmp_path, news=News(LEVELS), ticks=3, taller_enabled=True, max_taller_per_game_hour=1)
     assert len(crafts(team)) == 1  # the fake /me still shows the spares: only the cap stops the next ones
     assert team.reads.count("duels") == 1  # at the cap (shared ledger) the step sends no request at all
-    assert [e["item"] for e in Ledger(tmp_path / "ledger.jsonl").entries()] == ["taller:SAL-01,LAV-01,LAV-01"]
+    ledger = Ledger(tmp_path / "ledger.jsonl")
+    assert [e["item"] for e in ledger.entries() if e["kind"] == "spend"] == ["taller:SAL-01,LAV-01,LAV-01"]
+    assert [kind for kind, _ in ledger.publication_rows()] == ["publication_pending"]
 
 
 def test_a_dry_run_sends_nothing_and_says_the_craft_once(tmp_path):

@@ -34,8 +34,9 @@ call a write endpoint of the game, or run `railway` commands that change anythin
    when you finish.
 2. **Run the gate there** and keep the last line of each: `uv sync`, `uv run black --check src tests scripts`,
    `uv run ruff check src tests scripts`, `uv run ruff format --check src tests scripts`, `uv run mypy src`,
-   `uv run pytest tests -q`, plus any CI job the repo defines (e.g. the simulator smoke job). A red gate on
-   main+PR is P0 even when the PR's own CI was green on an older base.
+   `uv run pytest tests -q`. Verify the four Depot checks in `.depot/workflows/tests.yml`: unit tests,
+   integration tests, Black formatter and Ruff linter. Simulator smoke is optional, not a merge gate.
+   A red required gate on main+PR is P0 even when the PR's own CI was green on an older base.
 3. **Read the diff** (`git diff origin/main...pr<n>-review`) and every caller of a changed function on main.
 4. **Check these areas** (skip the ones the diff cannot touch):
    - Live trading safety: cash floor, hourly spend cap, price caps, 1 accept per tick through the shared

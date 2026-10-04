@@ -183,6 +183,7 @@ def test_bazaar_sim_port_moves_only_the_laptop_simulator_and_stays_on_loopback(t
 
 
 def test_bazaar_env_file_replaces_the_repo_dotenv(tmp_path, monkeypatch):
+    monkeypatch.delenv("BAZAAR_ENV_FILE", raising=False)
     for name in (*NAMES, "TYPESAFE_API_KEY", "ANTHROPIC_API_KEY"):
         monkeypatch.delenv(name, raising=False)
     real = tmp_path / "real.env"

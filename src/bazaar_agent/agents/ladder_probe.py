@@ -8,7 +8,12 @@ not score by itself. So a probe is planned only when its top still captures `lad
 range seen so far (her lowest fill stands in for her limit), and its top never passes the official value of
 one more copy (the guardrails refuse a bid above it and the thread walks), the rarity cap or the cash above
 the floor. The probe is a strategy `Move`: the taker guards it and the dealer desk drives it like any other
-dealer buy (`Negotiation.bid_cap` keeps every bid below her opening ask until she comes down)."""
+dealer buy (`Negotiation.bid_cap` keeps every bid below her opening ask until she comes down).
+
+Slots (Sun 4 Oct): a level whose three ladder slots this round are already scored gains nothing from a probe, so
+its dealers are not probed, and the dealers of the emptiest levels go first (`LadderSlots`). Saturday ended with an
+empty Chato (L2) slot and all three Banco (L5) slots empty; Pilar (L3) and Banco (L5) sell us no card at all, so
+only a dealer sell fills their levels (`LadderSlots.unfillable`, said by the taker once per game hour)."""
 
 from __future__ import annotations
 
@@ -19,6 +24,7 @@ from statistics import median
 from typing import Any
 
 from bazaar_agent import intel
+from bazaar_agent.agents.dealer_sell_data import LADDER_SLOTS
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.strategy import Card, Market, Move, Quote, dealer_command, dealer_fills
 
@@ -27,6 +33,95 @@ START_RATIO = 0.6  # the first bid, as a share of her lowest fill: room for her 
 STEP = 1  # small distinct steps: the dealer only moves when we do
 
 ValueOf = Callable[[str], float | None]
+CARD_RARITIES = ("common", "uncommon", "rare", "epic", "legendary")
+
+
+@dataclass(frozen=True)
+class LadderSlots:
+    """The ladder this round as the probe plans it: each dealer's level (`/api/dealers` `level`) and our scored deals
+    per dealer (`dealer_sell_data.ladder_deals`: buys and sells since the round started or the day opened, away from
+    the opening price, from the snapshot's feed events: the Postgres archive plus the live window. Without the
+    archive only the window (~20 ticks) is seen, an older deal is missed and the level looks emptier: the probe
+    then plans as it did before slots were counted, never less)."""
+
+    levels: Mapping[str, int]
+    deals: Mapping[str, int]
+
+    def scored(self, level: int) -> int:
+        return sum(n for d, n in self.deals.items() if self.levels.get(d) == level)
+
+    def empty(self, level: int) -> int:
+        return max(0, LADDER_SLOTS - self.scored(level))
+
+    def full(self, dealer: str) -> bool:
+        """True only for a dealer whose level is known and has every slot scored: a probe there adds nothing."""
+        level = self.levels.get(dealer)
+        return level is not None and self.empty(level) == 0
+
+    def rank(self, dealer: str) -> tuple[int, int]:
+        """Probe order: the emptiest level first, then the higher level (it weighs more); unknown levels last."""
+        level = self.levels.get(dealer)
+        return (LADDER_SLOTS + 1, 0) if level is None else (self.scored(level), -level)
+
+    def facts(self) -> dict[str, Any]:
+        """What Jev reads: level -> scored deals of LADDER_SLOTS this round (JSON-safe keys)."""
+        return {f"L{lv}": f"{self.scored(lv)}/{LADDER_SLOTS}" for lv in sorted(set(self.levels.values()))}
+
+
+def dealer_levels(dealers: Iterable[Any]) -> dict[str, int]:
+    """dealer -> its ladder level, from `/api/dealers` (a dealer whose level is unknown is left out)."""
+    out: dict[str, int] = {}
+    for d in dealers:
+        if isinstance(d, Mapping) and d.get("id") and type(d.get("level")) is int and d["level"] > 0:
+            out[str(d["id"])] = int(d["level"])
+    return out
+
+
+def sells_us_cards(dealer: Mapping[str, Any], rules: Guardrails) -> bool:
+    """Whether a taker buy can ever score this dealer's level: its menu sells a card rarity we have a price cap for.
+    Pilar (L3) sells only a pack and Banco (L5) a pack and legendaries (no cap): only a dealer sell fills those."""
+    menu = dealer.get("menu") if isinstance(dealer.get("menu"), Mapping) else {}
+    sells = menu.get("sells") if isinstance(menu, Mapping) else None
+    return any(
+        isinstance(s, Mapping) and s.get("rarity") in CARD_RARITIES and rules.max_price_for(str(s["rarity"]))
+        for s in sells or []
+    )
+
+
+def unfillable(
+    dealers: Iterable[Any],
+    slots: LadderSlots,
+    unlocked: Iterable[str],
+    rules: Guardrails,
+    planned: Iterable[str],
+    blocked: str | None = None,
+) -> list[tuple[int, str, str]]:
+    """(level, dealer, why) for each level with an empty slot this round that no probe this tick will fill: the
+    dealer sells us no card we may buy (a dealer sell is the only way), is not unlocked yet, or no probe could be
+    planned inside our caps (`blocked`, when given: why no probe runs at all). Levels already full, and dealers a
+    probe is planned for, are left out."""
+    unlocked, planned = set(unlocked), set(planned)
+    out = []
+    for d in dealers:
+        if not isinstance(d, Mapping) or not d.get("id"):
+            continue
+        dealer = str(d["id"])
+        level = slots.levels.get(dealer)
+        if level is None or slots.empty(level) == 0 or dealer in planned:
+            continue
+        if not sells_us_cards(d, rules):
+            why = "sells us no card we may buy: only a dealer sell fills this level (`bazaar dealer sell`)"
+        elif dealer not in unlocked:
+            why = "not unlocked for us yet"
+        elif blocked is not None:
+            why = blocked
+        else:
+            why = (
+                "no probe inside our caps (no fill seen for the rarity, a top under her lowest fill or the official "
+                "value, a share under ladder_probe_min_share, probed this game hour, or her thread is busy)"
+            )
+        out.append((level, dealer, f"L{level} {slots.scored(level)}/{LADDER_SLOTS} this round: {dealer} {why}"))
+    return sorted(out)
 
 
 @dataclass(frozen=True)
@@ -141,6 +236,7 @@ def plan_one(
     rules: Guardrails,
     cash_room: int,
     value_of: ValueOf | None,
+    slots: LadderSlots | None = None,
 ) -> Probe | None:
     """The probe for one dealer: the cheapest missing card it sells, or None. `value_of` None plans without the
     official value (a cheap pre-check: nothing is read, the top optimistic: just under her opening ask);
@@ -159,7 +255,11 @@ def plan_one(
         value = value_of(card.ref)
         if value is None:  # unread: a bid would be refused anyway (fail closed)
             return None
-        top = min(top, math.floor(value - rules.official_value_margin + 1e-9))
+        # The same cap the guardrails apply to its bids: the official value, plus `dealer_ladder_value_tolerance`
+        # while this dealer's level has an empty slot (never for an epic or legendary: off_page_min_surplus).
+        open_level = slots is not None and dealer in slots.levels and not slots.full(dealer)
+        lift = rules.dealer_ladder_value_tolerance if open_level and card.rarity not in ("epic", "legendary") else 0
+        top = min(top, math.floor(value - rules.official_value_margin + lift + 1e-9))
     lowest = min(fills)
     if value_of is None:  # the cheap pre-check: the official value (read later) only ever lowers the top
         top = min(top, opening - 1)
@@ -178,11 +278,15 @@ def plan_probes(
     cash_room: int,
     skip: Iterable[str] = (),
     value_of: ValueOf | None = None,
+    slots: LadderSlots | None = None,
 ) -> list[Probe]:
     """At most one probe per unlocked dealer (`m.quotes` holds only the active dealers we unlocked), except
-    the dealers in `skip` (probed this hour, or busy with a thread)."""
+    the dealers in `skip` (probed this hour, or busy with a thread). With `slots`, a dealer whose level has every
+    ladder slot scored this round is skipped too, and the emptiest level's dealer comes first."""
     dealers = sorted({q.dealer for q in m.quotes} - set(skip))
-    planned = (plan_one(m, d, opens, rules, cash_room, value_of) for d in dealers)
+    if slots is not None:
+        dealers = sorted((d for d in dealers if not slots.full(d)), key=lambda d: (*slots.rank(d), d))
+    planned = (plan_one(m, d, opens, rules, cash_room, value_of, slots) for d in dealers)
     return [p for p in planned if p is not None]
 
 
@@ -196,14 +300,24 @@ def our_dealer_deals(events: Iterable[intel.Event], us: str) -> dict[str, int]:
 
 
 def probe_state(
-    probes: Iterable[Probe], cash: int, floor: int, room: int, spent: int, deals: Mapping[str, int]
+    probes: Iterable[Probe],
+    cash: int,
+    floor: int,
+    room: int,
+    spent: int,
+    deals: Mapping[str, int],
+    slots: LadderSlots | None = None,
 ) -> dict[str, Any]:
-    """What Jev reads for `ladder_probe_worth_it` (compact, JSON-safe)."""
+    """What Jev reads for `ladder_probe_worth_it` (compact, JSON-safe); with `slots`, the scored slots per level
+    this round (an empty slot counts zero, so a probe that fills one is worth more than one that does not)."""
+    ladder: dict[str, Any] = {"our_dealer_deals": dict(deals)}
+    if slots is not None:
+        ladder["slots_scored_this_round"] = slots.facts()
     return {
         "cash": cash,
         "cash_floor": floor,
         "cash_room": room,
         "spent_last_hour": spent,
-        "ladder": {"our_dealer_deals": dict(deals)},
+        "ladder": ladder,
         "probe": [p.facts() for p in probes],
     }

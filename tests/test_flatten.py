@@ -131,7 +131,8 @@ def test_threads_are_closed_only_with_the_flag(flatten_cli):
     assert CliRunner().invoke(cli.app, ["flatten", "--live"]).exit_code == 0
     assert team.sent == [("cancel", 1), ("cancel", 2)]
     assert CliRunner().invoke(cli.app, ["flatten", "--live", "--threads"]).exit_code == 0
-    assert team.sent[2:] == [("cancel", 1), ("cancel", 2), ("close_thread", 85)]
+    # The first call removed the offers; another flatten must not cancel them again.
+    assert team.sent == [("cancel", 1), ("cancel", 2), ("close_thread", 85)]
 
 
 def test_flatten_goes_out_under_the_kill_switch_while_the_maker_holds(flatten_cli, tmp_path, monkeypatch):

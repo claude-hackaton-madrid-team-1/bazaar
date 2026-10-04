@@ -216,6 +216,20 @@ def our_open_offers(response: dict[str, Any], us: str) -> tuple[list[OpenOffer],
     return mine, total
 
 
+def addressed_to_us(response: dict[str, Any], us: str) -> list[dict[str, Any]]:
+    """The open board offers another team addressed to us, as `/api/me/offers` returns them ("your open and queued
+    offers, and open offers addressed to you", the kit SDK). A keyless board never shows them (Sat 3 Oct: 127
+    arrived, 0 were read). An offer inside a thread is the team desk's, never one of these."""
+    out = []
+    for rows in response.values():
+        for o in rows if isinstance(rows, list) else []:
+            if not isinstance(o, dict) or not us or o.get("to") != us or o.get("maker") in (us, None, ""):
+                continue
+            if o.get("status") in (None, "open") and o.get("thread") is None and isinstance(o.get("id"), int):
+                out.append(o)
+    return out
+
+
 def best_venue(venues: Iterable[Venue], us: str, price: int) -> Venue | None:
     """Where an offer is likeliest to fill: the venue's trades so far (activity), discounted by the fee
     share its taker pays. El Rastro wins until a team venue trades as much at a lower fee."""

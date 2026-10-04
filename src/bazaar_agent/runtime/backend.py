@@ -196,7 +196,10 @@ class Backend:
 
                 url = self.settings.database_url.get_secret_value()
                 self._decisions = DecisionLog(
-                    self.settings.data_dir, lambda: db.connect(url, app="bazaar-runtime"), self.log
+                    self.settings.data_dir,
+                    lambda: db.connect(url, app="bazaar-runtime"),
+                    self.log,
+                    game_url=self.settings.bazaar_url,
                 )
             return self._decisions
 

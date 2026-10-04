@@ -38,7 +38,10 @@ class StrategyGate:
 
     def due(self, name: str, tick: int) -> bool:
         last = self.answers.get(name)
-        return last is None or tick - last.tick >= self.refresh_ticks or tick < last.tick
+        # No model answered when the tick budget ran out. Retry on the next tick,
+        # but still coalesce repeated callers in this tick.
+        refresh = 1 if last and last.advice.reason == "no tick budget for jev" else self.refresh_ticks
+        return last is None or tick - last.tick >= refresh or tick < last.tick
 
     def allows(self, name: str, tick: int, state: Callable[[], Mapping[str, Any]]) -> bool:
         if not self.due(name, tick):

@@ -3,7 +3,7 @@
 Everything we know about the game in one place. Sources:
 
 - **Slides:** `The Bazaar · Kickoff` (14 slides, Causa Prima, 2026-10-02).
-- **Audio:** [kickoff transcript](transcripts/2026-10-02-hackathon-kickoff.md); [Saturday morning memos](transcripts/2026-10-03-morning-voice-memo.md) (the organisers' 09:19 opening talk, plus our 03:22 Spanish readback).
+- **Audio:** [kickoff transcript](transcripts/2026-10-02-hackathon-kickoff.md); [Saturday morning memos](transcripts/2026-10-03-morning-voice-memo.md) (the organisers' 09:19 opening talk, plus our 03:22 Spanish readback); [Sunday morning memo](transcripts/2026-10-04-invofox-3.md) (the organisers' 09:18 opening talk and a question on duel rounds).
 - **Kit:** `RULES.md` and `README.md` from the official kit (PR #18, `kit/`).
 - **API:** what we observed on the real API with our key (issues #21, #22, #23).
 
@@ -24,7 +24,7 @@ The four quests from slide 3: **Collect · Haggle · Trade · Run a market**. Th
 | Judges | 40 | *"Your ideas and your craft."* In the audio: *"we will also take a more promising look at the draft itself. How have we solved the problems?"* |
 
 - **Never counts:** number of trades, fees collected, pack luck, gifts, easter eggs, organiser grants.
-- **Rounds:** rounds are averaged; Friday counts half. *[audit, Sat 3 Oct: fitted on `/me` snapshots]* A round starts on the organisers' `round` action in `/api/schedule`:
+- **Rounds:** rounds are averaged; Friday counts half. The organisers on Sunday: Friday 20 %, Saturday 40 %, Sunday 40 % of the game score ([Sun 09:18](transcripts/2026-10-04-invofox-3.md), 03:09). *[audit, Sat 3 Oct: fitted on `/me` snapshots]* A round starts on the organisers' `round` action in `/api/schedule`:
   - round 2 started at tick 160;
   - round 3 starts at game hour 16.65, **Sun 09:00 CEST**, coinciding with Sunday opening and Chamberí release. The h14.65/h15 Market Tests precede the opening anchor; whether they fire at opening or are skipped, and their round attribution if fired, are UNVERIFIED;
   - a new round's weight ramps from 0 to full over about 160 ticks;
@@ -80,8 +80,8 @@ The four quests from slide 3: **Collect · Haggle · Trade · Run a market**. Th
   - L2 El Chato: Silver pack, list 150, opening ask 188, 2 per team per hour; sells uncommons and rares, buys them.
   - L3 Doña Pilar: a collector who prefers SAL and RET and sells only the Gold pack, list 420, opening ask 504, 1 per team per hour.
   - L4 Los Pícaros: sell no packs and swap the card in the offer (read the structure; flag it).
-  - A `banco` dealer (Don Ernesto) appears in the feed but has not been announced.
-  - At the finale, game hour 21.65, about Sun 14:00 CEST, **all dealer stalls close**, including Banco.
+  - A `banco` dealer, Don Ernesto: on Sunday morning the organisers said he is "definitely now open to everyone" and that most teams had already traded with him ([Sun 09:18](transcripts/2026-10-04-invofox-3.md), 01:00).
+  - At the finale, game hour 21.65, about Sun 14:00 CEST, **all dealer stalls close**, including Banco. El Rastro and the team markets stay open in that last hour *[reading of a misheard line, Sun 09:18, 03:09]*.
 - **Some dealers lie.** `POST /api/flags`: a correct flag adds points and a wrong one subtracts. In the audio: *"there might be even some occurrences where you can track bad behavior by the API. If you're correct, you can earn extra points."*
 
 ## Duels
@@ -102,6 +102,7 @@ One-on-one between teams, under aliases. Each pair plays twice, as seller and as
   - Duels III, h18.65, about Sun 11:00 CEST: two issues, price and days, 12-tick duels, decay 0.10, `rounds: 2`, at most 4 at once.
   - The Grand Final is scheduled at h21.65, about Sun 14:00 CEST: two issues, 12-tick duels, decay 0.10, `rounds: 1`, at most 4 at once.
 - The first session is practice and does not score. Details in #4, #5 and #7.
+- **Asked on Sunday, not answered:** a team asked whether staying silent after the rival's reply counts as a round. The organiser said "I think it counts the messages" and would double-check ([Sun 09:18](transcripts/2026-10-04-invofox-3.md), 07:37–10:01). The audit's rule above (68 of 68 payloads) stands until Duels III payloads say otherwise.
 
 ## Our own market
 
@@ -115,6 +116,8 @@ One-on-one between teams, under aliases. Each pair plays twice, as seller and as
   - A session with no venue open scores 0, and so does a board venue whose broker is down.
   - Key: *"Traders quote away from limits they keep hidden"*. The broker that estimates those limits wins. Details in #11, #12 and #13.
 - You cannot trade on your own venue with the team key (`self_venue`).
+- **Team 12's bug fix (Sun 09:18):** a seller's bad trade on a venue (a high-value card sold for 6 P) used to destroy the venue's market-making value. The organisers "changed this accordingly" and paid Team 12 a small bounty; how the score changed was not said ([transcript](transcripts/2026-10-04-invofox-3.md), 04:05–05:00). *[inferred]* A bad trade on our venue should no longer count against our organic part.
+- **Organisers' hint (Sun 09:18):** "really think about the marketplaces"; "if you have something valuable to offer to everyone, why don't you [charge] a fee?" Fees collected still never score in themselves.
 - **El Rastro fee** *[audit, 103 settlements]*: ceil(5 % × price) + 1 P per card, paid by the side that accepts. A 9 P card costs 11 P.
 - **The Workshop (`taller`, a level):** `POST /api/taller {"assets": [a, b, c]}` turns three spare copies of one rarity into one random card of the next rarity; you keep at least one of each card.
   - The pull is luck and never scores.
@@ -156,6 +159,15 @@ In the audio:
 - Causa Prima is *"an agent-to-agent network for finance teams"* focused on **invoices**.
 - *"we are convinced that [...] as soon as it's going to be agent to agent, we can solve these problems. [...] we want to learn with what you guys come up with"*.
 - The CEO (Max) speaks on Saturday.
+
+**Sunday format** (organisers, [Sun 09:18](transcripts/2026-10-04-invofox-3.md), 05:00–06:57):
+- From 15:00, a **"Submit your project"** link on the Bazaar: pick the team, authenticate with the team key, and add
+  the code, slides, artifacts and an explanation. It is a "huge important input" to the judges' 40 %.
+- The market stops at 15:00 and teams get **one hour** to prepare. Presentations go **in ranked order: the top three
+  teams get 5 minutes, all others 3 minutes.** Then 30 minutes of judging; **winners at 17:30**.
+- What makes a good pitch: (1) how we approached the challenge and overcame hurdles ("we want to understand how you
+  are solving problems"); (2) what we built (the agent, the market); (3) why we built it that way, which tools and
+  models; (4) what we learned.
 
 **Angle [inferred]:** present our architecture as a reusable pattern for agent-to-agent invoice negotiation:
 - the structure binds and the LLM only supplies the words;

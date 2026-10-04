@@ -19,6 +19,31 @@ def test_the_committed_file_parses_and_every_rule_is_enforced_somewhere():
     assert REAL.principles  # principles are shown even though code does not enforce them
 
 
+def test_deployment_keeps_every_last_copy_and_the_sal07_incident_fails_closed():
+    rules = REAL.rules
+    assert rules.human_approval_above == 60
+    assert rules.protect_page_exceptions == "none"
+    assert all(rules.protects(f"{page}-07", "uncommon", 1) for page in ("LAV", "SAL", "MAL", "RET", "LAT", "CHA"))
+    action = gr.Action("accept_sell", "SAL-07", "uncommon", 29, your_value=118.6, asset=438)
+    verdict = gr.check(action, ctx(held={"SAL-07": 1}), rules)
+    assert not verdict.allowed
+    assert "protect_page_sets" in str(verdict) and "your_value" in str(verdict)
+
+
+@pytest.mark.human_approval
+def test_a_60_prima_standing_bid_needs_approval_even_when_fees_reduce_proceeds(monkeypatch):
+    from types import SimpleNamespace
+
+    from bazaar_agent import approvals
+    from bazaar_agent.approvals import ApprovalBook
+
+    monkeypatch.setattr(approvals, "board", lambda timeout: SimpleNamespace(needed=lambda *args: None))
+    action = gr.Action("accept_sell", "LAT-03", "common", 56, your_value=1.2, volume=60)
+    context = ctx(held={"LAT-03": 2}, approvals=ApprovalBook({}), breakers=frozenset())
+    verdict = gr.check(action, context, gr.Guardrails(human_approval_above=60))
+    assert verdict.violations == ("needs human approval: LAT-03 sell 60",)
+
+
 def test_unknown_rule_bad_value_and_duplicates_fail_fast():
     with pytest.raises(gr.GuardrailsError, match="typo_rule"):
         gr.parse_guardrails("- `typo_rule` = 1 — oops")
@@ -55,7 +80,7 @@ def test_kill_switch_accept_quota_sells_and_flags():
     last_lat08 = gr.check(gr.Action("sell", "LAT-08", "rare", 40, your_value=35.0), ctx(held={"LAT-08": 1}), rules)
     assert "protect_page_sets" in str(last_lat08)  # La Latina stays protected...
     lat10 = gr.Action("sell", "LAT-10", "rare", 200, your_value=35.0)  # ...but for its one card (SX1)
-    assert gr.check(lat10, ctx(held={"LAT-10": 1}), rules).allowed
+    assert "protect_page_sets" in str(gr.check(lat10, ctx(held={"LAT-10": 1}), rules))
     assert "allow_flags" in str(gr.check(gr.Action("flag", "m1"), ctx(), rules))
 
 

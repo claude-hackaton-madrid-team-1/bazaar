@@ -13,6 +13,7 @@ data dir.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import queue
 import threading
@@ -26,13 +27,18 @@ from psycopg.types.json import Jsonb
 from bazaar_agent.db import jsonb_safe
 
 STATEMENT_TIMEOUT_MS = 1500
-QUEUE_SIZE = 8  # ticks waiting for the worker; a full queue drops the newest rows
+QUEUE_SIZE = 128  # bounded evidence batches; enough for a full tick of matches plus the book
 RETRY_EVERY = 5  # batches skipped after a failed connect before Postgres is tried again
 FILE_NAME = "bench_books.jsonl"
+EVIDENCE_FILE = "bench_evidence.jsonl"
 COLUMNS = "world, run, tick, offer_id, side, quote, venue, fee_bps, fee_per_card, offer"
 INSERT = (
     f"insert into bench_books ({COLUMNS}) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
     "on conflict (world, run, tick, offer_id) do nothing"
+)
+EVIDENCE_INSERT = (
+    "insert into bench_evidence (world, venue, tick, kind, fingerprint, payload) "
+    "values (%s, %s, %s, %s, %s, %s) on conflict do nothing"
 )
 
 Row = tuple[Any, ...]
@@ -82,12 +88,39 @@ class BenchBooks:
     ) -> None:
         self._connect, self.stats_dir, self._log = connect, stats_dir, log
         self.world, self.venue, self._inline = world, venue, inline
-        self._queue: queue.Queue[list[Row]] = queue.Queue(QUEUE_SIZE)
+        self._queue: queue.Queue[tuple[str, list[Row]]] = queue.Queue(QUEUE_SIZE)
         self._worker: threading.Thread | None = None
         self._conn: psycopg.Connection | None = None
         self._skip = 0
         self._failed: set[str] = set()
         self.stored = 0  # rows Postgres accepted (conflicts included), for the tests
+
+    def evidence(self, tick: int, kind: str, payload: dict[str, Any]) -> None:
+        """Record observed facts, not inferred settlement, through the same bounded writer."""
+        try:
+            payload = jsonb_safe(payload)
+            fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+            row = (self.world, self.venue or "", tick, kind, fingerprint, payload)
+            try:
+                if self.stats_dir is not None:
+                    self.stats_dir.mkdir(parents=True, exist_ok=True)
+                    with (self.stats_dir / EVIDENCE_FILE).open("a", encoding="utf-8") as handle:
+                        handle.write(
+                            json.dumps(
+                                dict(
+                                    zip(("world", "venue", "tick", "kind", "fingerprint", "payload"), row, strict=True)
+                                ),
+                                ensure_ascii=True,
+                                default=str,
+                            )
+                            + "\n"
+                        )
+            except Exception as e:
+                self._fail("evidence file", e)
+            if self._connect is not None:
+                self._submit([row], EVIDENCE_INSERT)
+        except Exception as e:  # evidence must never prevent a match
+            self._fail("evidence", e)
 
     def record(self, tick: int, offers: Sequence[Any], fee_bps: int = 0, fee_per_card: int = 0) -> None:
         """Keep this tick's bench book. An empty book (no Market Test running) writes nothing. Never raises."""
@@ -121,23 +154,23 @@ class BenchBooks:
         except (OSError, ValueError, TypeError) as e:
             self._fail("file", e)
 
-    def _submit(self, rows: list[Row]) -> None:
+    def _submit(self, rows: list[Row], sql: str = INSERT) -> None:
         if self._inline:
-            self._write(rows)
+            self._write(rows, sql)
             return
         if self._worker is None or not self._worker.is_alive():
             self._worker = threading.Thread(target=self._work, name="bench-books", daemon=True)
             self._worker.start()
         try:
-            self._queue.put_nowait(rows)
+            self._queue.put_nowait((sql, rows))
         except queue.Full:
             self._fail("queue", RuntimeError("full"))
 
     def _work(self) -> None:
         while True:
-            rows = self._queue.get()
+            sql, rows = self._queue.get()
             try:
-                self._write(rows)
+                self._write(rows, sql)
             except Exception as e:  # noqa: BLE001
                 self._fail("worker", e)
 
@@ -159,7 +192,7 @@ class BenchBooks:
         self._conn = conn
         return conn
 
-    def _write(self, rows: list[Row]) -> None:
+    def _write(self, rows: list[Row], sql: str = INSERT) -> None:
         conn = self._db()
         if conn is None:
             return
@@ -168,7 +201,7 @@ class BenchBooks:
             with conn.transaction():
                 conn.execute(f"set local statement_timeout = {STATEMENT_TIMEOUT_MS}")
                 with conn.cursor() as cur:
-                    cur.executemany(INSERT, payload)
+                    cur.executemany(sql, payload)
         except Exception as e:  # noqa: BLE001
             self._fail("write", e)
             self._conn = None

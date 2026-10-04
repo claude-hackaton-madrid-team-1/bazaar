@@ -39,7 +39,7 @@ def full_team(**kw):
 
 
 def test_every_tool_has_one_self_contained_schema_and_a_unique_name():
-    assert len({s.name for s in tl.TOOLS}) == len(tl.TOOLS) == 21
+    assert len({s.name for s in tl.TOOLS}) == len(tl.TOOLS) == 23
     assert set(tl.WRITE_TOOLS) == set(WRITES)
     for spec in tl.TOOLS:
         schema = spec.schema()
@@ -277,7 +277,9 @@ def test_a_sent_write_stays_done_when_the_ledger_fails_after_the_send(tmp_path):
 
     class Broken(Ledger):
         def record(self, *args, **kw):
-            raise LedgerUnavailable("ledger write failed (OperationalError)")
+            if args[0] != "publication_pending":
+                raise LedgerUnavailable("ledger write failed (OperationalError)")
+            super().record(*args, **kw)
 
     team = full_team()
     b = backend(tmp_path, live=True, team=team, ledger=Broken(tmp_path / "ledger.jsonl"))
@@ -400,15 +402,15 @@ def test_rows_a_sent_request_could_not_write_go_in_first_and_block_until_then(tm
         down = True
 
         def record(self, *args, **kw):
-            if Flaky.down:
+            if Flaky.down and args[0] != "publication_pending":
                 raise LedgerUnavailable("ledger write failed (OperationalError)")
             super().record(*args, **kw)
 
     team = full_team()
     b = backend(tmp_path, live=True, team=team, ledger=Flaky(tmp_path / "ledger.jsonl"))
     answer, _ = run(b, "sell_bid", {"ref": "LAV-09", "price": 60})
-    assert answer["status"] == "done" and len(b.pending) == 2
-    assert (tmp_path / "runtime" / "pending-ledger.jsonl").read_text().count("\n") == 2
+    assert answer["status"] == "done" and len(b.pending) == 3
+    assert (tmp_path / "runtime" / "pending-ledger.jsonl").read_text().count("\n") == 3
     b._ledger = Flaky(tmp_path / "ledger.jsonl")  # what the next open would return; still down
     text, failed = run(b, "sell_bid", {"ref": "LAV-10", "price": 60})
     assert failed and "shared ledger is unreachable" in text and len(team.sent) == 1
@@ -416,7 +418,7 @@ def test_rows_a_sent_request_could_not_write_go_in_first_and_block_until_then(tm
     b._ledger = Flaky(tmp_path / "ledger.jsonl")
     run(b, "sell_cancel", {"offer_id": 77})  # any write: the missing rows go in before it is judged
     kinds = [e["kind"] for e in Ledger(tmp_path / "ledger.jsonl").entries()]
-    assert b.pending == [] and kinds[:2] == ["listing", "spend"]
+    assert b.pending == [] and kinds[:3] == ["publication_pending", "listing", "spend"]
 
 
 def test_an_oversized_answer_is_cut_before_serialising_and_stays_json():

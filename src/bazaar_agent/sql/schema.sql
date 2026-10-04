@@ -700,3 +700,39 @@ end $do$;
 create table if not exists injection_attempts (id bigserial primary key, world text not null default 'real', tick int, source text not null check (source in ('feed','team_thread','duel','dealer_thread','offer_text')), event_id bigint not null default 0, thread_id bigint not null default 0, duel_id bigint not null default 0, message_id bigint not null default 0, from_team text, to_us bool not null default false, tags text[] not null, severity text not null check (severity in ('attempt','weak')), raw text not null, normalised text not null, our_response text not null, proof text not null, seen_at timestamptz not null default now(), unique (world, source, event_id, thread_id, duel_id, message_id, tags));
 -- bazaar-live's panel reads the newest rows of each severity (show.injection_attempts): 46 ms → 5 ms at 100k rows.
 create index if not exists injection_attempts_recent on injection_attempts (severity, seen_at desc, id desc);
+
+
+-- Operator confirmations are immutable terms with an atomic, single-use dispatch claim.
+create table if not exists operator_proposals (
+    id text primary key,
+    world text not null,
+    created_tick bigint not null,
+    expires_tick bigint not null,
+    state text not null,
+    payload jsonb not null,
+    result jsonb,
+    created_at timestamptz not null default now()
+);
+
+-- Bench snapshots and lifecycle events, including sessions with zero quoted cards.
+create table if not exists bench_evidence (
+    world text not null, venue text not null, tick bigint not null,
+    kind text not null, fingerprint text not null, payload jsonb not null,
+    primary key (world, venue, tick, kind, fingerprint)
+);
+
+
+-- Durable publication promises and per-thread operator message slots share the ledger.
+alter table ledger drop constraint if exists ledger_kind_check;
+alter table ledger add constraint ledger_kind_check check (
+    kind in ('spend','accept','listing','publication_pending','publication_confirm','publication_release')
+    or starts_with(kind, 'operator_say:')
+);
+
+-- The easter-egg hunt's tried set (agents/egg_hunt.py; also created by the taker at its first write): a phrase is
+-- never said twice to one dealer, across restarts. The phrase text is private: logs carry phrase_id only.
+create table if not exists egg_hunt_tried (
+  world text not null default 'real', dealer text not null, phrase_key text not null, phrase_id text not null,
+  phrase text not null default '', tick int not null, game_hour int not null, status text not null
+  check (status in ('sent','found')), thread_id bigint not null default 0, found_tick int,
+  event_id bigint not null default 0, at timestamptz not null default now(), primary key (world, dealer, phrase_key));

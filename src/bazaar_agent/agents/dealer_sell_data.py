@@ -245,16 +245,17 @@ def full_levels(levels: Mapping[str, int | None], deals: Mapping[str, int]) -> f
 
 
 def ladder_deals(events: Iterable[Mapping[str, Any]], us: str) -> dict[str, int]:
-    """dealer -> our dealer deals that score today (buys and sells: both are ladder deals), from the snapshot's
-    feed events (no request): our threads since the latest `day.opened` that filled away from the dealer's own
-    opening price (a deal there captures none of its range). Only our own events are matched: a day of every
-    team's threads would make `intel.dealer_threads` slow."""
+    """dealer -> our dealer deals that score this round (buys and sells: both are ladder deals), from the snapshot's
+    feed events (no request): our threads since the latest `day.opened` or `round.started` (the ladder restarts
+    every round, and a round may start mid-day) that filled away from the dealer's own opening price (a deal there
+    captures none of its range). Only our own events are matched: a day of every team's threads would make
+    `intel.dealer_threads` slow."""
     from bazaar_agent.intel import dealer_threads
 
     if not us:
         return {}
     rows = [e for e in events if isinstance(e, Mapping)]
-    since = max((_tick(e) for e in rows if e.get("type") == "day.opened"), default=0)
+    since = max((_tick(e) for e in rows if e.get("type") in ("day.opened", "round.started")), default=0)
     threads: set[int] = set()
     mine: list[dict[str, Any]] = []
     for e in rows:

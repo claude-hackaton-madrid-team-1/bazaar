@@ -143,10 +143,12 @@ def cap_violations(
     held: int,
     rules: _Margin,
     margin: float | None = None,
+    rule: str | None = None,
 ) -> list[str]:
     """A card buy's price (fee included) plus what else it gives (a swap's copy) must stay at or under the official
     value of one more copy minus `official_value_margin` (or `margin`, when given: an epic or legendary's
-    `Guardrails.value_margin_for`). No value book, or an unreadable value: refused."""
+    `Guardrails.value_margin_for`; below 0 with `rule` "dealer_ladder_value_tolerance": that much over it). No value
+    book, or an unreadable value: refused."""
     if values is None:
         return [f"official value of {ref} not read {UNREAD}"]
     official = values.value(ref, tick, held)
@@ -157,6 +159,9 @@ def cap_violations(
     if price + gives_value <= official - margin + 1e-9:
         return []
     gives = f" + copy given {gives_value:g}" if gives_value else ""
-    rule = "off_page_min_surplus" if named else "official_value_margin"
-    less = f" - {rule} {margin:g}" if margin else ""
+    if rule is not None:  # the tolerance, net of official_value_margin
+        less = f" + {rule} {-margin:g}" if margin < 0 else f" - official_value_margin net of {rule} {margin:g}"
+    else:
+        rule = "off_page_min_surplus" if named else "official_value_margin"
+        less = f" - {rule} {margin:g}" if margin else ""
     return [f"price {price}{gives} > official value {official:g}{less} of {ref} (GET /api/me/value)"]

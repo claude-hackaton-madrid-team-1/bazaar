@@ -46,6 +46,7 @@ from typing import Any, Literal
 
 from bazaar_agent import buy_targets
 from bazaar_agent import buyers as buyer_rank
+from bazaar_agent.agents import publication
 from bazaar_agent.agents.dealer_sell_data import SellMarket
 from bazaar_agent.agents.dealer_sell_desk import Candidate, SellDesk, SellHooks, standard_hooks
 from bazaar_agent.agents.maker_jev import (
@@ -83,7 +84,6 @@ from bazaar_agent.agents.seller import (
     unsettled_accepts,
 )
 from bazaar_agent.agents.strategy_gate import AskFn, StrategyGate
-from bazaar_agent.agents.team_desk import disabled, maker_may_list
 from bazaar_agent.decisions import RELIST_REST, DecisionLog, Status
 from bazaar_agent.guardrails import (
     Action,
@@ -101,8 +101,9 @@ from bazaar_agent.guardrails import (
 from bazaar_agent.holdings import Holdings
 from bazaar_agent.intel import book_values, card_rarities, settled_volume, tape
 from bazaar_agent.learn.venues import VenueNotices
-from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
+from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable, trade_lock
 from bazaar_agent.official_values import OfficialValues, over_cap
+from bazaar_agent.rate_budget import maker_post_attempts
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import Playbook, StrategyParams, build_playbook
 from bazaar_agent.team_matrix_store import LatestMatrix
@@ -155,44 +156,19 @@ def targets_from(book: Playbook) -> list[Target]:
 
 
 def _leave_desk_copy(targets: Iterable[Target], me: dict[str, Any], rules: Guardrails) -> list[Target]:
-    """Asks that leave the team desk its swap copy (`team_desk.maker_may_list`): an ask on the desk's copy moves
-    to the cheapest other copy when it costs us no more, else it is dropped, and at most `held - 2` copies of a
-    card are asked, so the desk keeps the two free copies `spare_copy` needs; bids are untouched."""
-    targets = list(targets)
-    asked = {t.asset_id for t in targets if t.side == "ask"}
+    """Keep one page copy, without reserving stock for a dormant swap strategy.
+
+    Actual standing and uncertain offers are checked again under the publication lock.
+    """
     held = Counter(str(a.get("ref")) for a in me.get("assets") or [])
-    room = {ref: n - 2 for ref, n in held.items() if n >= 2} if disabled(rules) is None else {}
     kept: list[Target] = []
-    for t in targets:
-        if t.side == "ask" and not maker_may_list(me, t.ref, t.asset_id, rules):
-            moved = _other_copy(t, me, rules, asked)
-            if moved is None:
+    for target in targets:
+        if target.side == "ask":
+            if held[target.ref] <= 1 and rules.protects(target.ref, target.rarity, 1):
                 continue
-            t = moved
-        if t.side == "ask" and t.ref in room:
-            if room[t.ref] <= 0:
-                continue
-            room[t.ref] -= 1
-        kept.append(t)
+            held[target.ref] -= 1
+        kept.append(target)
     return kept
-
-
-def _other_copy(t: Target, me: dict[str, Any], rules: Guardrails, asked: set[int | None]) -> Target | None:
-    """The ask moved to our cheapest other listable copy of its card, if that copy costs us no more."""
-    others = [
-        a
-        for a in me.get("assets") or []
-        if a.get("ref") == t.ref
-        and isinstance(a.get("id"), int)
-        and a["id"] not in asked
-        and a.get("your_value") is not None
-        and maker_may_list(me, t.ref, a["id"], rules)
-    ]
-    best = min(others, key=lambda a: (float(a["your_value"]), int(a["id"])), default=None)
-    if best is None or float(best["your_value"]) > t.value:
-        return None
-    asked.add(int(best["id"]))
-    return replace(t, asset_id=int(best["id"]))
 
 
 def _covered_by(t: Target, offers: Iterable[OpenOffer]) -> bool:
@@ -285,6 +261,7 @@ class _MakerRun:
     open_total: int
     listings_left: int
     spent: int = 0  # bid cash committed this tick (posted or would-be), counted against the spend cap
+    post_attempts: int = 0  # fresh read + guard attempts share the key's request budget, even when refused
     posted: list[str] = field(default_factory=list)
     params: StrategyParams | None = None  # this tick's strategy parameters (Jev's price candidates)
     settled: dict[str, int] | None = None  # primas settled with each team; None: max_counterparty_share is off
@@ -339,6 +316,7 @@ class Maker:
         self._holder_notes: dict[str, tuple[int, str]] = {}  # card -> (tick, the teams the feed places it with)
         # Selling spares to dealers (`dealer_sell_enabled`, off by default): one sell thread at a time.
         self._run: _MakerRun | None = None
+        self._dealer_promises: dict[int, str] = {}
         # Buyer rank (`buyer_rank_enabled`): the leaderboard's ranks (read every LEADERBOARD_EVERY ticks), the
         # (team, price) each copy was addressed to, and our open asks the rank addressed. Memory only.
         self._ranks: dict[str, int] = {}
@@ -355,7 +333,7 @@ class Maker:
 
     def on_tick(self, clock: Clock) -> None:
         window = window_for(clock, self.now(), self.now)
-        self.rec.decisions.begin_tick(clock.tick)
+        self.rec.decisions.begin_tick(clock.tick, clock.round)
         snap: Snapshot | None = None
         try:
             snap = read_snapshot(
@@ -380,6 +358,12 @@ class Maker:
 
     def _tick(self, snap: Snapshot, window: TickWindow) -> None:
         clock = snap.clock
+        if self.live:
+            # Observe acknowledged offers before any cancel/reprice removes them.
+            with trade_lock(self.ledger):
+                publication.with_pending(
+                    self.ledger, snap.me, offers_in(snap.offers), snap.us, clock.tick, clock.t_hours
+                )
         if self.hub is not None:
             self.hub.tick(clock.tick, clock.t_hours, snap.us)
         mine, total = our_open_offers(snap.offers, snap.us)
@@ -421,7 +405,7 @@ class Maker:
             ),
         )
         targets = [t for t in targets_from(book) if not _covered_by(t, by_hand)]
-        targets = _leave_desk_copy(targets, snap.me, self.rules)  # the team desk keeps its swap copy (N17)
+        targets = _leave_desk_copy(targets, snap.me, self.rules)
         if self.jev is not None:
             for line in self.jev.watch.observe(mine, clock.tick):
                 self.log(f"tick {clock.tick} maker: {line}")
@@ -446,7 +430,22 @@ class Maker:
         locked = {o.asset_id for o in [*mine, *by_hand] if o.asset_id is not None}
         locked |= {t.asset_id for t in targets if t.side == "ask" and t.asset_id is not None}
         self._run = run
+        previous_talk = self.sell_desk.talk
+        previous_promises = set(self._dealer_promises)
         self.sell_desk.on_tick(snap, params, locked, window.left)
+        # The only first step is opening a thread (no price). A failed opening
+        # cannot sell a card; later promises need a confirmed terminal thread.
+        ended_assets = set()
+        if previous_talk is not None and previous_talk.status in {"walked", "closed", "expired", "refused", "timeout"}:
+            ended_assets.add(previous_talk.cand.asset_id)
+        if previous_talk is None and self.sell_desk.talk is None:
+            ended_assets |= set(self._dealer_promises) - previous_promises
+        if self.live and ended_assets:
+            with trade_lock(self.ledger):
+                for asset in ended_assets:
+                    token = self._dealer_promises.pop(asset, None)
+                    if token is not None:
+                        publication.release(self.ledger, token, clock.tick, clock.t_hours)
         if self.hub is not None:
             self.hub.view(open_offers=[asdict(o) for o in mine], posted_this_tick=list(run.posted))
         verb = "posted" if self.live else "would post"
@@ -579,14 +578,50 @@ class Maker:
         )
 
     def _sell_hooks(self, cand: Candidate) -> SellHooks:
+        fresh: Context | None = None
+
         def context() -> Context:
             assert self._run is not None
-            return self._ctx(self._run)
+            return fresh if fresh is not None else self._ctx(self._run)
 
         catalog = self._run.snap.catalog if self._run is not None else {}
-        return standard_hooks(
+        hooks = standard_hooks(
             cand, rules=self.rules, rec=self.rec, ledger=self.ledger, context=context, catalog=catalog, log=self.log
         )
+        original_guard = hooks.guard
+
+        def guarded(kind: str, price: int) -> str | None:
+            nonlocal fresh
+            assert self._run is not None
+            if not self.live:
+                return original_guard(kind, price)
+            clock = self._run.snap.clock
+            with trade_lock(self.ledger):
+                me = self.team.me()
+                offers = publication.with_pending(
+                    self.ledger, me, offers_in(self.team.my_offers()), self._run.snap.us, clock.tick, clock.t_hours
+                )
+                own = self._dealer_promises.get(cand.asset_id)
+                offers = [o for o in offers if o.get("token") != own or own is None]
+                commitments = open_commitments(offers, self._run.snap.us)
+                if cand.asset_id in commitments.listed:
+                    return "copy already promised by another writer"
+                fresh = committed_context(
+                    context_from(me, clock.tick, clock.t_hours, self.ledger, self.rules, self.values), commitments
+                )
+                denied = original_guard(kind, price)
+                if denied is None and own is None:
+                    self._dealer_promises[cand.asset_id] = publication.reserve(
+                        self.ledger,
+                        clock.tick,
+                        clock.t_hours,
+                        self._run.snap.us,
+                        {"assets": [cand.asset_id]},
+                        {"cash": price},
+                    )
+                return denied
+
+        return replace(hooks, guard=guarded)
 
     def _ctx(self, run: _MakerRun) -> Context:
         """/me + the shared ledger + the bid cash this tick already committed (posted or would-be), and the
@@ -722,6 +757,36 @@ class Maker:
         return t
 
     def _post(self, run: _MakerRun, t: Target, why: str) -> int | None:
+        if not self.live or run.listings_left <= 0:
+            return self._post_locked(run, t, why)
+        clock = run.snap.clock
+        cap = maker_post_attempts(clock.tick_seconds, clock.limits.offers_per_team_per_tick)
+        if run.post_attempts >= cap:
+            self.log(
+                f"tick {clock.tick} maker: publication request budget used ({cap} attempts); remaining offers wait"
+            )
+            return None
+        run.post_attempts += 1
+        with trade_lock(self.ledger):
+            me = self.team.me()
+            offers = publication.with_pending(
+                self.ledger, me, offers_in(self.team.my_offers()), run.snap.us, clock.tick, clock.t_hours
+            )
+            run.snap = replace(run.snap, me=me, offers={"offers": offers})
+            run.offers = offers
+            run.base = committed_context(
+                context_from(me, clock.tick, clock.t_hours, self.ledger, self.rules, self.values),
+                unsettled_accepts(me, self.ledger, clock.tick),
+            )
+            run.spent = 0  # fresh ledger already includes earlier sends this tick
+            run.open_total = sum(o.get("status") in (None, "open", "queued", "accepted") for o in offers)
+            run.listings_left = min(
+                run.listings_left,
+                max(0, clock.limits.offers_per_team_per_tick - self.ledger.count_in_tick("listing", clock.tick)),
+            )
+            return self._post_locked(run, t, why)
+
+    def _post_locked(self, run: _MakerRun, t: Target, why: str) -> int | None:
         """Post one offer; the new offer's id when it went out live, else None."""
         tick = run.snap.clock.tick
         venues = run.snap.venues
@@ -783,6 +848,9 @@ class Maker:
         if self.live:
             addressed = {"to": listing.to} if listing.to else {}
             request = {"give": listing.give, "want": listing.want, "venue": venue.id, **addressed}
+            reservation = publication.reserve(
+                self.ledger, tick, run.snap.clock.t_hours, run.snap.us, listing.give, listing.want, to=listing.to
+            )
             body = self.rec.send(
                 did,
                 tick,
@@ -797,7 +865,11 @@ class Maker:
                 ),
             )
             if body is None and not self.rec.maybe_landed:
+                if 400 <= self.rec.last_status < 500 and self.rec.last_status != 408:
+                    publication.release(self.ledger, reservation, tick, run.snap.clock.t_hours)
                 return None
+            if body is not None and type(body.get("id")) is int:
+                publication.confirm(self.ledger, reservation, body["id"], tick, run.snap.clock.t_hours)
             # Sent, or lost on the way back (a network error): a bid that may be open counts as spend.
             self.ledger.record("listing", tick, run.snap.clock.t_hours, t.price, t.ref)
             if t.side == "bid":

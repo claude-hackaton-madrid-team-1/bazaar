@@ -264,12 +264,12 @@ def test_one_running_taker_ranks_the_new_page_the_tick_it_appears(tmp_path):
 
 def test_the_committed_file_protects_the_last_copy_of_every_page():
     """Omar's rule after selling SAL-07 (Sat 3 Oct, score 28.25 -> 23.98): no set is ever unprotected.
-    His exceptions (Sat 3 Oct, SX1) are the cards LAT-10 and LAT-09, never the rest of La Latina."""
+    SR1 restores the strict rule for LAT-10 and LAT-09 as well."""
     from bazaar_agent.guardrails import card_refs, load_guardrails, set_codes
 
     rules = load_guardrails().rules
     assert set(set_codes(rules.protect_page_sets)) >= {"LAV", "SAL", "MAL", "RET", "LAT", "CHA"}
-    assert card_refs(rules.protect_page_exceptions) == ("LAT-10", "LAT-09")
-    assert not rules.protects("LAT-10", "rare", 1) and not rules.protects("LAT-09", "rare", 1)
+    assert card_refs(rules.protect_page_exceptions) == ()
+    assert rules.protects("LAT-10", "rare", 1) and rules.protects("LAT-09", "rare", 1)
     others = [f"{code}-{n:02d}" for code in ("LAV", "SAL", "MAL", "RET", "LAT", "CHA") for n in range(1, 11)]
-    assert all(rules.protects(ref, "common", 1) for ref in others if ref not in ("LAT-10", "LAT-09"))
+    assert all(rules.protects(ref, "common", 1) for ref in others)

@@ -12,7 +12,9 @@ Three buckets, by the header a call carries (`sdk.py`):
 - `public`: `public_client()` sends no key (monitor clock, feed, dealers, catalog, venues, boards, evals):
   60 req/s per address, and laptops behind one NAT share that address.
 
-Each `LoopBudget` is a CEILING per tick, derived from the caps in the code (`source` says which).
+Each `LoopBudget` bounds its named path per tick (`source` says which). Optional team-desk,
+Workshop, dealer-sale and operator work is additional; the shared limiter and tick deadline
+must still gate all requests. This table alone does not certify those optional paths.
 `tests/test_rate_budget.py` runs every loop on fakes behind a counting proxy and fails when a loop makes
 more calls in a tick than its budget declares: raise the budget here, and the table must still pass.
 
@@ -75,7 +77,7 @@ def monitor(stream_retry: bool = True) -> LoopBudget:
 def taker(dealer_threads: int = 3, venues: int = VENUES_READ) -> LoopBudget:
     reads = 1 + 3  # loop clock (team key) + me, my_offers, my_threads
     per_thread = 3  # open_thread, thread read, say/close: one move per conversation per tick
-    accept = 1 + 1 + 1 + 1  # fresh clock before the accept, the accept, the replaced bid's cancel, and a clock
+    accept = 2 + 1 + 1 + 1 + 1  # fresh me/offers under lock, clock, accept, replaced bid's cancel, retry clock
     # re-read after losing the shared accept reservation to another process (r2 bite X6)
     return LoopBudget(
         "taker",
@@ -88,14 +90,14 @@ def taker(dealer_threads: int = 3, venues: int = VENUES_READ) -> LoopBudget:
 
 def maker(max_open_offers: int = 30, listings_per_tick: int = 12) -> LoopBudget:
     reads = 1 + 2  # loop clock (team key) + me, my_offers
-    team = reads + max_open_offers + listings_per_tick  # plan_offers: every stale offer cancelled, 12 posts
+    team = reads + max_open_offers + 3 * listings_per_tick  # each attempt: fresh me + offers + post
     return LoopBudget(
         "maker",
         team=team,
         team_at_boundary=team,  # nothing waits: cancels and posts follow the reads back to back
         public=4,
         source="agents/maker.py plan_offers: cancels are uncapped (≤ max_open_offers_per_team 30), "
-        "posts ≤ offers_per_team_per_tick 12",
+        "each post attempt costs fresh me + offers + post; optional dealer sales are additional",
     )
 
 
@@ -135,6 +137,16 @@ def evals() -> LoopBudget:
     return LoopBudget("evals", team=0, team_at_boundary=0, public=1, source="evals/cli.py: public clock only")
 
 
+def maker_post_attempts(tick_seconds: float, server_limit: int = 12) -> int:
+    """Leave room for the base services even when all 30 old listings need cancelling.
+
+    Optional paths still use the shared limiter. Count attempts, including rejected ones,
+    because their fresh reads cost requests too. Four fit at 15 s; all twelve at 30 s.
+    """
+    reserved = sum(b.team for b in (monitor(), taker(), maker(listings_per_tick=0), duels(), broker()))
+    return min(server_limit, max(0, int((tick_seconds * RATE_PER_KEY - reserved) // 3)))
+
+
 def operator(req_per_s: float, tick_seconds: float) -> LoopBudget:
     """On-demand callers of the team key, as an average rate: the MCP tools (`status`, `strategy`,
     `threads` read `/me`; every write tool's check reads clock + `/me` + offers, even in a dry run), the
@@ -153,10 +165,23 @@ def flatten(open_offers: int = 30) -> LoopBudget:
     return LoopBudget("flatten", team=2 + open_offers, team_at_boundary=2 + open_offers, source="PR #68 bazaar flatten")
 
 
-def saturday_plan(*, dealer_children: int = 0, duel_concurrency: int = 3, book_reads: int = 1) -> list[LoopBudget]:
+def saturday_plan(
+    *,
+    dealer_children: int = 0,
+    duel_concurrency: int = 3,
+    book_reads: int = 1,
+    tick_seconds: float = SATURDAY_TICK_S,
+) -> list[LoopBudget]:
     """What runs on Saturday, every loop at its CEILING: one of each service. Laptops add copies
     (`with_copies`), and `bazaar dealer buy` children add `dealer_children`."""
-    plan = [monitor(), taker(), maker(), duels(duel_concurrency), broker(book_reads), evals()]
+    plan = [
+        monitor(),
+        taker(),
+        maker(listings_per_tick=maker_post_attempts(tick_seconds)),
+        duels(duel_concurrency),
+        broker(book_reads),
+        evals(),
+    ]
     if dealer_children:
         plan.append(dealer_child().times(dealer_children))
     return plan
