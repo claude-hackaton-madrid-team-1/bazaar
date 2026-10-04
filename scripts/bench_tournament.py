@@ -45,6 +45,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from bazaar_agent.agents.bench_edge import BenchEdge, edge_plan, expiries_in  # noqa: E402
+from bazaar_agent.agents.bench_lookahead import BenchLookahead, LookaheadConfig, LookaheadPrior  # noqa: E402
 from bazaar_agent.agents.bench_model import PRIORS, BenchPrior  # noqa: E402
 from bazaar_agent.agents.matcher import BrokerBook, Fee, plan_matches, quotes_from  # noqa: E402
 from bazaar_sim import bench  # noqa: E402
@@ -165,6 +166,25 @@ class EdgePolicy:
         return [(str(m.sell.id), str(m.buy.id), m.price) for m in plan.matches]
 
 
+class LookaheadPolicy:
+    """`agents/bench_lookahead.py` as the broker runs it (BAZAAR_BENCH_POLICY=lookahead): the exact plan, replaced by
+    another matching of crossing pairs when the rollouts expect more true gains."""
+
+    def __init__(self, per_side: int, samples: int = 128, seed: int = 0, prior: LookaheadPrior | None = None) -> None:
+        prior = replace(prior or LookaheadPrior(), per_side=per_side)
+        self.planner = BenchLookahead(LookaheadConfig(samples=samples, prior=prior), seed=seed)
+        self.log: list[str] = []
+
+    def __call__(self, book: dict[str, Any]) -> list[Pair]:
+        parsed = BrokerBook.model_validate(book)
+        bench_q = [q for q in quotes_from(parsed).quotes if q.bench]
+        fee = Fee(parsed.fee_bps, parsed.fee_per_card)
+        exact = plan_matches(bench_q, fee, MAX_SENDS)
+        expires = max(expiries_in(parsed.bench_offers, int(book["tick"])).values(), default=None)
+        plan = self.planner.plan(bench_q, fee, int(book["tick"]), exact, expires, self.log.append)
+        return [(str(m.sell.id), str(m.buy.id), m.price) for m in plan]
+
+
 class HoldPolicy:
     """The stall's pairs, but a pair crossing by less than `gap` waits while both traders are younger than `age`
     ticks and more than `rest` ticks are left."""
@@ -249,6 +269,7 @@ POLICIES: dict[str, Callable[[Sequence[BenchTrader]], Callable[[dict[str, Any]],
     "edgecal_none": lambda tr: EdgePolicy(float("-inf"), CAL_PRIOR),
     "edgecal5": lambda tr: EdgePolicy(5.0, CAL_PRIOR),
     "maxcount": lambda tr: MaxCount(),
+    "lookahead": lambda tr: LookaheadPolicy(len(tr) // 2),
     "hold3": lambda tr: HoldPolicy(3, 1),
     "hold6": lambda tr: HoldPolicy(6, 2),
     "who_oracle": lambda tr: WhoOracle(tr),  # bound
@@ -267,10 +288,13 @@ def stamp(policy: Callable[[dict[str, Any]], list[Pair]], end: int) -> Callable[
 
 
 def run_book(traders: list[BenchTrader], p: bench.BenchPreset, names: Sequence[str]) -> dict[str, tuple[float, float]]:
+    """{policy: (efficiency, stall's efficiency)} on one book, plus `oracle`: the best any quote-rule broker could do
+    knowing every limit, arrival and departure (the headroom over the stall)."""
     out = {}
     for name in names:
         r = bench.simulate(stamp(POLICIES[name](traders), p.ticks), p, 0, traders=traders)
         out[name] = (r.efficiency, r.stall)
+    out["oracle"] = (r.oracle, r.stall)
     return out
 
 
@@ -422,7 +446,7 @@ def replay_rows(run: str, draws: int, names: Sequence[str], world: World) -> lis
         rng = random.Random(k)
         traders = [posterior_trader(s, rng, world, ticks) for s in seen]
         results.append(run_book(traders, world.preset, names))
-    return summarise(f"replay {run}", results, names)
+    return summarise(f"replay {run}", results, [*names, "oracle"])
 
 
 # ---------------------------------------------------------------- main
@@ -451,7 +475,7 @@ def run_worlds(worlds: Sequence[str], seeds: int, robust: bool, pool: Any, names
     rows: list[Row] = []
     for name in worlds:
         results = pool.map(_one, [(name, s, robust, tuple(names)) for s in range(seeds)])
-        rows += summarise(name, results, names)
+        rows += summarise(name, results, [*names, "oracle"])
     return rows
 
 
