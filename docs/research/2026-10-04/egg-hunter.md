@@ -2,8 +2,9 @@
 
 Sun 4 Oct 2026, 09:05–10:30 Madrid. Branch `feat/egg-hunter` (from `origin/main` 235f296e), local commits only.
 Code: `src/bazaar_agent/agents/egg_hunt.py`, wired in `agents/taker.py` (`_desk_send`, `_tick`, `_after_sends`) and
-`cli.py` (`_egg_hunter`). Tests: `tests/test_egg_hunt.py`. **It is OFF**: it needs GUARDRAILS.md
-`egg_hunt_enabled = true` **and** env `BAZAAR_EGG_HUNT=1` on `bazaar-taker`. Nothing was sent to the game while
+`cli.py` (`_egg_hunter`). Tests: `tests/test_egg_hunt.py`. It runs only with GUARDRAILS.md
+`egg_hunt_enabled = true` **and** env `BAZAAR_EGG_HUNT=1` on `bazaar-taker`; Marius turned both on at the merge
+(Sun 4 Oct, ~09:40). Nothing was sent to the game while
 building it (no `BAZAAR_LIVE`, no `--live`, no keyed request, no Railway change).
 
 ## TL;DR
