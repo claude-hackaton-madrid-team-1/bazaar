@@ -861,3 +861,6 @@ See [SALES1](SALES1-spec.md). In progress: team outreach ownership, Opus 5.5, OT
 ## PACK1 — sales before further packs
 - [Spec](PACK1-spec.md): disable inventory restocking; preserve dealer desk off and prioritize existing Sales team market activity.
 - Existing focused checks, independent review and safe coordinator rollout.
+
+## PACK2 — no further pack purchases
+- [Spec](PACK2-spec.md): zero shared pack quota; regression proves all guarded purchase paths blocked while card buys stay eligible.

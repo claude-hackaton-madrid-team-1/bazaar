@@ -97,7 +97,7 @@ def test_ledger_counts_spend_per_game_hour_and_accepts_per_tick(tmp_path: Path):
 
 
 def test_pack_buys_stop_at_max_packs_per_game_hour():
-    rules = REAL.rules
+    rules = REAL.rules.model_copy(update={"max_packs_per_game_hour": 3})
     assert rules.max_packs_per_game_hour == 3
     for kind in ("buy", "bid", "accept_buy"):
         action = gr.Action(kind, "sobre_barrio", "pack", 17)
@@ -393,3 +393,13 @@ def test_spend_room_zero_cap_uses_only_available_cash():
     assert on.spend_room(65, 251) == 0
     with pytest.raises(ValueError):
         gr.Guardrails(max_spend_per_game_hour=-1)
+
+
+@pytest.mark.parametrize("kind", ["buy", "bid", "accept_buy"])
+@pytest.mark.parametrize("bought", [0, 3])
+def test_deployed_zero_pack_quota_blocks_all_purchase_paths_without_stopping_cards(kind, bought):
+    rules = gr.load_guardrails().rules
+    assert rules.max_packs_per_game_hour == 0 and not rules.pack_restock_enabled
+    verdict = gr.check(gr.Action(kind, "sobre_barrio", "pack", 17), ctx(packs_last_hour=bought), rules)
+    assert not verdict.allowed and "max_packs_per_game_hour 0" in str(verdict)
+    assert gr.check(gr.Action(kind, "LAV-03", "common", 9), ctx(packs_last_hour=bought), rules).allowed
