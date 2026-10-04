@@ -8,7 +8,7 @@ from dataclasses import replace
 import pytest
 
 from bazaar_agent.agents.maker import Maker
-from bazaar_agent.agents.taker import REFUSAL_RECHECK_TICKS, Taker, TakerConfig
+from bazaar_agent.agents.taker import REFUSAL_RECHECK_TICKS, REFUSAL_ROW_TICKS, Taker, TakerConfig
 from bazaar_agent.sdk import BazaarError
 from tests.agent_fakes import TICK, FakePublic, FakeTeam, ask, bid, clock, parts, rows
 
@@ -277,6 +277,15 @@ def test_a_refused_open_is_not_retried_next_tick_nor_logged_again(tmp_path, monk
     assert len(ret_refusals(tmp_path)) == 1
     t.on_tick(clock(tick=TICK + REFUSAL_RECHECK_TICKS, tick_seconds=15))  # the re-check reads it again, silently
     assert team.value_calls == ["RET-09", "RET-09"] and len(ret_refusals(tmp_path)) == 1
+
+
+def test_a_lasting_refusal_is_written_again_every_refusal_row_ticks(tmp_path, monkeypatch):
+    # The dashboard's "why we do not buy" reads the last 300 ticks: a refusal that lasts must not age out of it.
+    t, team, _ = ret_plan(tmp_path, monkeypatch, alternative=False)
+    for tick in range(TICK, TICK + 2 * REFUSAL_ROW_TICKS + 1, REFUSAL_RECHECK_TICKS):
+        t.on_tick(clock(tick=tick, tick_seconds=15))
+    assert team.sent == []
+    assert [r["tick"] for r in ret_refusals(tmp_path)] == [TICK, TICK + REFUSAL_ROW_TICKS, TICK + 2 * REFUSAL_ROW_TICKS]
 
 
 def test_a_refused_open_is_retried_when_a_new_fill_comes_in(tmp_path, monkeypatch):

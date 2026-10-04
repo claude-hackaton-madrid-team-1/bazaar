@@ -529,6 +529,8 @@ def _conversation(conv: Conversation) -> str:
 
 ROUND_STARTS = ("day.opened", "round.started")  # a dealer's fills before the latest of these no longer bound a plan
 REFUSAL_RECHECK_TICKS = 20  # a remembered dealer refusal is re-read this often (an official value may drift)
+# A refusal that lasts is written again this often, so the dashboard's last-300-ticks panel still says why.
+REFUSAL_ROW_TICKS = 200
 
 
 @dataclass(frozen=True)
@@ -536,6 +538,7 @@ class _Refusal:
     inputs: tuple[Any, ...]  # `Taker._refusal_inputs` when it was refused
     why: str  # the guardrail text: a re-check that refuses with the same words writes no new row
     tick: int
+    row_tick: int  # the tick of its last `dealer_open` row: written again every `REFUSAL_ROW_TICKS`
 
 
 @dataclass
@@ -1929,8 +1932,10 @@ class Taker:
         if not verdict.allowed and not verdict.halted and not unread_only(verdict.violations):
             key, why = (op.dealer, op.item, op.move.ladder), str(verdict)
             said = self._refused_opens.get(key)
-            self._refused_opens[key] = _Refusal(self._refusal_inputs(run, op.move), why, tick)
-            if said is not None and said.why == why:  # a re-check that changed nothing: no second row
+            quiet = said is not None and said.why == why and tick - said.row_tick < REFUSAL_ROW_TICKS
+            row_tick = said.row_tick if quiet and said is not None else tick
+            self._refused_opens[key] = _Refusal(self._refusal_inputs(run, op.move), why, tick, row_tick)
+            if quiet:  # a re-check that changed nothing: no second row until REFUSAL_ROW_TICKS
                 return False
         plan = f"{op.plan.start}→{op.plan.max_price} step {op.plan.step}"
         final = f", final ≤ {op.plan.final_max}" if op.plan.final_max is not None else ""

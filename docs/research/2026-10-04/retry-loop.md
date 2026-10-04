@@ -2,7 +2,7 @@
 
 Dashboard (bazaar-live, 11:03): "Guardrail: official value ceiling 49 cannot reach picaros RET-09 negotiated fills
 from 59 … refused ×99, last now · no longer on sale". Evidence: Postgres `decisions` (SELECT only, ticks 1588-1888),
-`origin/main` 3fd27881. Fix on `fix/retry-loop` (based on `origin/main`; see "PR #291" below).
+`origin/main` 3fd27881. Fix on `fix/retry-loop-on-hunt`, on top of `feat/card-hunt` d6f830cc (PR #291), with Marius's approval.
 
 ## 1. What is retried, and does it reach the game
 
@@ -82,7 +82,9 @@ refused each one **before any send**:
   dealer and card (a new quote), a lower reopening, the latest `round.started`/`day.opened`, our holdings and cash,
   the guardrails and the strategy params. Any change re-evaluates once.
 - Every `REFUSAL_RECHECK_TICKS` (20 ticks = 5 min) it is evaluated again, because an official value can drift
-  without any of those inputs changing; the same refusal then writes no new row. Rows: once per change, not ×99.
+  without any of those inputs changing; the same refusal then writes no new row, except every `REFUSAL_ROW_TICKS`
+  (200 ticks) since its last row, so a lasting refusal stays in the dashboard's last-300-ticks panel (review MED 1).
+  Rows: once per change plus one per 200 ticks, not one per tick.
 - A remembered card the strategy no longer ranks with that dealer (no longer on sale, held, another plan) is
   forgotten; if it comes back it is judged afresh once.
 - Memory only, per process: a redeploy re-evaluates once.
