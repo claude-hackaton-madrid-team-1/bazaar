@@ -1441,6 +1441,20 @@ AT1: legacy restart fixtures used hourlycap0 as 'disable trading', conflicting w
 - Dealer continuation tests previously set a low value before opening; now they lower it after opening so they still exercise mid-conversation revalidation. The new opening fixture initially lost its feed through `parts()`; binding `MarketFeed` made the regression exercise the intended negotiated fills.
 - Depot caught one more pre-opening low-value fixture in `test_ladder_tolerance`: it expected a now-infeasible dealer opening. Reproduced locally (`1 failed, 6 passed`), then lowered the value after opening to preserve the mid-thread tolerance assertion.
 
+### [2026-10-04] build-error — #244 conflicts with the Workshop hardening on main
+The merge conflicted in GUARDRAILS.md, taker, CLI and guardrails because TL1 replaced process-local craft counts
+with shared ledger rows and strengthened busy checks. Keep main's shared accounting, enabled Workshop, fresh
+holdings, settling and event guards; reserve consumed copies before the POST and release them only on definite
+refusal. Refusals still count in the shared hourly cap, as on main.
+
+### [2026-10-04] build-error — #244 full test gate aborted in native psycopg
+The single full pytest run exited 134 at about 33% with `Fatal Python error: Aborted`; the active thread was
+in psycopg transaction entry from `holdings._read_and_store`, while the main thread initialized a test schema.
+This resembles the earlier heavy-load faulthandler incident; the native cause is unconfirmed. The user required
+one full run, so it was not repeated. The focused Workshop tests passed (43); the simulator smoke passed.
+A remaining local `bazaar-pytest` backend was idle in transaction with no live client-port owner; it was
+terminated only after checking its port with lsof. Full-suite completion and coverage remain unverified.
+
 ### [2026-10-04] finding — MM1 market routing and trade visibility
 - Tick1774: Team10's v07 was open with zero fees and an empty direct book. Its LAT04 offer22486 was on Rastro, not v07. Venue owner must never be displayed as the buyer without settlement/offer evidence.
 - `show.agent_decisions` dropped the recipient of our RET07 bid22565 despite the recorded offer naming t02. Explicit destination/context must survive the private Live projection; a posted offer is not a settled sale.
@@ -1448,3 +1462,21 @@ AT1: legacy restart fixtures used hourlycap0 as 'disable trading', conflicting w
 ### [2026-10-04] build-error — MM1
 - Adding a JSON import with an unbounded replacement also changed a function-local import and caused an indentation error; restricted the edit and reused the module import. Cash-counter metadata suite:20passed.
 - MM1 routing tests initially indexed decision status-update rows as if every row had a kind; use `row.get('kind')` when selecting the actual decision. Black/Ruff disagreed on an inline annotation comment; moved the comment above the field.
+
+### [2026-10-04] finding — PL1 pack inventory replenishment
+Omar explicitly prioritised buying/opening packs for team resale over private holding EV. Add pack_restock_enabled with observed22P cap (Abuela thread2670), preserve3/hour, cash, tick and all sale guards. Expected immediately sale-eligible pulls rank inventory; holding EV13.3 versus price22 stays diagnostic and does not claim score. Full fake buy/open/list cycle verifies capability; live conversion remains unverified.
+
+### [2026-10-04] build-error — PL1 fixtures
+Initial regressions used a tuple for string-config protect_page_sets and omitted settle.tick → corrected fixtures to typed contract. Accept test showed only final22, correctly rejected as unchanged opening → supply initial30 then final22 on increasing ticks. Ruff found a long diagnostic string and unordered test import → split literal and sort imports.
+
+### [2026-10-04] finding — TT2 unfilled bids blocked executable asks
+
+At ticks 1813–1814, live taker skipped RET-07 asks at 14 P because our own unfilled bid was 11–12 P. `ask_candidates` treated our proposed price as an executable alternative. TT2 removes that veto, keeps all cash/exposure commitments until cancellation, and excludes only the exact still-open replacement bid's hoped-for card from synthetic holdings. Accepted/queued bids and actual holdings still block another copy.
+
+### [2026-10-04] gotcha — pack replenishment is not holding-value investment
+
+Coordinator's guarded pack negotiation 2670 at ticks 1804–1809 offered 17→20 P; Abuela stayed at 22 P, so no pack was bought. Another CLI attempt around tick 1820 failed `thread_exists` because the live taker owned Abuela's conversation; do not race it. Tick1810 private pack EV was13.3 P. Tick1820 public bid hints covered8/30 mintable commons and9/18uncommons, with gross quoted mean1.30 and5.611 P respectively: Barrio's quoted immediate resale expectation was4.98 P before fees/expiry/protection, not a fill guarantee. Omar clarified that packs replenish inventory for positive-score team sales, not private holding EV or cash ROI; PL1 owns that changed acquisition objective under explicit pack/cash limits.
+
+### [2026-10-04] build-error — TT2 focused test selection and pending holdings
+
+Initial focused commands named nonexistent test_taker_targets.py (and earlier review test_taller_publication.py); no tests ran in those commands. Re-ran actual tracked test files. Keeping the full bid commitment initially also counted its hoped-for card as already held; exclude only that exact still-open bid's expected card while retaining cash/exposure and all real/settling holdings.

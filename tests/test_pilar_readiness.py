@@ -135,8 +135,8 @@ def test_the_taker_rereads_dealers_and_me_every_tick(tmp_path):
 # ---------------------------------------------------------------- (b) the gold pack is never a move today
 
 
-def test_todays_guardrails_cap_packs_at_20():
-    assert load_guardrails().rules.max_price_pack == 20
+def test_todays_guardrails_allow_observed_22p_pack_but_default_stays_conservative():
+    assert load_guardrails().rules.max_price_pack == 22
     assert Guardrails().max_price_pack == 20
 
 

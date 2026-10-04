@@ -62,14 +62,15 @@ def test_held_cards_our_own_offers_and_unknown_venues_are_never_candidates():
     assert ask_candidates(market(), elsewhere, VENUES, PARAMS, set(), {}) == []
 
 
-def test_one_candidate_per_card_the_cheapest_and_our_cheaper_bid_wins():
+def test_one_candidate_per_card_the_cheapest_ask_is_not_blocked_by_our_unfilled_bid():
     offers = board(ask(1, "LAV-08", 30, asset=901), ask(2, "LAV-08", 28, asset=902))
     (only,) = ask_candidates(market(), offers, VENUES, PARAMS, set(), {})
     assert only.offer.id == 2 and only.total == 28 + 3
     from bazaar_agent.agents.market import OpenOffer
 
     ours = OpenOffer(77, "bid", "LAV-08", 25, "rastro", None, 140, 90)
-    assert ask_candidates(market(), offers, VENUES, PARAMS, set(), {"LAV-08": ours}) == []  # our bid is cheaper
+    (c,) = ask_candidates(market(), offers, VENUES, PARAMS, set(), {"LAV-08": ours})
+    assert c.offer.id == 2 and c.replaces_bid == ours
     cheaper = OpenOffer(77, "bid", "LAV-08", 40, "rastro", None, 140, 90)
     (c,) = ask_candidates(market(), offers, VENUES, PARAMS, set(), {"LAV-08": cheaper})
     assert c.replaces_bid == cheaper
@@ -359,6 +360,56 @@ def test_a_cheaper_ask_replaces_our_open_bid(tmp_path):
     t.on_tick(clock())
     assert team.sent == [("accept", 1), ("cancel", 77)]
     assert ledger.spent_since(0) == 19 + 12 - 19  # the bid's spend is refunded
+
+
+def test_a_profitable_ask_above_our_unfilled_bid_is_accepted_and_the_bid_cancelled(tmp_path):
+    team = FakeTeam(offers=[bid(77, "LAV-02", 8)])
+    t, _, ledger = taker(tmp_path, team, FakePublic(boards={"rastro": [ask(1, "LAV-02", 10)]}), live=True)
+    ledger.record("spend", TICK - 5, 1.4, 8, "LAV-02")
+    t.on_tick(clock(tick_seconds=15, next_tick_in=15))
+    assert team.sent == [("accept", 1), ("cancel", 77)]
+    assert ledger.spent_since(0) == 12 and ledger.accepts_in_tick(TICK) == 1
+
+
+def test_accepting_an_ask_keeps_the_uncancelled_bid_in_the_cash_guard(tmp_path):
+    # 20 cash minus the bid's 8 and ask's 12 would leave 0, below the 5P floor.
+    team = FakeTeam(me={**ME, "cash": 20}, offers=[bid(77, "LAV-02", 8)])
+    t, lines, ledger = taker(
+        tmp_path, team, FakePublic(boards={"rastro": [ask(1, "LAV-02", 10)]}), live=True, cash_floor=5
+    )
+    t.on_tick(clock())
+    assert team.sent == [] and ledger.accepts_in_tick(TICK) == 0
+    assert any("cash_floor" in line for line in lines)
+
+
+def test_an_unknown_bid_cancel_keeps_its_spend_committed_after_the_ask(tmp_path):
+    from bazaar_agent.sdk import BazaarError
+
+    class UncertainCancel(FakeTeam):
+        def cancel(self, offer_id):
+            self.sent.append(("cancel", offer_id))
+            raise BazaarError("network", "answer lost", 0)
+
+    team = UncertainCancel(offers=[bid(77, "LAV-02", 8)])
+    t, _, ledger = taker(tmp_path, team, FakePublic(boards={"rastro": [ask(1, "LAV-02", 10)]}), live=True)
+    ledger.record("spend", TICK - 5, 1.4, 8, "LAV-02")
+    t.on_tick(clock())
+    assert team.sent == [("accept", 1), ("cancel", 77)]
+    assert ledger.spent_since(0) == 20 and ledger.accepts_in_tick(TICK) == 1
+
+
+def test_a_bid_that_started_settling_still_blocks_a_second_copy(tmp_path):
+    class SettlingBid(FakeTeam):
+        def my_offers(self):
+            body = super().my_offers()
+            if self.reads.count("my_offers") > 1:
+                body["offers"][0]["status"] = "accepted"
+            return body
+
+    team = SettlingBid(offers=[bid(77, "LAV-02", 8)])
+    t, lines, _ = taker(tmp_path, team, FakePublic(boards={"rastro": [ask(1, "LAV-02", 10)]}), live=True)
+    t.on_tick(clock())
+    assert team.sent == [] and any("already hold LAV-02" in line for line in lines)
 
 
 def test_a_pack_thread_opens_only_on_jevs_yes_with_time_to_ask(tmp_path):

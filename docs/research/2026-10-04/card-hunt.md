@@ -49,9 +49,9 @@ Board numbers are the current blended board. Sunday weighs more at the freeze (0
 ## 3. What was built (PR feat/card-hunt, `BAZAAR_CARD_HUNT`, default on)
 
 The behaviour is described in the module docstring of `src/bazaar_agent/agents/card_hunt.py`:
-- dealer buys only for empty ladder slots;
+- dealer buys only for empty ladder slots, and packs only as restock for resale to teams (#289's `pack_restock`);
 - the probe and the team desk on their deterministic gates;
-- asks below value taken over our own lower bid;
+- asks below value taken over our own lower bid: since #287 this is the taker's own rule, so the hunt no longer switches it;
 - no page bonus at stake on a page that cannot complete (CHA kept);
 - maker dealer sells, still behind `dealer_sell_enabled`, only for empty ladder levels.
 

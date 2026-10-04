@@ -50,12 +50,23 @@ def hunting_taker(tmp_path, **config):
 def test_the_hunt_drops_collecting_buys_and_packs_and_keeps_ladder_slot_buys(tmp_path):
     book = playbook()
     (buy,) = [mv for mv in book.buys if mv.source == "abuela"][:1]
+    assert book.packs and all(mv.strategy == "pack_value" for mv in book.packs)
     moves = [buy, replace(buy, source="chato", ref="LAV-08"), replace(buy, source="picaros"), *book.packs]
     t, lines = hunting_taker(tmp_path)
     run = SimpleNamespace(slots=SLOTS, snap=SimpleNamespace(clock=clock()))
     kept = t._ladder_only(run, moves)  # type: ignore[arg-type]
-    assert [mv.source for mv in kept] == ["chato"]  # abuela full, picaros unknown, packs never
+    assert [mv.source for mv in kept] == ["chato"]  # abuela full, picaros unknown, holding-value packs never
     assert any("card hunt:" in line and "dropped" in line for line in lines)
+
+
+def test_the_hunt_keeps_packs_bought_to_resell_to_teams(tmp_path):
+    book = playbook()
+    collect = book.packs[0]
+    restock = replace(collect, strategy=card_hunt.RESALE_PACKS)  # #289: open and resell the pulls to teams
+    t, _ = hunting_taker(tmp_path)
+    run = SimpleNamespace(slots=SLOTS, snap=SimpleNamespace(clock=clock()))
+    kept = t._ladder_only(run, [collect, restock])  # type: ignore[arg-type]
+    assert kept == [restock]
 
 
 def test_the_hunt_switch_is_on_from_the_cli_and_off_in_code():
@@ -67,13 +78,13 @@ def test_the_hunt_switch_is_on_from_the_cli_and_off_in_code():
 
 
 def test_an_ask_over_our_own_bid_is_taken_only_below_our_value():
+    # #287 made this the taker's own rule (no hunt switch): our lower bid no longer blocks a profitable ask.
     offers = board(ask(1, "LAV-08", 28, asset=901))
     ours = OpenOffer(77, "bid", "LAV-08", 25, "rastro", None, 140, 90)
-    assert ask_candidates(market(), offers, VENUES, PARAMS, set(), {"LAV-08": ours}) == []  # before: wait
-    (c,) = ask_candidates(market(), offers, VENUES, PARAMS, set(), {"LAV-08": ours}, None, True)
+    (c,) = ask_candidates(market(), offers, VENUES, PARAMS, set(), {"LAV-08": ours})
     assert c.replaces_bid == ours and c.surplus >= PARAMS.min_buy_surplus and c.total < c.value
     dear = board(ask(2, "LAV-08", 200, asset=902))
-    assert ask_candidates(market(), dear, VENUES, PARAMS, set(), {"LAV-08": ours}, None, True) == []
+    assert ask_candidates(market(), dear, VENUES, PARAMS, set(), {"LAV-08": ours}) == []
 
 
 def sale(price: int, me: dict, horizon: int | None, keep: frozenset[str] = frozenset()):
