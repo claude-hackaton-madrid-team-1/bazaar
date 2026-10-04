@@ -1425,12 +1425,11 @@ def duel_run(
             days_switch.observe(rows, real)
             if days_switch.verdict != kept.verdict:
                 console.print(
-                    f"  duel days sign: {days_switch.verdict} (duel {escape(ascii(days_switch.duel))}: "
-                    f"{escape(ascii(days_switch.text))})"
+                    f"  duel days sign: {days_switch.verdict} (session {days_switch.session}; "
+                    f"{escape(days_switch.describe())})"
                 )
         except Exception as e:  # noqa: BLE001 - bookkeeping: the duels play this tick with the previous verdict
-            if days_switch.verdict not in ("cost", "reversed", "conflict"):  # a safer verdict found stays
-                days_switch = kept  # never a half-merged `signed` for the policy and the guard
+            days_switch.keep_safer(kept)  # per role: a safer verdict found stays, never a half-merged `signed`
             latch_failed(tick, e)
 
     def read_done_days(tick: int) -> None:
