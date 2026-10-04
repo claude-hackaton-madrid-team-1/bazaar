@@ -12,9 +12,9 @@ for sources:*
 | SEARCH | `docs/research/2026-10-04/bench-search.md` (local branch `feat/bench-search`, `f46edf96`) |
 | PROBE | `docs/research/2026-10-04/mm-probe.md` (branch `research/sat-review-crinoid`) |
 | BOOKS | `docs/research/2026-10-04/bench-books.md` (origin/main) |
-| REV-LA | `_sat-review/review-bench-lookahead.md` (adversarial review of PR #292, verdict SHIP) |
-| BBS | `_night/BENCH_BEAT_STALL.md` (Saturday night) |
-| STATUS | `_sat-review/STATUS.md`, the team's append-only log (lines quoted by time) |
+| REV-LA | `_sat-review/review-bench-lookahead.md` (adversarial review of PR #292, verdict SHIP; outside git) |
+| BBS | `_night/BENCH_BEAT_STALL.md` (Saturday night; outside git) |
+| STATUS | `_sat-review/STATUS.md`, the team's append-only log, lines quoted by time (outside git) |
 | T3 | `docs/transcripts/2026-10-04-invofox-3.md` (organisers' Sunday talk) |
 
 ## TL;DR
@@ -23,13 +23,13 @@ The market-making criterion is 30 % of the game score, split (fitted, not publis
 and **organic** trades between other teams on our venue (7.5) (BASE Q1). On the Market Test we scored exactly the free
 auto stall's level, `bench_points` 0.5, in **all 8 sessions so far** (efficiency 0.854–0.967, BASE Q2 + session 8),
 and so did every other team that kept a working venue: nobody has ever beaten the stall, and two teams (t07, t08)
-scored ~0 in session 8 by having no working matcher (BASE "Session 8"). We found why we tie: our `exact` broker sends
+scored ~0 in session 8: t07 had just swapped its stall for a board with no broker ready, t08's board matched nothing (BASE "Session 8"). We found why we tie: our `exact` broker sends
 the same pairs the stall crosses, and the server refuses any pair whose quotes do not cross (one-shot probe, tick 1692,
 `400 bad_match`), so the only lever left is **which** crossing traders to match and **when** (SIM TL;DR 1–2). We
 recorded the real books (`bench_books`, sessions 7–8), fitted a simulator to them, and built a `lookahead` broker that
 plans over 128 sampled futures; in the calibrated world it scores E[bench_points] 0.64 vs 0.50 (P above the stall
 0.29, P below 0.14), and on a replay of session 8's real book it would have held one cheap seller for a better buyer
-and scored 0.90 in expectation (SIM §4–5). It ships for session 9 (~12:37, the last bench) via PR #292 +
+and scored 0.90 in expectation (SIM §4–5; on drawn hidden limits and lives: that seller's real life is unobserved, so this is a model estimate, §4). It ships for session 9 (~12:37, the last bench) via PR #292 +
 `BAZAAR_BENCH_POLICY=lookahead`, if merged in the window. Organic flow on v19 has been **0 trades all weekend** (PROBE
 §2.3, BASE Q4): routers post on older venues and no buyer ever sat on v19.
 
@@ -171,6 +171,8 @@ gains < 1 % and is often negative (SIM §2).
 3. Whether a held trader can leave before a queued match settles (`settles_at_tick` = T+1; SEARCH caveats).
 4. Whether another team beats the stall in session 9 (then the top-3 mean rises and a small win earns < 1.0).
 5. Whether lookahead's b137 gain is real: seller b137-12's life is censored by our own match.
+6. Whether `/me bench_efficiency` is per session or the running round average. If it is Sunday's round average,
+   session 8 alone was ≈ 2 × 0.895 − 0.967 = 0.823, not 0.895 (Saturday has the same ambiguity, §2 notes).
 
 ## 8. Pitch: market making
 
@@ -197,11 +199,16 @@ Judges' share is 40 %; market making is a scored criterion. No private values be
 |---|---|---|---|---|---|---|---|---|---|
 | Our efficiency | 0.899 | 0.933 | 0.878 | 0.891 | 0.886 | 0.854 | 0.967 | 0.895 | – |
 | Our bench points | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | lookahead |
-| Teams above the stall | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | – |
+| Teams above the stall | 0* | 0* | 0* | 0* | 0* | 0* | 0 | 0 | – |
+
+\* Saturday (sessions 1–6): from the end-of-round board, not per session: every market score above 7.50 belongs to a
+venue with organic trades (PROBE §2.3, tick 1430). Sessions 7–8: per-session leaderboard deltas (BASE).
 
 Policy comparison (calibrated world `cal_normal20`, 300 books; SIM §2): exact 0.500 · edge 0.513 · edge (no guard)
 0.570 · **lookahead 0.642** · oracle 0.932 (E[bench points]).
 
 **The honest story:** we tied the stall all weekend; we found out why (the server checks quotes, so a smarter price
 cannot help, only smarter timing); we built a simulator calibrated on the real books and a broker that plays the
-timing; it is a positive-expectation bet for the last session, not a guarantee (≈ 70 % it ties or loses a little).
+timing. It is a positive-expectation bet for the last session, not a guarantee: in the calibrated sim it ends above
+the stall 29 % of the time, ties 57 % and ends below 14 % (SIM §2), and a session below the stall may cost the whole
+0.5 if the unpublished rule is "zero below" (≈ −1.5 final points; REV-LA MED 2).
