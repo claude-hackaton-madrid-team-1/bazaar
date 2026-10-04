@@ -45,7 +45,20 @@ def trade(team: str = THEM, theirs_raw: float = 6.0) -> Trade:
 class Team(FakeTeam):
     def say(self, tid, text="", price=None, offer=None, topic=None):
         self.sent.append(("say", tid, offer))
-        return {"ok": True, "message": 1, "offer": 700 + len(self.sent)}
+        oid = 700 + len(self.sent)
+        if offer is not None:
+            self.offers.append(
+                {
+                    "id": oid,
+                    "maker": US,
+                    "to": THEM,
+                    "thread": tid,
+                    "status": "open",
+                    "created_tick": self.now.tick,
+                    **offer,
+                }
+            )
+        return {"ok": True, "message": 1, "offer": oid}
 
     def open_thread(self, with_, topic=None, venue=None):
         self.sent.append(("open_thread", with_, topic, venue))

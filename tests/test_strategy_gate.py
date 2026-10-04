@@ -66,6 +66,19 @@ def test_an_error_or_no_jev_keeps_the_strategy_off(tmp_path):
     assert g2.allows(DEALER_SELL, 100, lambda: {}) is False
 
 
+def test_exhausted_tick_does_not_cache_a_rejection_for_the_strategy_window(tmp_path):
+    g, asked = gate(
+        tmp_path,
+        [JevAdvice("undecided", 0.0, reason="no tick budget for jev"), JevAdvice("yes", 0.9)],
+        refresh=120,
+    )
+    assert not g.allows(LADDER_PROBE, 100, lambda: {})
+    assert not g.allows(LADDER_PROBE, 100, lambda: {})
+    assert len(asked) == 1
+    assert g.allows(LADDER_PROBE, 101, lambda: {})
+    assert len(asked) == 2
+
+
 def test_a_broken_state_keeps_the_strategy_off_without_asking(tmp_path):
     g, asked = gate(tmp_path, [JevAdvice("yes", 0.9)])
 

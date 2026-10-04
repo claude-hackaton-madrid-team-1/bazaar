@@ -21,7 +21,7 @@ from tests.test_runtime_hooks import denied, models_of, pre
 from tests.test_runtime_mcp_server import HEADERS, MCP_TOKEN, Clock
 
 APPROVER = "appr-0123456789abcdefghijklmnopqrstuv-XYZ"
-HUMAN = {"approvals", "approve", "revoke"}
+HUMAN = {"approvals", "approve", "revoke", "operator_review", "operator_approve", "operator_execute"}
 RULES = Guardrails(protect_page_sets="LAV,LAT,RET", max_price_rare=95, max_spend_per_game_hour=150)
 TICK = 100  # tests.agent_fakes.clock()
 

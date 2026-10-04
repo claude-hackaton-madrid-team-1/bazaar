@@ -259,6 +259,39 @@ def test_switch_on_opens_one_sell_thread_for_an_unlisted_spare(tmp_path):
     assert "dealer_sell" in kinds
 
 
+def test_dealer_sale_reserves_copy_for_other_writers_and_refreshes_its_value(tmp_path):
+    from bazaar_agent.agents import publication
+    from bazaar_agent.agents.seller import open_commitments
+
+    team = FakeTeam(me=ME_DUP)
+    m, _ = maker(tmp_path, team, live=True, dealer_sell_enabled=True)
+    m.on_tick(clock())
+    assert m.sell_desk.talk is not None
+    asset = m.sell_desk.talk.cand.asset_id
+    pending = publication.with_pending(m.ledger, team.me(), [], "t01", 100, 1.5)
+    assert asset in open_commitments(pending, "t01").listed
+    for copy in team._me["assets"]:
+        if copy["id"] == asset:
+            copy["your_value"] = 118.6
+    team.sent.clear()
+    m.on_tick(clock(tick=101))
+    assert not any(s[0] == "say" and s[2] is not None for s in team.sent)
+
+
+def test_confirmed_closed_dealer_thread_releases_its_inventory_promise(tmp_path):
+    from bazaar_agent.agents import publication
+    from bazaar_agent.agents.seller import open_commitments
+
+    team = WalkingDealer(me=ME_DUP)
+    m, _ = maker(tmp_path, team, live=True, dealer_sell_enabled=True)
+    m.on_tick(clock())
+    assert m.sell_desk.talk is not None
+    asset = m.sell_desk.talk.cand.asset_id
+    m.on_tick(clock(tick=101))
+    pending = publication.with_pending(m.ledger, team.me(), [], "t01", 101, 1.5)
+    assert asset not in open_commitments(pending, "t01").listed
+
+
 def test_switch_on_but_every_dealer_busy_opens_nothing(tmp_path):
     team = FakeTeam(me=ME_DUP, threads=[{"id": 1, "with": "abuela"}, {"id": 2, "with": "chato"}])
     maker(tmp_path, team, live=True, dealer_sell_enabled=True)[0].on_tick(clock())
