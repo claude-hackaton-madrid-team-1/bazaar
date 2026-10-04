@@ -20,8 +20,8 @@ row per change, ticks 159 to 1445), `leaderboard_snapshots` (all 18 teams, every
   + organic 7.5 (briefing, audit). Anything "headroom" below depends on that split and is marked ESTIMATE.
 - Historical settlements below are evidence, not permission to repeat them. Never sell or swap a page's last copy;
   never sell below our server `your_value`, and human approval does NOT waive that floor. These rules override any
-  configured last-copy exception. Keep `max_score_loss_per_move` at `0.001`, no buy-back, and
-  `human_approval_above` at `250`. `dealer_sell_enabled false` means hand commands only after `bazaar impact`.
+  configured last-copy exception. Keep `max_score_loss_per_move` at `0.001` and no buy-back.
+  `human_approval_above` was `250` when this was written; Omar set it to `0` (off) on Sun 4 Oct (`GUARDRAILS.md`). `dealer_sell_enabled false` means hand commands only after `bazaar impact`.
   Dealer sales can lose `neg_points`, so they require the same prospective impact check as other sales.
 
 Sunday schedule correction, 4 Oct: the [live schedule](https://bazaar.causaprima.ai/api/schedule) says

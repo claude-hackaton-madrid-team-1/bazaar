@@ -1,7 +1,8 @@
 # Pitch notes (Sunday presentation)
 
 Short, evidence-backed paragraphs for the Sunday presentation (strategy, how we built it, key
-learnings). One section per task; every number comes from a live run, and its source is named.
+learnings). One section per task; every number names its source and says whether it came from the
+simulator or a live run.
 
 ## N15 — Jev picks the model for every role of the desk
 

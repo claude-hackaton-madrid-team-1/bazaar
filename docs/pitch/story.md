@@ -34,20 +34,20 @@ The four arenas map onto invoice work:
    - `result = |price − limit| × 0.94^rounds`, exactly, on 8 of 8 practice deals.
    - `rounds = min(our priced messages, the rival's)`, on 26 of 26 payloads.
    - So every round of talk costs 6 % of the pie (8 % on Duels II, 10 % on Duels III); a round is one priced message from each side.
-   - On Friday our v1 player countered every tick: 6.85 rounds per deal.
-   - Sources: PLAN.md "Facts", W2a #80.
+   - On Friday our v1 player countered every tick: 6.0 rounds per deal over its 8 deals (6.85 is v1 in the simulated zoo).
+   - Sources: `tests/fixtures/evals/duels_done.json` (Friday's rounds), `docs/night/w2a-duel-zoo-tables.md` (W2a #80).
 2. **Silence is free.** In the 12 practice duels we never answered, rivals conceded by themselves. Accepting their
    best offer would have earned 195 P, against 121.7 P for our v1 replayed on the same duels (W2a #80).
 3. **The scoreboard, reverse-engineered.**
    - A score model fitted only on public data puts us at 8.26 at tick 159, against the official **8.34**.
    - RMSE 0.34 over 38 snapshots; the tick-30 board is matched with MAE 0.47 over 18 teams.
    - It explains why our score fell 10.76 → 8.34 while we did nothing: the other teams' Chato deals raised the
-     top-3 mean (W5 #78).
+     top-3 mean (`docs/night/w5w6-score-redteam-morning.md` §1; `bazaar evals score-sim`).
 4. **The unlock rule.** Level 2 opened after 3 negotiated buys with the previous dealer. Sales don't count, and
    neither does a deal at the opening price (B21 #119, from every `level.unlocked` event).
 5. **Even the clock.**
    - Friday started 80 min late, so game hour 4.0 is not Saturday 09:00: the clock resumes at h 2.65.
-   - We carry both timetables, and a check at 08:55 picks one (B6 #102).
+   - We planned both timetables (`docs/night/saturday-schedule.json`); the clock resumed at h2.65.
 
 ## Act 3: what we built (60 s)
 
@@ -55,19 +55,18 @@ The four arenas map onto invoice work:
   `GUARDRAILS.md`, an executable policy file:
   - a cash floor;
   - price caps per rarity;
-  - spend per game hour;
+  - spend per game hour (switched off on Sun 4 Oct, `max_spend_per_game_hour` = 0);
   - one accept per tick;
   - a kill switch read every tick.
-- **The LLM writes words only.** A red team ran **168 hostile cases** through every path that reads counterparty
-  text: duel messages, dealer threads, venue names, feed payloads, broker notices. Result: **0 binding fields
-  changed** (W5 #78). Planting a bug that reads a number from the rival's text fails 34 of 48 cases, so the tests
+- **The LLM writes words only.** In simulation, a red team ran **168 hostile cases** through every path that reads
+  counterparty text: duel messages, dealer threads, venue names, feed payloads, broker notices. Result: **0 binding
+  fields changed** (`tests/test_redteam_injection.py`). Planting a bug that reads a number from the rival's text fails 34 of 48 cases, so the tests
   bite.
 - **The services.** Taker, maker and duel player run on Railway. They share one Postgres ledger, so the one-accept
-  limit and the spend cap hold across processes and laptops.
+  limit holds across processes and laptops.
 - **The rest:**
   - a full local simulator of the organisers' API (`bazaar-sim`);
-  - OpenTelemetry traces with per-decision evals in Phoenix;
-  - a read-only operator cockpit (B22 #122).
+  - OpenTelemetry traces with per-decision evals in Phoenix.
 - **How we built it overnight.**
   - Up to 20 Claude Code sessions in parallel, each on its own branch and draft PR.
   - An **independent reviewer** session re-ran every claim (r1).
@@ -84,7 +83,7 @@ The four arenas map onto invoice work:
 | v2 replayed on the real duels we ignored | 178.4 vs 121.7 P (the oracle: 195) | W2a #80 |
 | **Not leaking our limit.** Against a rival that estimates it from our offers: | v1 gives its floor away within 6 % by tick 3 in 96 % of duels; v2 in 0 % by tick 3 (41 % by tick 6); against an oracle squeezer, v2 keeps 0.159 of the pie vs v1's 0.071 | B11 #97 |
 | **Ladder.** A floor table per dealer, built from every team's public threads | Abuela uncommons, share of range: 0.84 → **0.945** (model), 0.80 → **0.973** (real replay); 0 repeated prices | W3 #81 |
-| **Market making is mostly about being open.** | Even a clairvoyant broker beats the free stall by only +0.03–0.06 efficiency at p50, so a venue that is open every session matters more than a cleverer matcher | W1a #77, W1b #84 |
+| **Market making is mostly about being open.** | Even a clairvoyant broker beats the free stall by only +0.03–0.06 efficiency at p50, so a venue that is open every session matters more than a cleverer matcher | W1a #77 (`docs/night/w1a-bench-sim.md`); W1b #84 (closed, its report is not on main) |
 | **Honest negative results** | Cross-venue arbitrage on Friday: **0** crossings net of fees across 636 offers; packs: luck never scores | W8, W7 #87 |
 | **Rival models** | an affinity posterior over 720 permutations per team: log loss 1.14 vs 1.39 for a uniform guess | W4 #79 |
 
@@ -105,7 +104,7 @@ The four arenas map onto invoice work:
 
 **What we would do differently:**
 - Read the decay rule on Friday's first duel instead of after it.
-- Ship the cockpit before going live.
+- Ship an operator screen before going live.
 - Merge less while live: every merge redeploys the trading services.
 
 ---
@@ -114,6 +113,6 @@ The four arenas map onto invoice work:
 
 - Our Saturday round score and rank: official `/me` → `score`, plus a leaderboard snapshot.
 - Duels I and II: deals and mean pie share (`bazaar evals report`), with the v1/v2 choice and when it was made.
-- The ladder: best three per level and the levels reached (`bazaar cockpit` → Ladder; `score.ladder_points`).
+- The ladder: best three per level and the levels reached (`score.ladder_points`).
 - The Market Test: whether the free stall scored for us (gate G3) and the sessions with a venue.
 - Saturday's clock column (resume or jump) and what G0 saw at 08:55.

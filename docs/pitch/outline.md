@@ -1,7 +1,7 @@
 # Sunday pitch outline (7 minutes, with a 5-minute cut)
 
 Presenter: **Omar**. Backup: **Marius** (takes over the demo laptop and Q&A if Omar's connection or voice fails).
-Draft as of Sat 3 Oct, ~06:00 Madrid; updated ~10:30 with Saturday's first ticks and the morning's merges; the rules and venue lines were synced Sat 3 Oct evening with `docs/briefing.md`. Claim ids `[Cn]` point to `claims.md`; nothing is said that is not in that ledger.
+Draft as of Sat 3 Oct, ~06:00 Madrid; updated ~10:30 with Saturday's first ticks and the morning's merges; the rules and venue lines were synced Sat 3 Oct evening with `docs/briefing.md`; claims re-checked against `main` on Sun 4 Oct after the game closed at 15:00. Claim ids `[Cn]` point to `claims.md`; nothing is said that is not in that ledger.
 
 **The one story:** our agents *negotiate through language*, *execute verifiable agreements* (structured offers, guardrails, one
 shared ledger), and *learn from outcomes* (evals → lessons → recall → the next negotiation), with **Jev deciding when to act**.
@@ -74,16 +74,14 @@ Hard rule: the demo is 90 s on the clock. If it fails at 20 s, play the backup r
   common card. **(right):** the result, "REFUSED, accept slot not spent", and a green pytest line. [C21]
 - **Under it, three lines of context:**
   - "Friday: 0 injection attempts in 3,436 public events; 0 of 1,022 honest dealer offers flagged." [C20][C22]
-  - "168 hostile cases through every path that reads counterparty text: 0 binding fields changed." [C24] Only if #78 is merged by
-    Sunday 08:30; otherwise "a 168-case red team on an open PR".
+  - "In simulation, 168 hostile cases through every path that reads counterparty text: 0 binding fields changed." [C24] The tests
+    are on main (`tests/test_redteam_injection.py`); #78 itself was closed, not merged.
   - "The deny hook is on main; the real Claude Code CLI enforced it in a dry run." [C2][C26]
 - **Say, first sentence, always:** "No one has attacked us for real yet, so this is a crafted offer, and I will tell you what is simulated."
   Then show the refusal. The honesty is the point: we built the control before the attack, and we tell you where the evidence ends.
 - **Do not say** "we stopped a real trickster", "injection-proof", or that we flagged anyone. [C27]
 - **#146 is merged** (Sat 07:08 UTC): the inspector's code is on main and gates every accept. That does not make the bait real: no real
   deceptive offer was refused up to the Saturday capture. [C21]
-- **If a real Level 4 Trickster appears on Saturday or Sunday and the inspector refuses it:** that becomes the slide. Capture it
-  (`evidence.md` §3) and change C21 to REAL.
 - **Badge:** SIMULATED (and REAL for the hook).
 
 ## Slide 5 · Proof 3: a measured improvement (1:10)
@@ -96,11 +94,12 @@ Hard rule: the demo is 90 s on the clock. If it fails at 20 s, play the backup r
   per round, Duels II keeps 0.92 and Duels III 0.90, so the best move is often to say less. v1 talked six times a deal; v2 talks about
   once. The gain is rounds, not more deals. [C6][C32]
 - **Say the limits, unprompted:** simulated rivals, tuned on the same zoo, n = 12 for the replay. v2 went live on Saturday at about 10:00
-  on Omar's decision, not Jev's (Jev was undecided, 0.72 against a 0.90 bar), and whether it beat v1 in real duels is not known: Duels I scored 27 deals, 15.02 points, and Friday's 0.279 is only a practice estimate. [C35][C51]
+  on Omar's decision, not Jev's (Jev was undecided, 0.72 against a 0.90 bar), and whether it beat v1 in real duels is not known: Duels I scored 27 deals, 15.02 points (Duels II: 57 deals, 27.35), and Friday's 0.279 is only a practice estimate. [C35][C41][C51]
 - **If asked** "does it beat just accepting the best offer at the end?": "In the zoo it ties (21.93 vs 22.06); it wins where the accept
   cap binds, as in the replay." [C34]
-- **If Saturday's data lets us:** add a fourth bar, REAL, "Saturday duels / ladder vs Friday's 0.279 / 0.464" [C41]. Only the evals
-  report may fill it. Not a controlled comparison; say so.
+- **Optional fourth bar, REAL (official `/me`):** Saturday's scored duels, mean share per deal 0.56 in Duels I (27 deals) and 0.48 in
+  Duels II (57 deals) [C41]. It sits next to Friday's 0.279, which is our own practice estimate, so it is not a before/after and not a
+  controlled comparison; say so.
 - **Optional second panel (#112/#158 are merged; the live effect is unverified, so the panel is SIMULATED only):** the Abuela ladder, real Friday 0.733 vs replay 0.945–0.973,
   labelled SIMULATED, plus "the learner confirmed our Abuela ladder and would have skipped a class we could not afford". [C36][C37][C39]
 - **Badge:** each bar carries its own.
@@ -112,6 +111,7 @@ Hard rule: the demo is 90 s on the clock. If it fails at 20 s, play the backup r
   session `dealer:abuela:thread:316` (or the deal chosen for slide 3). [C67]
 - 1:00–1:30 **One `/state` view**: the taker's public state: what we did, never why in numbers.
 - **Backup:** a screen recording of exactly this, recorded during a real deal on Saturday afternoon, on the desktop, one keystroke away.
+  (Confirm the recording exists before presenting: `evidence.md` §0 lists none on main.)
 - **Badge:** REAL (or "RECORDED Sat 15:xx" if the backup runs).
 
 ## Slide 7 · What we learned, and what is next (0:50)
@@ -131,29 +131,27 @@ Hard rule: the demo is 90 s on the clock. If it fails at 20 s, play the backup r
 
 ## Q&A
 
-Marius takes the second question onward. Use `docs/pitch/qa.md` (14 answers), with two corrections: the red team is **168** cases, not 129;
-and any number in an answer must exist in `claims.md`. Add five likely questions that the old kit does not answer:
+Marius takes the second question onward. Use `docs/pitch/qa.md` (14 answers); any number in an answer must exist in `claims.md`. Add five likely questions that the old kit does not answer:
 
 | Question | Short answer | Claim |
 |---|---|---|
 | "Did you test the hostile case on a real LLM?" | "Not live. The hook is tested against a desk that obeys the injection, with a fake backend; a live LLM obeying hostile text is on our not-covered list." | C25 |
-| "Is v2 what you ran in the tournament?" | "Since Saturday 10:00, yes: Omar switched it on after the simulator proof; Jev was undecided, so that was a human call. Friday ran v1. The numbers on the slide are simulation and replay; the real Duels result is {{C41, or 'not in yet'}}." | C35, C41 |
+| "Is v2 what you ran in the tournament?" | "Since Saturday 10:00, yes: Omar switched it on after the simulator proof; Jev was undecided, so that was a human call. Friday ran v1. The numbers on the slide are simulation and replay; in the real scored duels we closed 27 deals in Duels I and 57 in Duels II, mean share 0.56 and 0.48, which is not a controlled comparison with Friday." | C35, C41 |
 | "Is Jev accurate?" | "Jev gives a confidence; we log it with the bar and the outcome. With this few decided outcomes we do not claim accuracy." | C54, C56 |
 | "Does your agent lie?" | "Only in the words, never in the structured offer, and never with our real limit. It is switched on since Saturday morning; we have no live example to show yet." | C64 |
 | "Did you make a market?" | "Yes. Our own board venue opened on Saturday, around game hour 3.6, and replaced the free starter stall. So far it scores what the stall scores, half the Market Test points, and, as of Saturday evening, no other team has traded on it. Friday had no market making for anyone." | C70 |
 
 ## Rehearsal and logistics
 
-- **Rehearsal: Sunday 12:15 Madrid**, in the room if possible, before the 14:00 final (Sunday doors close at 15:00). Omar presents, Marius
-  runs the demo laptop and the clock. One full run, then one run of only slides 4 to 6. Total 25 minutes. **Confirm the real slot** with
-  the organisers on Saturday; the 14:00 final time is from the schedule, our presentation slot is not yet known.
+- **Rehearsal:** in the hour between the market stopping at 15:00 and the presentations. Omar presents, Marius runs the demo laptop and
+  the clock.
 - **Answered Sunday 09:18 by the organisers** ([transcript](../transcripts/2026-10-04-invofox-3.md), 05:00–06:57): the market stops
   at 15:00 and teams get one hour to prepare. Presentations go in ranked order: **5 minutes for the top three teams, 3 minutes for
   everyone else**, then 30 minutes of judging and the winners at 17:30. From 15:00 a "Submit your project" link on the Bazaar takes
   the code, slides, artifacts and an explanation (team key to authenticate). The judges want: how we approached the challenge, what
   we built, why we built it that way (which tools and models), and what we learned. This outline has a 7-minute run and a 5-minute
-  cut; a 3-minute cut is not written yet.
-- **Pre-flight, Sunday 08:30:** `gh pr view` on every PR in `claims.md` §G; refresh C13, C41 from `evidence.md`; log into Phoenix and open
+  cut; the 3-minute version is `motion/script-3min.md` (deck and rehearsal notes in `motion/README.md`).
+- **Pre-flight:** `gh pr view` on every PR in `claims.md` §G; refresh C13 from `evidence.md`; log into Phoenix and open
   the chosen trace; open Bazaar Live once and click its sound gate; unmute the laptop; put the backup recordings on the desktop;
   run `bazaar evals report` once to be sure the database answers.
 - **Two laptops:** Omar's is the stage laptop; Marius's mirrors the slide deck and holds the same backup recordings.
