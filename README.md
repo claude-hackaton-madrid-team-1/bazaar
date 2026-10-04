@@ -11,7 +11,7 @@
 >   public moves. The game ended Sun 4 Oct 15:00, so live mode is idle: add `&mock=1&speed=2` for a recorded replay
 > - **One real result:** Duels I, 27 deals, 15.02 official duel points ([claim C35](docs/pitch/claims.md)).
 >   We claim no rank and no live learning gain.
-> - **Size:** ~71k lines of Python in `src/`, ~62k in `tests/`; 5,755 tests pass and 158 skip without Postgres (Sun 4 Oct)
+> - **Size:** ~71k lines of Python in `src/`, ~62k in `tests/`; 5,882 tests pass, 0 fail (full suite with Postgres, Sun 4 Oct)
 > - **Try it without a game key**, two terminals: `SIM_TICK_SECONDS=2 SIM_DATABASE_URL=memory uv run bazaar-sim serve`,
 >   then `BAZAAR_SIM=local uv run bazaar agent taker --max-ticks 5` (a dry run)
 
