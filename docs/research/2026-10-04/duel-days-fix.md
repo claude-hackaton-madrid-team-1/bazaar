@@ -7,7 +7,9 @@ Branch `fix/duel-days-stuck` (local, from `origin/main` 235f296e). Written 09:10
 - **Deadline.** Duels III is at game hour 15.367. Since about 09:20 the clock runs 1:1 with wall time (15 s ticks;
   tick 1485 = 13.796 h at 09:24:52), so Duels III starts at about **10:59**. The fix must be deployed by about
   **10:50**. Benches start at 14.65 h (about 10:16) and 15.0 h (about 10:37) and last 16 ticks (4 min) each. Deploy
-  in a gap outside them: now to 10:14, 10:21 to 10:35, or 10:42 to 10:50.
+  in a gap outside them: now to 10:14, 10:21 to 10:35, or 10:42 to 10:50. These times assume no further pause (the
+  clock was paused 09:06–09:11). Re-check `/api/clock` before merging: while `paused` is false, Duels III starts
+  (15.367 − `t_hours`) hours from now.
 - **Root cause.** The real rule depends on the role. Both roles get a positive weight. The seller's text says "each
   delivery day adds this much cash to your side" and the buyer's says "each delivery day costs you this much cash".
   The code had one latch for both roles. During Duels II it read the buyer text as `cost`, then read a scored seller
@@ -96,6 +98,8 @@ Branch `fix/duel-days-stuck` (local, from `origin/main` 235f296e). Written 09:10
   - The defaults of existing params.
   - Corrupt files read as `conflict` until a session is known.
   - The rollback on a failed observe, now per role (`DaysLatch.keep_safer`).
+- **Blast radius.** Buyer duels behave exactly as on Saturday: the worst case, which for buyers is the truth. Only
+  seller duels change, and only once signed.
 - **Not shipped.** A "non-zero days when unsure" fallback. Days are a true cost for buyers, and only the seller side
   was measured. It would be untested logrolling, so it is left as future work.
 
@@ -154,8 +158,8 @@ same path. It runs dry unless `BAZAAR_LIVE=1`.
 
 1. Choose the seller setting:
    - (a) Merge `fix/duel-days-stuck` as is (`duel_days_signed_roles = none`, auto only).
-   - (b) Merge `fix/duel-days-stuck-seller` instead. It is this branch plus one GUARDRAILS.md line, commit
-     `2dd9be09` (`duel_days_signed_roles = seller`). The full suite passes on both branches (5317).
+   - (b) Merge `fix/duel-days-stuck-seller` instead. It is this branch plus one GUARDRAILS.md line, its top commit
+     (`duel_days_signed_roles = seller`). The full suite passes on both branches (5317).
 2. Push, open a PR, wait for CI to pass, and merge in a gap outside the benches (see the deadline in the TL;DR).
    Every merge to main redeploys bazaar-duels, bazaar-taker, bazaar-maker and bazaar-mcp, so a 1–2 minute restart of
    all of them is the usual cost.
