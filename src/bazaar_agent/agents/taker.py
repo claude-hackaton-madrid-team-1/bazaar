@@ -22,6 +22,7 @@ open and resume when the switch goes off. Dry run (the default) sends nothing an
 
 from __future__ import annotations
 
+import json
 import math
 import re
 import time
@@ -1218,9 +1219,23 @@ class Taker:
         packs = [p for p in sealed_packs(run.snap.me) if p.asset_id not in self._pack_refused]
         if not packs:
             return
-        clock = run.snap.clock
-        offers = publication.with_pending(self.ledger, run.snap.me, run.offers, run.snap.us, clock.tick, clock.t_hours)
-        committed = open_commitments(offers, run.snap.us).listed
+        # This is a tick snapshot, not settlement evidence: never reconcile or release promises here.
+        pending: dict[str, dict[str, Any]] = {}
+        for kind, item in self.ledger.publication_rows():
+            if kind == "publication_pending":
+                row = json.loads(item)
+                if row["maker"] == run.snap.us and row.get("world", "unknown") == getattr(
+                    self.ledger, "world", "unknown"
+                ):
+                    pending[row["token"]] = row
+            elif kind == "publication_release":
+                pending.pop(item, None)
+        committed = set(open_commitments(run.offers, run.snap.us).listed)
+        committed.update(
+            a["id"] if isinstance(a, dict) else a
+            for row in pending.values()
+            for a in row.get("give", {}).get("assets", [])
+        )
         packs = [p for p in packs if p.asset_id not in committed]
         if not packs:
             return

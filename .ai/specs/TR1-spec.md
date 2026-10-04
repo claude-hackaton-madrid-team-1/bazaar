@@ -6,7 +6,8 @@ Source: local backlog. Omar asks agents to acquire inputs for profitable team ne
 
 1. Search all eligible swaps once and rank their expected exchange surplus before album proximity or rival rank. Existing card/cash/fee valuation, freshness, fairness, blocklist and guards remain authoritative.
 2. Preserve the existing dealer/team ordering and fresh commitment checks; no additional API/model calls. Message reordering is deferred because the later dealer context would need safe cash-promise reconciliation.
-3. Verify actor behavior and safety with focused tests, then independent review and the coordinator-owned full gate/CI.
+3. Replenishment cap30 permits the observed negotiated24 P final; pack checks must retain durable promised assets without reconciling them from stale snapshots.
+4. Verify actor behavior and safety with focused tests, then independent review and the coordinator-owned full gate/CI.
 
 ## Evidence
 
@@ -14,6 +15,8 @@ Real database snapshots: at tick1824 neg_points increased 0→3.5. Trade outcome
 
 Implementation: TeamDesk._trades uses one unrestricted-page plan; _priority puts Trade.expected first. Page information remains valuation context and equal-gain tie-breaking. Taker ordering is unchanged. No new API calls or model calls.
 
-Verified focused output: `158 passed in 1.08s` (taker, team_desk, team_desk_jev, team_desk_partners, team_desk_blocklist). Actor regression opens higher expected-gain t10 even when t08 answered before and ranks weaker.
+Verified focused output: `107 passed in 0.71s` (team_desk, team_desk_jev, team_desk_partners, team_desk_blocklist), after reverting message reordering. Actor regression opens higher expected-gain t10 even when t08 answered before and ranks weaker.
 
-Honest implementation: 2/3 acceptance criteria verified (67%); criterion3 partial until independent review and full gate/CI. Unverified: production fill rate, additional negotiation points and rollout. Could-not-do: no live writes/deployment performed; coordinator owns rollout.
+Honest implementation: 3/4 acceptance criteria verified (75%); criterion4 partial until independent review and full gate/CI. Unverified: production fill rate, additional negotiation points and rollout. Could-not-do: no live writes/deployment performed; coordinator owns rollout.
+
+Pack slice evidence: `50 passed in 0.44s` (pack/supply), including a negotiated24 P acceptance under cap30 and unchanged durable reservations for stale/missing or already-synthetic assets. Config readiness: `12 passed in 0.60s`. Mypy2 source files clean; Ruff/Black/format7 files pass. Pack opening now folds pending asset IDs read-only; no reconciliation or extra API calls.

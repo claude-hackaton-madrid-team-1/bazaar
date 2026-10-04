@@ -1492,3 +1492,9 @@ Independent review reproduced a dealer bid after a new team cash promise using t
 
 ### [2026-10-04] gotcha — TR1 message-order change withdrawn after review
 The attempted team-before-dealer ordering needs more than merging pending rows: existing local accept commitments can be double-counted, and stale holdings can incorrectly release a new asset+cash promise. Coordinator chose the smaller safe scope: restore original dealer/team ordering and remove its new reconciliation. TR1 ships only one all-page swap plan and expected-gain-first ranking; prior text describing reordered messages is superseded by this entry.
+
+### [2026-10-04] finding — replenishment ran; old 22 P cap blocked the new final
+Coordinator observed autonomous thread2712 opened at tick1878, progressed17→21, then walked at tick1883 because Abuela's final24 exceeded max_price_pack22. No pack purchase was proven. User's explicit replenish-to-trade objective authorizes cap30 (the observed opening), with the existing never-accept-opening behavior, three/hour quota and cash protections retained. TR1 updates the cap; it does not assume the earlier22 quote is permanent or claim packs immediately score.
+
+### [2026-10-04] build-error — pack promise snapshot is read-only
+Review found pack opening passed a stale snapshot to publication reconciliation, which could release a promise for a newly held card or treat a synthetic promise as its own observed offer. The pack filter now reads durable pending asset IDs without reconciling or releasing anything; explicit release rows alone clear those exclusions. First regression caught attempted update of a frozenset; materializing a set fixes the local merge. No game read or write added.

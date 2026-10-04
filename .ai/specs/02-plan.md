@@ -811,4 +811,6 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 
 - Spec: [TR1-spec.md](TR1-spec.md).
 - One all-page swap search; expected gain before album/rival-rank ties. Existing dealer/team message ordering and commitment safety remain unchanged.
-- Focused 158 tests passed; independent review/full gate and rollout pending coordinator.
+- Focused 107 ranking/team tests passed after withdrawing message reordering; independent review/full gate and rollout pending coordinator.
+
+- TR1 pack follow-up: cap30 permits observed final24; pack snapshot reads promised asset IDs without reconciling durable reservations. Pack/supply50 and config12 tests pass.
