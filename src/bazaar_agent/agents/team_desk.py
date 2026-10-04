@@ -31,7 +31,7 @@ from typing import Any
 from bazaar_agent import affinity as af
 from bazaar_agent import impact_board
 from bazaar_agent import team_affinity as ta
-from bazaar_agent.agents import publication
+from bazaar_agent.agents import card_hunt, publication
 from bazaar_agent.agents.market import BoardOffer, Venue, parse_offer
 from bazaar_agent.agents.runtime import JevAdvice, Recorder, no_jev
 from bazaar_agent.agents.seller import (
@@ -303,8 +303,10 @@ class TeamDesk:
         ledger: LedgerStore | None = None,
         affinity: ta.AffinityBook | None = None,
         today: Callable[[], str] = ta.game_day,
+        hunt: bool = False,
     ) -> None:
         self.team, self.rules, self.rec, self.log, self.live = team, rules, rec, log, live
+        self.hunt = hunt  # card hunt (`card_hunt.py`): the deterministic gate instead of Jev, more team threads
         self.ledger = ledger  # the shared ledger: spend we add, listings we post (the maker's budget)
         self.ladder, self.words, self.env, self.plan_ttl = ladder or Ladder(), words, env, plan_ttl_ticks
         self.talks: dict[int, Talk] = {}
@@ -940,8 +942,13 @@ class TeamDesk:
         dealers = v.dealer_in_use
         if dealers is None:
             dealers = sum(t.get("kind") == "dealer" and t.get("status", "open") == "open" for t in v.threads)
-        reserve = max(0, self.rules.team_threads_dealer_reserve - dealers)
-        room = min(self.rules.team_threads_max_open - team_open, v.max_threads - v.in_use - reserve)
+        max_open, dealer_reserve = (
+            card_hunt.desk_limits(self.rules)
+            if self.hunt
+            else (self.rules.team_threads_max_open, self.rules.team_threads_dealer_reserve)
+        )
+        reserve = max(0, dealer_reserve - dealers)
+        room = min(max_open - team_open, v.max_threads - v.in_use - reserve)
         if room <= 0:
             return
         busy_teams = {self._other(t, v.us) for t in self._team_threads(v)}
@@ -1053,9 +1060,13 @@ class TeamDesk:
     ) -> tuple[bool, JevAdvice | None, str]:
         """Jev `team_swap_worth_it` on a swap every rule already allows: only a decided yes at or above
         `team_swap_jev_min_confidence` sends. Undecided, no, a timeout (`jev_timeout_s` makes it undecided), no
-        tick budget, or an error: nothing is sent (fail closed). Off (`team_swap_jev_gate = false`): allowed."""
+        tick budget, or an error: nothing is sent (fail closed). Off (`team_swap_jev_gate = false`): allowed.
+        Card hunt: allowed without asking. Every caller has already passed the deterministic gate (`_guard` with the
+        fairness `judge` before an open or a proposal, `guard_accept` and `judge` before an accept)."""
         if not self.rules.team_swap_jev_gate:
             return True, None, "jev gate off"
+        if self.hunt:
+            return True, None, "card hunt: deterministic gate (guardrails + fairness judge), no Jev"
         try:
             advice = v.jev(self.swap_state(v, trade, cash, fee, thread, step, kind))
         except Exception as e:  # noqa: BLE001 — a Jev failure refuses the swap, never the tick

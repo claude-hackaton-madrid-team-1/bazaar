@@ -34,6 +34,7 @@ from bazaar_agent import (
 )
 from bazaar_agent import telemetry as tm
 from bazaar_agent.agents import dealer_finals
+from bazaar_agent.agents.card_hunt import CARD_HUNT_ENV, CARD_HUNT_HELP
 from bazaar_agent.config import REPO_ROOT, ConfigError, Settings, load_settings
 from bazaar_agent.evals import cli as evals_cli
 from bazaar_agent.evals.model import EVERY_TICKS
@@ -3227,6 +3228,7 @@ def agent_taker(
         help="Offers other teams address to us (read from /api/me/offers, no extra request): asks (default: take "
         "their asks like a board ask), all (their bids too, through the sell guards), off. Any other value: off",
     ),
+    card_hunt: bool = typer.Option(True, "--card-hunt/--no-card-hunt", envvar=CARD_HUNT_ENV, help=CARD_HUNT_HELP),
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
     evals_every: int | None = typer.Option(None, "--evals-every", min=0, help=EVALS_EVERY_HELP),
@@ -3268,7 +3270,9 @@ def agent_taker(
             swap_jev=_swap_jev(settings, rules) if jev else no_jev,  # no Jev: the team desk sends no swap
             strategy_jev=_strategy_jev(settings, rules) if jev else None,  # no Jev: no ladder probe (SG1)
             words_fn=llm_cli.words_for(settings, rules, template_words),
-            config=TakerConfig(max_dealer_threads=threads, accept_bids=accept_bids, addressed=mode),
+            config=TakerConfig(
+                max_dealer_threads=threads, accept_bids=accept_bids, addressed=mode, card_hunt=card_hunt
+            ),
             cards=_cards_heartbeat(kw, settings),
             news=_news_sentinel(kw, settings),
             personas=_persona_book(kw, shared),
@@ -3308,6 +3312,7 @@ def agent_maker(
         help="Address our bids for wanted cards to the teams holding a spare, stepping up to our ceiling, holder "
         "after holder (BAZAAR_OUTREACH_BIDS=0: off)",
     ),
+    card_hunt: bool = typer.Option(True, "--card-hunt/--no-card-hunt", envvar=CARD_HUNT_ENV, help=CARD_HUNT_HELP),
 ) -> None:
     """Every tick: our venue's broker (and its one opening), then asks for sell candidates and bids for missing
     cards; reprice or cancel stale offers."""
@@ -3334,7 +3339,7 @@ def agent_maker(
             sell_market=sell_market,
             strategy_jev=_strategy_jev(settings, kw["rules"]) if jev else None,  # no Jev: no new dealer sell thread
             latest_matrix=matrix,
-            config=MakerConfig(counter_bids=counter_bids, outreach_bids=outreach_bids),
+            config=MakerConfig(counter_bids=counter_bids, outreach_bids=outreach_bids, card_hunt=card_hunt),
             **kw,
         )
 

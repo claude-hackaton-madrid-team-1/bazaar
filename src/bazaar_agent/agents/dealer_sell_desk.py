@@ -183,6 +183,17 @@ def candidates(
     return sorted(out, key=rank)
 
 
+def ladder_slot_sells(
+    found: Sequence[Candidate], levels: Mapping[str, int | None], deals: Mapping[str, int] | None
+) -> list[Candidate]:
+    """Card hunt: only the candidates that fill an empty ladder slot today (a known level, not full). Unknown
+    deals (None): none, fail closed: a sale to a dealer scores only as a ladder slot."""
+    if deals is None:
+        return []
+    full = full_levels(levels, deals)
+    return [c for c in found if c.level is not None and c.level not in full]
+
+
 def weighted_gain(c: Candidate, weight: float) -> float:
     """The rank of a candidate under the persona model: the dealer's typical fill × its weight, minus our loss."""
     return round(c.expected * weight - c.value, 1)
@@ -520,8 +531,13 @@ class SellDesk:
         load: Callable[[Any], SellMarket | None] | None = None,
         gate: StrategyGate | None = None,
         learnings: Any = None,
+        hunt: bool = False,
     ) -> None:
         self.team, self.rules, self.rec, self.live, self.log = team, rules, rec, live, log
+        # Card hunt: a new sell thread only where it fills an empty ladder slot (a known level with fewer than
+        # three scored deals today), opened on the desk's own plan (a spare copy, never an only copy; floor, fills)
+        # without Jev's yes. Still only behind `dealer_sell_enabled`.
+        self.hunt = hunt
         self.learnings = learnings  # a `LearningStore` for the dealers' memory; None: the feed window's words only
         self.hooks, self.load = hooks, load
         self.gate = gate  # Jev `dealer_sell_duplicates_worth_it` (SG1): None = no Jev, no new sell thread
@@ -664,7 +680,7 @@ class SellDesk:
         self.opened_at = [(h, d) for h, d in self.opened_at if h > clock.t_hours - 1.0]
         if len(self.opened_at) >= self.rules.dealer_sell_max_per_game_hour:
             return
-        if not self.gate_on(snap, left):
+        if not self.hunt and not self.gate_on(snap, left):
             return
         market = self.market_for(snap)
         threads = [t for t in self.team.my_threads("open").get("threads") or [] if isinstance(t, dict)]
@@ -697,6 +713,8 @@ class SellDesk:
             deals=deals,
         )
         found = [c for c in found if self._retry_ok(c, clock)]
+        if self.hunt:
+            found = ladder_slot_sells(found, dealer_levels(market, personas), deals)
         if not found:
             return
         c = found[0]

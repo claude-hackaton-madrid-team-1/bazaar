@@ -35,7 +35,7 @@ from typing import Any, Literal
 from bazaar_agent import buy_targets, deploy_guard, move_impact
 from bazaar_agent.activity import ActivityWatch
 from bazaar_agent.affinity import AffinityMap
-from bazaar_agent.agents import publication
+from bazaar_agent.agents import card_hunt, publication
 from bazaar_agent.agents.accept_gate import Gate, GateKind, bid_gate, board_gate, dealer_gate, swap_gate
 from bazaar_agent.agents.bluff import Choice, Counterparty, TacticBook, message_id
 from bazaar_agent.agents.dealer import (
@@ -226,6 +226,10 @@ class TakerConfig:
     # schedule, read by the news sentinel): the duels take the team's accept slot and the bench wants the request
     # budget. A thread already open goes on. No price changes.
     schedule_guard: bool = True
+    # Card hunt (`card_hunt.py`, BAZAAR_CARD_HUNT): dealer buys only for empty ladder slots, the probe and the team
+    # desk on their deterministic gates, packs only as restock for team resale, no bonus at stake on a page that
+    # cannot complete. Off here (code default); the CLI turns it on unless BAZAAR_CARD_HUNT=0.
+    card_hunt: bool = False
 
 
 FLAGS_FILE = "flags.jsonl"  # flags sent (or that may have landed), one per message, across restarts
@@ -651,7 +655,9 @@ class Taker:
         self._quiet: dict[int, int] = {}  # open dealer thread of ours with no bid standing -> first tick seen so
         # Swap threads with other teams (N17), off by default; it books spend and listings in the shared ledger.
         # AF1: the desk asks teams their multipliers and stores what they say (and what we infer) off the tick.
-        self.team_desk = TeamDesk(team, rules, self.rec, log, live, ledger=ledger, affinity=affinity)
+        self.team_desk = TeamDesk(
+            team, rules, self.rec, log, live, ledger=ledger, affinity=affinity, hunt=self.config.card_hunt
+        )
         self._desk_ranks_tick: int | None = None
         # Jev's answer per unchanged offer state (GUARDRAILS.md `jev_cache_ticks`, 0 = ask every time)
         self.jev_cache: VerdictCache[JevAdvice] = VerdictCache(rules.jev_cache_ticks)
@@ -1148,6 +1154,8 @@ class Taker:
                 ctx,
                 asset_id=copy_id,
                 unavailable=frozenset(listed | sold),
+                page_horizon=card_hunt.PAGE_HORIZON if self.config.card_hunt else None,
+                keep_sets=card_hunt.KEEP_SETS,
             )
             if op is not None and op.ours >= run.params.sell_min_surplus:
                 out.append(bid_proposal(op, copy_id, o))
@@ -1450,6 +1458,8 @@ class Taker:
                 -boosted_score(mv, run.boost),
             ),
         )
+        if self.config.card_hunt:
+            moves = self._ladder_only(run, moves)
         busy = {str(t.get("with")) for t in threads} | set(self.convs)
         moves = self._unblocked(run, moves, busy)
         moves = self._persona_shaped(run, moves, busy)
@@ -1482,6 +1492,28 @@ class Taker:
                 busy_items.add(op.item)
                 room -= 1
 
+    def _ladder_only(self, run: _TickRun, moves: list[StrategyMove]) -> list[StrategyMove]:
+        """Card hunt: a dealer buy only where it fills an empty ladder slot this round (collecting from dealers
+        never moves `neg_points`). A pack only when it is restock inventory for resale to teams (`pack_restock`,
+        GUARDRAILS `pack_restock_enabled`): that is team trading; a pack bought for its holding value is dropped.
+        Said once per tick when it drops something."""
+        slots = run.slots or LadderSlots(dealer_levels(run.snap.dealers), ladder_deals(run.snap.events, run.snap.us))
+        kept = [
+            mv
+            for mv in moves
+            if (mv.side == "buy" and card_hunt.fills_slot(mv.source, slots))
+            or (mv.side == "pack" and mv.strategy == card_hunt.RESALE_PACKS and self.rules.pack_restock_enabled)
+        ]
+        if len(kept) < len(moves):
+            dropped = Counter(str(mv.source) for mv in moves if not any(mv is k for k in kept))
+            self.log(
+                f"tick {run.snap.clock.tick} taker: card hunt: {len(moves) - len(kept)} dealer move(s) dropped "
+                f"(no empty ladder slot, or a pack not for resale): "
+                f"{', '.join(f'{d} {n}' for d, n in sorted(dropped.items()))}; "
+                f"ladder {slots.facts()}"
+            )
+        return kept
+
     def _with_probes(
         self, run: _TickRun, book: Playbook, ctx: Context, threads: list[dict[str, Any]], market: Market
     ) -> Playbook:
@@ -1500,12 +1532,17 @@ class Taker:
         floor = effective_cash_floor(self.rules, ctx)
         room = self.rules.spend_room(ctx.cash - floor, ctx.spent_last_hour)
         opens = opening_asks(market, run.snap.events, run.snap.dealers)
-        if not plan_probes(market, opens, self.rules, room, skip, slots=slots):
+        free = plan_probes(market, opens, self.rules, room, skip, slots=slots)  # no value read yet
+        if not free:
             self._empty_slots(run, slots, ())
             return book
+        if self.config.card_hunt:  # one dealer per tick: at most one official value read (`GET /api/me/value`)
+            skip = skip | {p.dealer for p in free[1:]}
         state_key = holdings_key(run.snap.me)
-        if gate.due(LADDER_PROBE, clock.tick, state_key=state_key) and run.window.left() < needed_budget_s(
-            self.config.jev_min_budget_s
+        if (
+            not self.config.card_hunt  # the hunt never asks the gate: no Jev budget to wait for
+            and gate.due(LADDER_PROBE, clock.tick, state_key=state_key)
+            and run.window.left() < needed_budget_s(self.config.jev_min_budget_s)
         ):
             return book
         values = ctx.values
@@ -1518,7 +1555,7 @@ class Taker:
             deals = our_dealer_deals(run.snap.events, run.snap.us)
             return probe_state(planned, ctx.cash, floor, room, ctx.spent_last_hour, deals, slots)
 
-        if not gate.allows(LADDER_PROBE, clock.tick, state, state_key=state_key):
+        if not self.config.card_hunt and not gate.allows(LADDER_PROBE, clock.tick, state, state_key=state_key):
             self._empty_slots(run, slots, (), "the ladder probe gate is not a decided yes (Jev or the LLM decider)")
             return book
         probes = plan_probes(market, opens, self.rules, room, skip, value_of, slots)  # values cached for the tick
