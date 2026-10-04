@@ -5,13 +5,14 @@ and the PRs named.
 
 **1. What stops another team's agent from talking yours into a bad deal?**
 Its words can't reach the binding path. Prices, accepts and limits are computed by code inside `GUARDRAILS.md`;
-the LLM only drafts our text. We ran 168 hostile cases through every path that reads counterparty words: 0 binding
-fields changed. A deliberately planted bug fails 34 of 48 of those cases, so the tests catch real mistakes (W5 #78).
+the LLM only drafts our text. In simulation, we ran 168 hostile cases through every path that reads counterparty words: 0 binding
+fields changed. A deliberately planted bug fails 34 of 48 of those cases, so the tests catch real mistakes
+(`tests/test_redteam_injection.py`; `docs/night/w5w6-score-redteam-morning.md` §2).
 
 **2. Did you use an LLM to negotiate at all?**
 For advice and operator requests, yes. The LLM can write our words, but that switch (`llm_words`) is off, so our live
 dealer and duel messages come from templates. For anything binding, no. In duels, v2 uses the plain templates and talks little, because
-silence is free under the decay rule. The dealers are LLM personas, but RULES.md says their prices come from their own rules, and
+silence is free under the decay rule. The dealers are LLM personas, but `vendor/bazaar-kit/RULES.md` says their prices come from their own rules, and
 prompt injection changes what they say, never their prices. So our dealer bids follow a floor table, not a conversation.
 
 **3. How do you know the duel rule? It isn't in the docs.**
@@ -31,12 +32,13 @@ That's why we have three independent checks:
 It explains the leaderboard. Fitted only on public data, it reproduces our official 8.34 (model 8.26, RMSE 0.34).
 It showed that our score fell on Friday night because others did Chato deals, not because we did anything wrong.
 It also prices each action. One Saturday round point is 0.40 final points, and Abuela's best three deals were the
-cheapest points on the board, at about 54 P (W5 #78, B6 #102).
+cheapest points on the board, at about 54 P (`docs/night/w5w6-score-redteam-morning.md`, `docs/night/b6-saturday-playbook.md`).
 
 **6. Why didn't you open a venue on day one?**
 Two reasons, and the second is measured:
 - On Friday our own cash floor plus the venue bond did not fit our cash (W7 #87).
-- A clever broker beats the free auto stall by only +0.03–0.06 efficiency in simulation (W1a #77, W1b #84). Being
+- A clever broker beats the free auto stall by only +0.03–0.06 efficiency in simulation (W1a #77, `docs/night/w1a-bench-sim.md`;
+  W1b's report, #84, was closed and is not on main). Being
   open every session matters more than matching well.
 We opened it on Saturday: board venue v19, around game hour 3.6, replacing the free stall. So far it scores what the
 stall scores (half the Market Test bench points), and as of Saturday evening no other team has traded on it. Our edge
@@ -44,19 +46,17 @@ broker (BE1 #218) is merged behind a switch (`BAZAAR_BENCH_POLICY`) whose defaul
 
 **7. How do you avoid breaking the rules on rate limits and fair play?**
 - **Requests:** a per-tick budget for every loop, tested, with stagger offsets that keep the tick-edge burst under
-  the 20-request bucket (W5 #78).
-- **Fair play:** a per-counterparty cap, so no single team gets more than 25 % of our planned trade volume (W4 #79).
+  the 20-request bucket (`src/bazaar_agent/rate_budget.py`).
+- **Fair play:** a per-counterparty share cap exists (`max_counterparty_share`), but it is off (1.0): it counted our own public
+  offers and blocked board accepts (`GUARDRAILS.md`).
 - **No self-dealing:** we never trade on our own venue.
 
 **8. What happens when something goes wrong live?**
 - **Stop:** one PAUSE file per service stops every write.
 - **Clean up:** a flatten command cancels what's open.
-- **Safe ledger:** the shared Postgres ledger keeps one-accept-per-tick and the hourly spend cap true across
-  processes.
-- **See it:** the read-only cockpit shows cash against the floor, ledger writers, agent lag and duel deadlines on
-  one screen (B22 #122).
+- **Safe ledger:** the shared Postgres ledger keeps one-accept-per-tick true across processes.
 - **Rehearse it:** our bite hunter found failure modes before the game did. For example, the live maker cancels
-  hand-posted offers, and PAUSE doesn't stop those cancels on main (r2, BITES.md).
+  hand-posted offers, and PAUSE didn't stop those cancels (r2, `docs/night/log/BITES.md`).
 
 **9. How did a small team build this much in a weekend?**
 - **Parallel builders:** up to 20 Claude Code sessions overnight, each owning one item, with its own branch and
@@ -75,7 +75,7 @@ Three patterns transfer directly:
 
 **11. What would you do differently?**
 - Read the decay rule from the first practice duel instead of after the session.
-- Ship the cockpit and the merge windows before going live: every merge redeploys the trading services.
+- Ship an operator screen and the merge windows before going live: every merge redeploys the trading services.
 - Look at the clock: Friday started 80 minutes late, which shifts the whole Saturday schedule.
 
 **12. Where did it fail?**
@@ -88,6 +88,6 @@ We never use prompt injection. Our bids rise in small distinct steps inside a ha
 price, which is what the rules reward ("small steps earn small steps").
 
 **14. How much of this is the model versus your code?**
-The model decides nothing binding. Everything that moves cash or cards is deterministic and tested: about 850
-tests on main's branch line, 2,746 in the full integration. The model can write words (that switch is off today), summarises and advises; a
+The model decides nothing binding. Everything that moves cash or cards is deterministic and tested: 5,882
+tests pass, 0 fail (full suite at 6e0d39b3, Sun 4 Oct). The model can write words (that switch is off today), summarises and advises; a
 decided "no" from the advisor can veto, but never adds risk.

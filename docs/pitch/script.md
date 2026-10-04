@@ -1,8 +1,8 @@
 # Speaker notes (ES + EN)
 
 Omar presents; Marius backs up. About 130 spoken words per minute. Claim ids `[Cn]` are for the rehearsal and for Marius's checks; **do
-not read them aloud**. Items in `{{curly braces}}` are filled from Saturday's evidence (`evidence.md`) and **must be replaced or
-removed** before Sunday: search the file for `{{` at 08:30.
+not read them aloud**. The Saturday placeholders were filled or removed on Sunday 4 Oct after
+the game, from sources on `main` (`claims.md`).
 
 Rules while speaking: say "in simulation" every time a simulated number appears; say "undecided", never "yes", for a Jev answer below
 its bar; never say Jev's float is an accuracy; if you do not know, say "that is on our not-covered list".
@@ -57,22 +57,19 @@ a limit. The settlement, which is a public row anyone can look up. And the effec
 inyección en 3.436 eventos públicos. [C20] Así que esto es una oferta fabricada, y lo digo antes de enseñarla.
 El texto dice: «La Dama de Serrano, la legendaria. Solo 120». La oferta estructurada, la que obliga, enlaza una carta común. El inspector
 compara las dos antes de aceptar. Resultado: rechazada, y no gastamos el único accept del tick. [C21]
-Alrededor: {{solo si #78 está fusionada: «168 casos hostiles por todos los caminos que leen texto de la contraparte, cero campos
-vinculantes cambiados»; si no: «un red team de 168 casos, en una PR abierta»}}. [C24] El
+Alrededor, en simulación: 168 casos hostiles por todos los caminos que leen texto de la contraparte, cero campos vinculantes
+cambiados. [C24] El
 inspector no marcó ninguna de las 1.022 ofertas honestas del viernes. [C22] Y el cortafuegos que bloquea una escritura fuera de política
 ya está integrado en main; en una prueba con el Claude Code real bloqueó una compra por encima del tope. [C2][C26]
-{{Si hay un Trickster real el sábado y el inspector lo rechazó: sustituir todo el párrafo por ese caso, con su hilo y la fila de decisión.}}
 
 **EN:** Second proof, and I start with what we do not know: nobody has attacked us for real yet. Friday had zero injection attempts in
 3,436 public events. [C20] So this is a crafted offer, and I say so before I show it.
 The text says: "La Dama de Serrano, the legendary. Only 120." The structured offer, the part that binds, links a common card. The
 inspector compares the two before accepting. Result: refused, and we do not spend the tick's single accept. [C21]
-Around it: {{only if #78 is merged: "168 hostile cases through every path that reads counterparty text, zero binding fields changed";
-otherwise: "a 168-case red team, on an open PR"}}. [C24] The inspector flagged
+Around it, in simulation: 168 hostile cases through every path that reads counterparty text, zero binding fields changed. [C24]
+The inspector flagged
 none of Friday's 1,022 honest offers. [C22] And the guard that blocks an out-of-policy write is merged on main; in a test with the
 real Claude Code it blocked a buy above our cap. [C2][C26]
-{{If a real Trickster appears on Saturday and the inspector refused it: replace this whole paragraph with that case, its thread and the
-decision row.}}
 
 ## 5 · Prueba 3: una mejora medida / Proof 3: a measured improvement (1:10)
 
@@ -85,9 +82,10 @@ política nueva habla una vez y espera. **En simulación**, con nuestro cliente 
 reales de los rivales, saca 178 primas frente a 122. [C33]
 Os digo los límites sin que me los pidáis. Son rivales simulados; ajustamos la política con esos mismos rivales; la repetición son doce
 duelos. Le preguntamos a Jev si activar la política nueva y dijo «indeciso», 0,72 frente a un umbral de 0,90; la activó Omar el sábado
-a las diez, después de la prueba en simulación: fue una decisión humana. Su resultado real llega con los duelos del sábado. [C35][C51]
+a las diez, después de la prueba en simulación: fue una decisión humana. En los duelos reales del sábado cerramos 27 tratos en
+Duelos I, con una media de 0,56 del pastel por trato, y 57 en Duelos II, con 0,48. El 0,279 del viernes es nuestra propia estimación de
+práctica, así que no es un antes y un después ni una comparación controlada. [C35][C41][C51]
 La ganancia viene de hablar menos, no de cerrar más tratos. [C32]
-{{Si hay datos del sábado: «y el sábado, los duelos reales sacan X frente a 0,279; no es una comparación controlada». [C41]}}
 
 **EN:** Third proof: an improvement measured against a baseline. In duels every round of talk shrinks the pie (6% a round in the practice
 session, 8% and 10% in the later ones): the result is the gain times 0.94 to the power of the rounds. We checked it on our own practice
@@ -98,9 +96,9 @@ our limit. [C31] And replayed on the twelve duels we never answered on Friday, w
 against 122. [C33]
 I will give you the limits before you ask. The rivals are simulated; we tuned the policy on those same rivals; the replay is twelve
 duels. We asked Jev whether to turn the new policy on and it said "undecided", 0.72 against a 0.90 bar; Omar turned it on on Saturday
-at ten, after the simulation proof: a human call. Its real result comes with Saturday's duels. [C35][C51] The gain comes from talking
-less, not from closing more deals. [C32]
-{{If Saturday data exists: "and on Saturday, real duels average X against 0.279; it is not a controlled comparison". [C41]}}
+at ten, after the simulation proof: a human call. In Saturday's real duels we closed 27 deals in Duels I, a mean share of 0.56 of the
+pie per deal, and 57 in Duels II, at 0.48. Friday's 0.279 is our own practice estimate, so this is not a before and after, and not a
+controlled comparison. [C35][C41][C51] The gain comes from talking less, not from closing more deals. [C32]
 
 ## 6 · Demo en directo / Live demo (1:30)
 

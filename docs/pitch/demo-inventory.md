@@ -6,12 +6,12 @@ bazaar.causaprima.ai. Commands marked "ran" were run on this laptop and worked.
 
 ## 1. Explainer site (game-explainer-site)
 
-- Worktree: `/Users/mariusserban/orca/workspaces/bazaar/game-explainer-site`, branch `game-explainer-site`.
+- Branch `game-explainer-site`, in a local worktree on Marius's laptop.
 - **Not pushed, no PR**: no upstream, 7 local commits ahead of `origin/main` (head `6801ec3`).
   `gh pr list --search explainer` finds nothing related. If the demo laptop is not this Mac, push first.
 - Files: `site/index.html` (612 lines), `site/styles.css`, `site/js/{core,world,negotiation,market,system}.js`.
   **Fully offline**: no CDN, no web font, favicon is a data: URI. Works from `file://` too.
-- Serve: `python3 -m http.server 8000 -d /Users/mariusserban/orca/workspaces/bazaar/game-explainer-site/site`
+- Serve: `python3 -m http.server 8000 -d <game-explainer-site worktree>/site`
   then http://127.0.0.1:8000/ (or `open .../site/index.html`). Dark-mode toggle, chapters menu (TOC button), progress bar.
 - Structure: hero ("A card market run by AI agents, explained") then
   - **Part 1 · How the game works**: `#rule` Words persuade, structure binds (words-vs-structure widget) ·
@@ -49,10 +49,10 @@ bazaar.causaprima.ai. Commands marked "ran" were run on this laptop and worked.
      `public_execution` / `public_view`): https://bazaar-taker-production.up.railway.app/{health,state},
      https://bazaar-maker-production.up.railway.app/{health,state}, `wss://…/events` (last 200 then live).
      Ran `/health`: taker `mode: live`. Maker `/state` now: empty decisions (doors closed).
-     **PR #121 (OPEN)** "public /state and /events must not reveal our limits": check the payload before
+     **PR #121 (merged Sat 3 Oct 02:30 UTC)** "public /state and /events must not reveal our limits": check the payload before
      projecting raw `/state` or `wscat`.
   3. `bazaar evals report --json` is documented as "the dashboard" data feed (docs/services.md "Evals scorecard").
-  4. `bazaar cockpit` (below) is the operator's screen.
+  4. `bazaar cockpit` (#122) was planned as the operator's screen; it was closed without merging and is not on main.
 - Architecture page (`docs/architecture.html` on main) lists all live links incl. Bazaar Live.
 
 ## 3. Phoenix
@@ -75,19 +75,14 @@ bazaar.causaprima.ai. Commands marked "ran" were run on this laptop and worked.
 
 ## 4. Read-only CLI views
 
-Run from `/Users/mariusserban/orca/workspaces/bazaar/night-b6-saturday-playbook` (branch `night/b29-pitch-kit`,
-stacked on `night/b22-cockpit` #122 OPEN → `night/b6-saturday-playbook` #102 OPEN). **None of cockpit /
-timeline / score-sim is in main yet.**
+Run on Saturday from a worktree of branch `night/b29-pitch-kit` (stacked on `night/b22-cockpit` #122 →
+`night/b6-saturday-playbook` #102). Both PRs were closed without merging, so **`cockpit` and `timeline` are not on
+main** and are left out below. `evals score-sim` is on main.
 
 | Command | Ran? | What it shows | Network |
 |---|---|---|---|
-| `BAZAAR_SIM=1 uv run bazaar cockpit` | ran (sim) | 10 panels with ok/WARN/BAD: Clock, Next (playbook), Cash vs floor (`cash_floor` in GUARDRAILS.md) + headroom, Ledger, Agents (/health), Caps, Duels, Ladder, Market Test, Alerts | sim + Railway /health |
-| `uv run bazaar cockpit --no-key` | not run | keyless reads only (clock, schedule, dealers, /health) | real game, keyless |
-| `uv run bazaar cockpit --watch` | not run | refresh every 2 ticks mid-tick (~30 s on Sunday's 15 s ticks) | **real game + team key**: only for the live demo |
-| `uv run bazaar timeline` | ran | every scheduled event in game hours and Madrid time (Duels I/II/III, Market Tests, rounds, Grand Final) | offline, but the fixture clock anchors to *now*: on Sunday the Madrid times shift a day |
-| `uv run bazaar timeline --from-api` | ran (Sat 04:30: `resume: h2.65 = Sat 09:00`, resume/jump columns while closed) | same, live keyless `/api/clock` + `/api/schedule` | keyless GETs only: use this on Sunday |
 | `uv run bazaar evals report` | **not run** (no `.env` in the b6 worktree, so no `DATABASE_URL`) | scorecard per target/day, dealer ladder best-3, worst 5, Jev calibration, annotations | Postgres only |
-| `uv run bazaar evals score-sim` | ran, in `/Users/mariusserban/orca/workspaces/bazaar/night-w5w6-score-redteam-morning` (#78 OPEN) | board-formula model vs official: RMSE 0.34 over 38 snapshots, board MAE 0.47 over 18 teams; value of one more dealer deal; Saturday levers | **offline** (Friday fixture) |
+| `uv run bazaar evals score-sim` | ran on the `night/w5w6-score-redteam-morning` branch (#78, closed); the command is on main now | board-formula model vs official: RMSE 0.34 over 38 snapshots, board MAE 0.47 over 18 teams; value of one more dealer deal; Saturday levers | **offline** (Friday fixture) |
 | `BAZAAR_SIM=1 uv run bazaar status` | ran | target banner SIMULATOR, cash, level, cards, score breakdown, album | simulator |
 | `uv run bazaar status` | not run | same on the real game | **real game + team key** |
 | `BAZAAR_SIM=1 uv run bazaar agent taker --max-ticks 5` | not run | dry run, WOULD-moves only | simulator |
@@ -95,8 +90,6 @@ timeline / score-sim is in main yet.**
 
 - Simulator: https://bazaar-sim-production-1d48.up.railway.app (ran `/api/health`: doors open, tick 849, 10 s ticks).
   `BAZAAR_SIM=1` = public sim (key `sim-team1`), `BAZAAR_SIM=local` = `SIM_TICK_SECONDS=2 SIM_DATABASE_URL=memory uv run bazaar-sim serve` on 127.0.0.1:8765. Every command prints `target: SIMULATOR …` first.
-- Cockpit in sim mode shows **overall BAD** because the Ledger panel is "file ledger.jsonl (THIS machine only)";
-  on the real game with Postgres it should be ok (unverified). Say so, or show it real.
 
 ## 5. Architecture boxes to point at
 
@@ -118,12 +111,10 @@ Report). One sentence max ("how we built it with Claude Code"); the runtime stor
 | 1 | Explainer site | `python3 -m http.server 8000 -d …/game-explainer-site/site` → http://127.0.0.1:8000/#shield | `#shield` naive vs ours; `#built` click Jev/Guardrails/LLM; `#dealers` haggle | none (static, no CDN); only on this Mac (unpushed) | `open …/site/index.html` (file://) |
 | 2 | Bazaar Live show | https://bazaar-live-production.up.railway.app (live) | buyer/seller acting out public moves, Jev meter, guardrail denial | needs internet; quiet if agents idle; sound gate | `/?mock=1&speed=2` (recorded afternoon), `?tts=off` |
 | 3 | Phoenix | https://phoenix-production-6aa3.up.railway.app, project `bazaar` | one `duel` root with `duel_pie_share`, one `negotiation` root with `ladder_share`, Jev verdict events | internet + login | screenshots taken beforehand; `uv run bazaar thread <id>` in terminal |
-| 4 | Cockpit | `uv run bazaar cockpit` (real) or `BAZAAR_SIM=1 uv run bazaar cockpit` | one screen of gates: cash vs floor, ledger, agents live, duels, ladder | real needs key + internet; sim shows Ledger BAD | `--no-key`, `BAZAAR_SIM=1`, or `--json` saved earlier |
-| 5 | Timeline | `uv run bazaar timeline --from-api` | the weekend in game hours ↔ Madrid time | keyless GETs need internet; the fixture default anchors to now (wrong day on Sunday) | `uv run bazaar timeline --compare docs/night/saturday-schedule.json`, or a saved `--json` |
-| 6 | Score model | `uv run bazaar evals score-sim` (w5w6 worktree) | model vs official RMSE 0.34; what one more deal is worth | none (fixture) | screenshot |
-| 7 | Evals report | `uv run bazaar evals report` | scorecard good/ok/bad, ladder best-3, Jev calibration | needs Postgres `DATABASE_URL` (no `.env` in the b6 worktree) | Phoenix annotations, docs/services.md example |
-| 8 | Architecture page | `docs/architecture.html` (main) | 4 boxes above, status colours, live links | none (local file) | explainer `#built` diagram |
-| 9 | Simulator | `BAZAAR_SIM=1 uv run bazaar status` / `dealer buy … --live` | safe live-looking play | sim on Railway | `BAZAAR_SIM=local` + `bazaar-sim serve` |
+| 4 | Score model | `uv run bazaar evals score-sim` (on main) | model vs official RMSE 0.34; what one more deal is worth | none (fixture) | screenshot |
+| 5 | Evals report | `uv run bazaar evals report` | scorecard good/ok/bad, ladder best-3, Jev calibration | needs Postgres `DATABASE_URL` (no `.env` in the b6 worktree) | Phoenix annotations, docs/services.md example |
+| 6 | Architecture page | `docs/architecture.html` (main) | 4 boxes above, status colours, live links | none (local file) | explainer `#built` diagram |
+| 7 | Simulator | `BAZAAR_SIM=1 uv run bazaar status` / `dealer buy … --live` | safe live-looking play | sim on Railway | `BAZAAR_SIM=local` + `bazaar-sim serve` |
 
 ## Suggested 5-minute order
 
@@ -134,7 +125,7 @@ Report). One sentence max ("how we built it with Claude Code"); the runtime stor
 | 1:30–2:10 | Hostile text in, nothing binding out | Explainer `#shield` toggle naive ↔ ours |
 | 2:10–3:00 | It is live: the agents trading right now, voiced | Bazaar Live (fallback `?mock=1`) |
 | 3:00–3:50 | Every decision is a trace and is graded | Phoenix: `duel` root + `duel_pie_share`, `negotiation` + `ladder_share` |
-| 3:50–4:35 | The operator's screen + numbers | `bazaar cockpit` (second window, `--watch`), then `evals score-sim` or `evals report` |
+| 3:50–4:35 | The numbers | `evals score-sim` or `evals report` |
 | 4:35–5:00 | What's next / honest gaps | architecture.html Roadmap + "Not started" |
 
 Pre-flight (Sunday 08:30): push explainer branch or demo from this Mac; log in to Phoenix and open 2 chosen

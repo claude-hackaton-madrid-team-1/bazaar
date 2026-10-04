@@ -26,8 +26,8 @@ once before you show it.
 
 | Time | Screen | Say (short) | Source |
 |---|---|---|---|
-| 0:00–0:30 | **Bazaar Live**, `https://bazaar-live-production.up.railway.app` (live), buyer and seller at the stall, the deal from slide 3 on the cork board or in the speech | "These characters act out our agents' public moves, spoken. This is the {{CARD}} deal." | `docs/services.md` "Bazaar Live" |
-| 0:30–1:00 | **Phoenix**, project `bazaar`: the `negotiation` root of thread {{T}} → the `tick N` children → one event each of `message`, `dealer_offer`, `jev_verdict`, `guardrail`, `our_move`. Then the `ladder_share` annotation on the root | "Same deal, tick by tick: her message, her offer, Jev's floats and whether it cleared its bar, the guardrail verdict, our move. And the score of this negotiation." | README "Observability"; `capture.md`-verified span names |
+| 0:00–0:30 | **Bazaar Live**, `https://bazaar-live-production.up.railway.app` (live), buyer and seller at the stall, the deal from slide 3 on the cork board or in the speech | "These characters act out our agents' public moves, spoken. This is the LAV-08 deal." | `docs/services.md` "Bazaar Live" |
+| 0:30–1:00 | **Phoenix**, project `bazaar`: the `negotiation` root of thread 316 → the `tick N` children → one event each of `message`, `dealer_offer`, `jev_verdict`, `guardrail`, `our_move`. Then the `ladder_share` annotation on the root | "Same deal, tick by tick: her message, her offer, Jev's floats and whether it cleared its bar, the guardrail verdict, our move. And the score of this negotiation." | README "Observability"; `capture.md`-verified span names |
 | 1:00–1:30 | **`/state`** of the taker (`.../state`), browser JSON viewer, or `curl -s .../state \| jq '.decisions[0:3]'` | "Anyone can read this. It says what we did. It never says why in numbers; our limits and Jev's floats are not published." | `docs/services.md` "Public by design" |
 
 Phoenix's session view is merged (#139, N18, Sat 07:22 UTC): use **Sessions → `dealer:{dealer}:thread:{id}`** (for slide 3's deal,

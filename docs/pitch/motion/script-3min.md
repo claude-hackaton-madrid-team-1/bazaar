@@ -31,10 +31,10 @@ Sources: vendor rules “Fair play”; .railway/railway.py; README “Live servi
 
 ### Safe decisions · 1:15 to 1:41
 
-We use models where they help: interpreting requests, advice and language. Code enforces every binding action. Jev can say undecided, and the safe default remains. A shared ledger coordinates accepts. Larger trades require human approval. PAUSE stops writes. We protect the last copy of a page card. Those limits live in inspectable policy and code.
+We use models where they help: interpreting requests, advice and language. Code enforces every binding action. Jev can say undecided, and the safe default remains. A shared ledger coordinates accepts. Every card buy is capped at its official value. PAUSE stops writes. We protect the last copy of a page card. Those limits live in inspectable policy and code.
 
 Cue: point to the shield, then the four policy controls.
-Sources: claims C1–C4; GUARDRAILS.md; AGENTS.md selling hard rules. The approval threshold is intentionally unnamed because the supplied policy and contract differ.
+Sources: claims C1–C4, C69; GUARDRAILS.md `official_value_margin`; AGENTS.md selling hard rules. Amount-based human approval is off since Sun 4 Oct (`human_approval_above` = 0; AGENTS.md "Autonomous trading update"), so it is not claimed.
 
 ### Real result and lesson · 1:41 to 2:03
 
@@ -73,7 +73,7 @@ Compartimos una clave de equipo y cinco peticiones por segundo. Railway ejecuta 
 
 ### Safe decisions · 1:15 to 1:41
 
-Usamos modelos para interpretar peticiones, aconsejar y redactar. El código controla cada acción vinculante. Jev puede responder indeciso y seguimos con la opción segura. Un registro compartido coordina las aceptaciones. Los tratos grandes requieren aprobación humana. PAUSE detiene las escrituras. Protegemos la última copia de cada carta de página. Esos límites viven en código revisable.
+Usamos modelos para interpretar peticiones, aconsejar y redactar. El código controla cada acción vinculante. Jev puede responder indeciso y seguimos con la opción segura. Un registro compartido coordina las aceptaciones. Cada compra de carta tiene como tope su valor oficial. PAUSE detiene las escrituras. Protegemos la última copia de cada carta de página. Esos límites viven en código revisable.
 
 ### Real result and lesson · 1:41 to 2:03
 
