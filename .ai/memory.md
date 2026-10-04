@@ -1502,6 +1502,12 @@ Review found pack opening passed a stale snapshot to publication reconciliation,
 ### [2026-10-04] build-error — TR1 local Postgres setup timeout
 Full gate at00ceb581 ran5715passing tests with95%coverage but one holdings fixture could not connect to localhost5433 before its10s timeout. No product assertion failed. Reran the entire holdings DB module against127.0.0.1: `26 passed in15.03s`; Depot full CI passed at the same code head. No runtime code change for this transient local connection failure.
 
+### [2026-10-04] finding — Abuela limits conversations separately from pack purchases
+Railway open_thread1884 returned `persona_quota` with “at most 10 conversations per hour with abuela”. This is dealer-wide, not the3-pack purchase quota. Shared learning was present but scoped to sobre_barrio and shortened by60-tick retry cap to1944; at15s the actual next game hour was about2014. Q1 preserves trusted server/game-clock expiry and records10 from the fixed server message; generic legacy/LLM caps remain. It preloads persisted blockers before the first opening after restart. The original database evidence remains intact; coordinator may record a separate corrected typed fact after code rollout.
+
+### [2026-10-04] gotcha — quota audit queries
+The learnings timestamp is created_tick, not tick; qualifying public.learnings avoids duplicate information_schema results from temporary test schemas. Read-only audit queries corrected these assumptions; no production mutation occurred.
+
 ### [2026-10-04] finding — MR1 standing asks stranded on their original market
 
 `maker.plan_offers` compared price/floor but never venue, while taker correctly excluded the committed copy. A new crossing bid elsewhere could route a NEW ask but could not move the existing unchanged ask. MR1 reuses cancel-confirm/repost only for strictly better observed crossing net demand, keeping price and guards; no activity-only rotation or forced partner market. Actor regression red on main (`1 failed in 0.25s`), focused final checks in MR1 report. Live conversion remains unverified.

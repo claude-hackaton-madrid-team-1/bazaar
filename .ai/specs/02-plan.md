@@ -815,6 +815,12 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 
 - TR1 pack follow-up: cap30 permits observed final24; pack snapshot reads promised asset IDs without reconciling durable reservations. Pack/supply50 and config12 tests pass.
 
+## Q1 — Persist dealer quota through the actual game hour
+
+- Spec: [Q1-spec.md](Q1-spec.md).
+- Trusted server refusal uses game-hour expiry, records the observed dealer-wide10-conversation limit, and loads shared blockers before first opening after restart. Pack purchase quota remains separate.
+- Focused51 tests passed; independent review/full gate and coordinator rollout pending.
+
 ## MR1 — Move standing asks toward crossing demand
 
 - [Spec and local evidence](MR1-spec.md): route an existing public ask only on strictly better crossing demand, after confirmed cancel and through existing fresh locked publication guards.
