@@ -16,8 +16,11 @@ prod. Question: is the recorder missing from the deployed maker, or failing?
 - End to end checked on a throwaway local Postgres 18 (prod runs 18.6): 44 real `GET /api/broker/book` snapshots of
   Saturday's run b52 went through the real `BenchBooks` writer (66 rows, 9 traders, no failure) and bazaar-live's
   own `show.venue_books` view (from its `db/venue.sql`) read them back as one run with 9 traders.
-- Change in this branch: **tests only.** A real-shaped b52 broker-book fixture and two tests (parser, and the
-  broker → recorder path). No `src` change, so nothing to redeploy for this.
+- Change in this branch: **tests only, no `src` change.** A test that pins how the maker hands the recorder its
+  Postgres connection (it was untested: breaking it kept the suite green), a real b52 broker-book fixture, and a
+  suite guard: the existing keeper tests wrote fake bench rows (`real`, run `b7`, venue `v09`) to whatever
+  `DATABASE_URL` points at, so a `uv run pytest` in a worktree whose `.env` holds the team DB would have put them on
+  `/venue` (none have: prod `n_tup_ins = 0`).
 
 ## Method and data windows actually seen
 
@@ -108,29 +111,39 @@ by tick and time; locally null because the local feed table was empty; prod has 
 
 ## Fix
 
-No code fix is needed: nothing is broken. This branch (`fix/bench-books-recorder`) adds only:
+No `src` fix is needed: nothing in prod is broken. This branch (`fix/bench-books-recorder`) changes tests only:
 
-- `tests/fixtures/broker_book_bench_b52.json`: one real Saturday broker book (synthetic organiser data only).
-- `tests/test_bench_capture.py`: `test_a_real_bench_book_becomes_one_row_per_trader` (the real shape → the exact
-  rows, raw offer kept whole) and `test_the_broker_records_a_real_bench_book_for_postgres` (the real book through
-  `BrokerAgent.on_tick` → the Postgres rows). The existing tests used a hand-made buyer without `bench`, `types` or
-  `want.cash: 0`.
+- `tests/test_venue_keeper.py`, the deployed wiring (reviewer finding: mutating `VenueKeeper._bench_books` to never
+  connect left 594 bench/venue/keeper/broker tests green):
+  - `test_the_real_game_broker_records_the_bench_book_to_postgres`: with real-game `Settings`, the broker the keeper
+    builds on its first tick has a recorder with a Postgres connect (`db.connect(app="bazaar-bench-books",
+    connect_timeout_s=3)`, faked), world `real`, our venue, the maker's stats dir. The reviewer's mutation now fails it.
+  - `test_a_simulator_broker_keeps_the_bench_book_in_its_jsonl_only`: simulator `Settings` → no connect, world `sim:…`.
+- `tests/conftest.py`, autouse `no_bench_books_db` (marker `bench_books_db` opts out, registered in `conftest.py`,
+  not `pyproject.toml`, which Railway watches): the keeper's recorder is JSONL-only in the suite. Measured before
+  the guard: `DATABASE_URL=<local throwaway pg> uv run pytest tests/test_venue_keeper.py` left 2 rows (`real`, `b7`,
+  `v09`) in `bench_books`; after it, 0. The other DB paths already had such guards (`no_shared_holdings_db`, …);
+  this one was missing. `test_the_suite_never_writes_bench_books_to_a_teammates_database` pins it.
+- `tests/fixtures/broker_book_bench_b52.json` + two tests in `tests/test_bench_capture.py`: they pin the **real**
+  payload shape (one Saturday b52 book: `bench: true`, `types: ["bench:cromo"]`, buyers with `want.cash: 0`). The
+  side logic itself was already covered by the original tests; the value here is a captured shape, not a new branch.
 
 ## Deploy steps for Marius
 
 - **None.** bazaar-maker already runs `16ecba32`, which has the recorder, and its broker came up for v19 at
   07:20 UTC. Do not redeploy for this.
-- **Merging this branch redeploys bazaar-maker**: every non-`[skip ci]` merge to main has produced a new maker
-  deployment (deployment list above). It is tests-only, so it gains nothing in prod. If merged during the game, do
-  it in a gap between benches only: per `/api/schedule` (keyless) the Sunday benches are at game hours **14.65**
-  (hard Market Test, 16 ticks), **15.0** (16 ticks) and **17.0** (16 ticks); a tick is 15 s (`/api/clock`
-  `tick_seconds`). A maker restart inside a bench loses that session's matching. Safest: merge after the game.
+- **This branch can merge any time; it restarts nothing.** Railway redeploys a service only for its
+  `watchPatterns` (`.railway/railway.py`: `src/**`, `vendor/bazaar-kit/**`, `pyproject.toml`, `uv.lock`,
+  `GUARDRAILS.md`, `STRATEGY.md`, `RUNTIME.md`, `questions/**`, `.railway/**`); this branch touches `tests/**` and
+  `docs/**` only. Precedent: the maker deployments for PR #271 (docs) and #273 were `SKIPPED` ("No changes to watched
+  files"). Any merge that does touch a watched path restarts the maker: keep those out of the bench windows (game
+  hours **14.65**, **15.0**, **17.0**, 16 ticks of 15 s each, `/api/schedule`, `/api/clock`).
 
 ## Risks
 
 - **First connect inside the bench.** The recorder opens its Postgres connection lazily, on the first non-empty
-  bench book. A connect failure there loses that tick's batch and skips the next 5 (`RETRY_EVERY = 5`), up to 6 of 16 ticks; the JSONL
-  on the maker volume (`<stats_dir>/bench_books.jsonl`) still gets every tick.
+  bench book. A connect failure there loses that tick's batch and skips the next 5 (`RETRY_EVERY = 5`),
+  up to 6 of 16 ticks; the JSONL on the maker volume (`<stats_dir>/bench_books.jsonl`) still gets every tick.
 - **A slow DB drops rows, never ticks.** The queue holds 8 ticks; beyond that rows are dropped (logged once as
   `bench books: queue failed (RuntimeError)`). Fine at 15 s ticks.
 - **Only what the broker reads.** One row per offer per tick our broker read the book; an offer that arrives and is
@@ -140,6 +153,14 @@ No code fix is needed: nothing is broken. This branch (`fix/bench-books-recorder
   (Postgres + JSONL)`.
 
 ## How to verify in prod after the first Sunday bench
+
+First, did v19 get the book? `bench.started.venues` must list it (all six Saturday sessions did; "every venue gets
+the same synthetic book"). If it does not, an empty `bench_books` is expected, not a recorder fault.
+
+```sql
+select type, tick, received_at, payload->'venues' ? 'v19' as ours from feed_events
+ where type = 'bench.started' and received_at > '2026-10-04 07:00Z';
+```
 
 Logs (`railway logs -s bazaar-maker`): lines `tick N broker: bench book bXX-1:s62 bXX-4:b35 …` during the bench,
 and **no** `bench books: … failed` line.
@@ -155,7 +176,8 @@ select run, day, first_tick, last_tick, ticks_seen, venue, session, jsonb_array_
   from show.venue_books order by first_tick;
 ```
 
-Expected: one run per bench (10–12 traders, close to 16 ticks seen), `venue = 'v19'`, `session` set.
+Expected: one run per bench (10–12 traders, close to 16 ticks seen), `venue = 'v19'`, `session` set. A
+`bench.started` with `ours = true` and still 0 rows in `bench_books` would refute this report.
 
 ## Prod verification
 

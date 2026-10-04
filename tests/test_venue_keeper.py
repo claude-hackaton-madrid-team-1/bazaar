@@ -621,3 +621,40 @@ def test_the_notice_prices_a_sale_on_the_house_market_from_its_live_fees_and_say
     )
     [free] = venues_from({"venues": [{**RASTRO, "fee_bps": 0, "fee_per_card": 0}]}, 400)
     assert vk.announcement(vk.PLAN, "v19", free).text == generic
+
+
+# ---------------------------------------------------------------- the Market Test book recorder's wiring
+
+
+@pytest.mark.bench_books_db
+def test_the_real_game_broker_records_the_bench_book_to_postgres(tmp_path, monkeypatch):
+    """The maker's broker hands its recorder a Postgres connection (`bench_books`, read by the dashboard's /venue),
+    world "real", our venue. Breaking this wiring is the "bench_books stays empty" symptom."""
+    from bazaar_agent import db
+
+    calls: list[dict] = []
+    monkeypatch.setattr(db, "connect", lambda *a, **kw: calls.append(kw) or "conn")
+    broker = FakeBroker()  # no bench this tick: the only connect below is the test's own
+    k = keeper(tmp_path, Team(), store={("", "v09"): (KEY, 300)}, broker=broker)
+    k.opened = vn.Opened("v09", SecretStr(KEY), ("postgres",))
+    k.on_tick(snap().clock, None, window())
+    books = k._broker[1].books
+    assert (books.world, books.venue, books.stats_dir) == ("real", "v09", tmp_path / "agents")
+    assert books._connect is not None and books._connect() == "conn"
+    assert calls == [{"app": "bazaar-bench-books", "connect_timeout_s": 3}]
+
+
+@pytest.mark.bench_books_db
+def test_a_simulator_broker_keeps_the_bench_book_in_its_jsonl_only(tmp_path):
+    k = keeper(tmp_path, Team())
+    k.settings = Settings(data_dir=tmp_path, simulated=True)
+    books = k._bench_books("v09")
+    assert books._connect is None and books.world.startswith("sim:")
+
+
+def test_the_suite_never_writes_bench_books_to_a_teammates_database(tmp_path):
+    broker = FakeBroker(bench=[bench_sell("b7-0", 30), bench_buy("b7-1", 40)])
+    k = keeper(tmp_path, Team(), store={("", "v09"): (KEY, 300)}, broker=broker)
+    k.opened = vn.Opened("v09", SecretStr(KEY), ("postgres",))
+    k.on_tick(snap().clock, None, window())
+    assert k._broker[1].books._connect is None  # tests/conftest.py no_bench_books_db
