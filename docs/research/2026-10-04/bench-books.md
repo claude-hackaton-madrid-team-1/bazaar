@@ -159,7 +159,9 @@ Expected: one run per bench (10–12 traders, close to 16 ticks seen), `venue = 
 
 ## Prod verification
 
-(filled in below after the 1st Sunday bench)
+Pending at the time of writing (07:30 UTC): the first Sunday bench (game hour 14.65, ≈ 08:16 UTC with 15 s ticks
+running 1:1 since the unpause) had not started. The queries above are run read-only after it; the result is added
+here in a follow-up commit.
 
 ## Could not verify
 
