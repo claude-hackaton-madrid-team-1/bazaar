@@ -4,41 +4,45 @@ Three dealing defects from the Saturday review (`dealing.md`, `quiet.md`, README
 fixed as code on a local branch for Sunday 4 Oct. Session `dealing-fixes`, written Sun 4 Oct ~09:30 Madrid. Nothing here
 touched the live game: tests, fixtures, a local simulator on 127.0.0.1, and read-only SQL on the shared Postgres.
 
-Branch, on top of `origin/main` 25b69c56 (rebased; main moved by docs only):
+Branch, rebased on `origin/main` 56ec5b68 (#272 "sunday-ready": `--accept-bids` on by default, publication
+reservations, `human_approval_above` 60):
 
 | Commit | What | Redeploys on merge |
 |---|---|---|
-| a4419cd3 | Defect 1: read and decide offers other teams address to us | all three (`src/**`) |
-| 4421c551 | Defect 2: ladder probes plan the empty slots of the round, and say why a level stays empty | all three |
-| 6e52cfdf | Defect 3: new rule `dealer_ladder_value_tolerance`, **default 0 = today's cap** (separate commit) | all three (`GUARDRAILS.md`) |
-| 296c9698 | Slot count restarts at `round.started` as well as `day.opened` (self-review fix) | all three |
-| 5df8f96e | GUARDRAILS wording: the tolerance's real reach and cost | all three |
+| 295fdf1d | Defect 1: read and decide offers other teams address to us | all three (`src/**`) |
+| 68930aa7 | Defect 2: ladder probes plan the empty slots of the round, and say why a level stays empty | all three |
+| 144594b0 | Defect 3: new rule `dealer_ladder_value_tolerance`, **default 0 = today's cap** (separate commit) | all three (`GUARDRAILS.md`) |
+| 8dd8d28f | Slot count restarts at `round.started` as well as `day.opened` (self-review fix) | all three |
+| 6d4fbcdd | GUARDRAILS wording: the tolerance's real reach and cost | all three |
+| 431059f6 | After the rebase: addressed bids follow `accept_bids`; a refused sell releases its publication reservation | all three |
+| (this doc) | docs only | none on its own |
 
 ## TL;DR
 
 1. **Addressed offers are read now, at zero extra requests.** `GET /api/me/offers` is already read every tick
    (`agents/runtime.py:347`) and returns "open offers addressed to you". The taker now feeds them through the same
-   path as a board offer, and every one leaves a decision row. Asks are on by default. Selling into addressed bids
-   waits for `BAZAAR_ADDRESSED_OFFERS=all`.
+   path as a board offer, and every one leaves a decision row. Asks are on by default. Addressed bids follow
+   `--accept-bids`, which main (#272) now turns on by default, so they are sold into through the same guards as
+   public bids. `BAZAAR_ADDRESSED_OFFERS=off` is the kill switch.
 2. **Why the ladder slots stayed empty: Pilar (L3) and Banco (L5) sell us no card**, and the taker only buys from
    dealers. Pilar sells only a gold pack; Banco sells a gold pack and legendaries, and we have no cap for those
    (`traders` table). Only a dealer sell fills those levels: a hand `bazaar dealer sell`, or `dealer_sell_enabled`.
    For the levels a buy can fill (Abuela L1, Chato L2, Pícaros L4), the probe now skips a full level, plans the
    emptiest level first, and writes a `ladder_slot` row saying why an empty level gets no probe.
 3. **The cap that blocked 17 Pícaros deals is `official_value_margin` = 0** (GUARDRAILS.md:27), enforced in
-   `guardrails._official_value_violations` (guardrails.py:1246) → `official_values.cap_violations`
+   `guardrails._official_value_violations` (guardrails.py:1259) → `official_values.cap_violations`
    (official_values.py:137). It is unchanged. A new rule, `dealer_ladder_value_tolerance`, defaults to 0 (no
    change). **Recommended value if Marius wants it: 4.** Pícaros' lowest RET-09/RET-10 fills to other teams were
    52–53, against our official value of about 49.
 4. **The ladder probe only runs on a decided yes from its gate.** At 15 s ticks that needs README item 1
    (`BAZAAR_DECIDER_MIN_TICK_S=15` on bazaar-taker). Without it, defect 2's code only writes `ladder_slot` rows.
-5. Gates: 5,331 tests pass, plus 25 new ones; ruff, black and mypy are clean. A dry-run taker against a local
-   simulator took an addressed ask and logged its reason for skipping an addressed bid.
+5. Gates on the final code (431059f6): 5,411 tests pass, 27 of them new; ruff, black and mypy are clean. A dry-run
+   taker against a local simulator took an addressed ask and logged its reason for skipping an addressed bid.
 
 ## 1. Addressed offers (defect 1)
 
 **Root cause** (confirmed on main):
-- `Taker._board_of` (taker.py:1133) reads each venue with `self.public.board()`, the keyless `PublicBazaar`
+- `Taker._board_of` (taker.py:1141) reads each venue with `self.public.board()`, the keyless `PublicBazaar`
   (sdk.py:51). The real server's keyless board never lists an addressed offer (6 live examples, dealing.md §3.3).
 - `market.our_open_offers` (market.py:200) skips the offers `/api/me/offers` returns with `to == us`, on purpose:
   they are not ours.
@@ -47,7 +51,7 @@ Branch, on top of `origin/main` 25b69c56 (rebased; main moved by docs only):
 **Change:**
 - `market.addressed_to_us` (market.py:219) keeps the open offers whose `to` is us and whose maker is someone else,
   outside a thread. Thread offers stay the team desk's.
-- `Taker._addressed_in` (taker.py:1000) parses them with the same `parse_offer` as the board, and keeps only plain
+- `Taker._addressed_in` (taker.py:1008) parses them with the same `parse_offer` as the board, and keeps only plain
   one-card-for-cash shapes. It merges them into the board offers in `_board_offers`, **before** makers are resolved
   from the feed, so a pseudonymous maker is named the same way and `max_counterparty_share` treats it like any
   other offer. An offer the board already showed is not added twice.
@@ -56,10 +60,17 @@ Branch, on top of `origin/main` 25b69c56 (rebased; main moved by docs only):
     `block_buying_held_cards`, the official-value cap, counterparty share, breakers, approvals), the offer
     inspector, the advisory Jev or decider check, the duel grace, and the shared accept ledger with duels first.
     `_target_asks` sees them too, so an approved buy target's addressed ask is taken.
-  - Bids, with `all`, go through `_bids` → `_accept_bid`: our value plus page bonus plus `sell_min_surplus` (5),
-    then `check()` (`sell_min_value_ratio` 1.0 × `your_value` on the net after fee, `protect_page_sets`,
-    `protect_page_exceptions`, the move-impact guard `max_score_loss_per_move`, counterparty share, approvals),
-    the inspector, and the same slot ledger.
+  - Bids, with `accept_bids` on (main's default since #272) or with `all`, go through `_bids` → `_accept_bid`:
+    our value plus page bonus plus `sell_min_surplus` (5), then `check()` (`sell_min_value_ratio` 1.0 ×
+    `your_value` on the net after fee, `protect_page_sets`, `protect_page_exceptions`, the move-impact guard
+    `max_score_loss_per_move`, counterparty share, approvals), the inspector, main's publication reservation, and
+    the same slot ledger.
+  - **Approvals:** main now sets `human_approval_above` = 60, so any addressed ask or bid at or above 60 P is
+    refused until a human approves that card and side (`bazaar approve`). The skip row names the approval.
+  - **Rival list:** `team_desk_never_trade` (t03, t05, t06, t10, t12, t13, t14, t17, t18) binds the team desk
+    only. Board accepts never checked it, and addressed offers follow the board path, so an addressed ask from t05
+    is decided like that team's public ask. **Marius's call** whether addressed offers should also respect the
+    list (a one-line filter in `_addressed_in`). t05 and t10 sent 49 of Saturday's 127 addressed offers.
 - **Audit:** every addressed offer leaves a row.
   - A candidate's accept or skip row carries `inputs.addressed_to_us = true`.
   - Any other gets an `addressed_offer` row (status `rejected`) with the reason. Reasons include: already held;
@@ -67,22 +78,23 @@ Branch, on top of `origin/main` 25b69c56 (rebased; main moved by docs only):
     to sell; the sale nets under `sell_min_surplus`; not a plain shape; venue not tradable; selling into addressed
     bids is off.
   - Each reason is recorded once, and again only when it changes.
-- **Kill switch:** `BAZAAR_ADDRESSED_OFFERS` (or `--addressed`), read at taker start (cli.py:3111), with three
+- **Kill switch:** `BAZAAR_ADDRESSED_OFFERS` (or `--addressed`), read at taker start (cli.py:3210), with three
   values:
-  - `asks` (default): addressed asks only.
-  - `all`: also sell into addressed bids, even with `--accept-bids` off. Public bids stay behind `--accept-bids`,
-    unchanged.
-  - `off`: as before.
+  - `asks` (default): addressed asks, plus addressed bids whenever `--accept-bids` is on (main's default).
+  - `all`: addressed bids even with `--no-accept-bids`. Public bids stay behind `--accept-bids`, unchanged.
+  - `off`: as before (addressed offers unread).
 
   Any other value turns it **off** with a warning, rather than crash-looping the taker. The variable is declared
   `preserve()` on bazaar-taker (`.railway/railway.py:285`), so `railway config apply` keeps a hand-set value.
 - **Fix found on the way:** `_accept_bid` kept the team's accept slot after a refusal that cost nothing, such as a
   bid that expired or was taken mid-tick (`offer_not_open`). It now releases the slot like the buy path does
-  (taker.py:2488), so the slot stays free for the next candidate or a duel.
+  (taker.py:2575), so the slot stays free for the next candidate or a duel. After the rebase it also releases
+  main's publication reservation on a 4xx (not 408) first, in the same order as `_accept_one`.
 
 **Why asks default ON:** an addressed ask runs through exactly the code path that took public asks live all Saturday
-(9 accepts). The only new input is which offers reach that path. **Why bids default OFF:** the sell-into-bid path
-has never run live (0 `accept_bid` rows on Saturday), so turning it on is Marius's call.
+(9 accepts). The only new input is which offers reach that path. **Bids:** main (#272) already decided to sell into
+guarded bids by default. An addressed bid is a bid to us through the same sell path, so it follows that decision.
+That path had never run live before #272 (0 `accept_bid` rows on Saturday).
 
 ## 2. Empty dealer ladder slots (defect 2)
 
@@ -125,7 +137,7 @@ has never run live (0 `accept_bid` rows on Saturday), so turning it on is Marius
 
 **The exact cap:**
 - `official_value_margin` = 0 (GUARDRAILS.md:27) applies to every card buy (open, bid, final, board accept).
-- It is enforced in `guardrails._official_value_violations` (guardrails.py:1246) → `official_values.cap_violations`
+- It is enforced in `guardrails._official_value_violations` (guardrails.py:1259) → `official_values.cap_violations`
   (official_values.py:137): `price + gives_value <= official − margin`, using `GET /api/me/value`.
 - Saturday's walk text was `guardrail: denied: price 50 > official value 49 of RET-10 (GET /api/me/value)`, which is
   this function's message.
@@ -133,14 +145,15 @@ has never run live (0 `accept_bid` rows on Saturday), so turning it on is Marius
 **Change** (the existing value is untouched):
 - New rule `dealer_ladder_value_tolerance` = 0 (GUARDRAILS.md:28; field guardrails.py:114, range 0–10). When it is
   above 0, a taker buy from a dealer may pay up to that many primas **over** the official value while that
-  dealer's level has an empty slot this round (`ladder_tolerance`, guardrails.py:1267). This covers the open, each
+  dealer's level has an empty slot this round (`ladder_tolerance`, guardrails.py:1280). This covers the open, each
   bid and its final (new `Action.dealer` field).
 - Never for:
   - an epic or legendary (`off_page_min_surplus`, Marius's hard rule, stays);
   - a team trade or a board ask;
   - the maker, or a hand `dealer buy` (no `Action.dealer` and no `ladder_open` there).
-- The rarity caps, cash floor, hourly spend, breakers and approvals still bind. Once the level's three slots are
-  scored, the cap is back.
+- The rarity caps, cash floor, hourly spend, breakers and approvals still bind (`human_approval_above` is 60 on
+  main: Pícaros RET buys at 50–53 are under it; a Chato rare at its median 89 needs an approval anyway). Once the
+  level's three slots are scored, the cap is back.
 - The probe plans its top with the same lift (ladder_probe.py:261), so it plans what the guardrails will let it bid.
 
 **What value Marius would set, and its cost:**
@@ -169,15 +182,16 @@ dealer's lowest fill). It would not have stopped the 23 RET threads: Pícaros' l
 cap, so the skip test passes. Since #248, a guardrail walk already rests the card for a game hour (UB1). The
 tolerance is the lever that changes the outcome.
 
-## 4. Tests (25 new, all passing)
+## 4. Tests (27 new, all passing)
 
-- `tests/test_taker_addressed.py` (12):
+- `tests/test_taker_addressed.py` (13):
   - Reading: only open plain offers addressed to us are read; the mode parses safely.
-  - Asks: a good addressed ask is accepted with no extra request; `off` leaves it unread; a bad one gets an
+  - Asks: a good addressed ask is accepted with exactly the reads of the same public ask; `off` leaves it unread; a bad one gets an
     `addressed_offer` row with its reason, once; unpriceable shapes and closed venues are recorded, not guessed.
   - Accept slot: a duel holding the slot defers the ask, which is accepted next tick.
   - Dry run: nothing sent, a WOULD row is written.
-  - Bids: they wait for `all`, and public bids stay behind `--accept-bids`; a thin bid is rejected with a reason.
+  - Bids: with `accept_bids` on (main's default) an addressed bid is sold into; with it off they wait for `all`,
+    and public bids stay behind `--accept-bids`; a thin bid is rejected with a reason.
   - Floor: **our private value floor holds even with `sell_min_surplus` forced to −100**, because `check()` refuses
     a net under `your_value`.
   - A refused sell into an expired bid gives the slot back.
@@ -190,13 +204,13 @@ tolerance is the lever that changes the outcome.
   lift; the taker bids over the official value only while the level has an empty slot.
 - `tests/test_dealer_sell_readiness.py` (+1): slot counts restart when a round starts mid-day.
 
-Gates on 5df8f96e:
-- `uv run pytest`: 5331 passed, 152 skipped, 2 xfailed.
+Gates on 431059f6 (the last code commit; this doc is docs only):
+- `uv run pytest`: 5411 passed, 155 skipped, 2 xfailed.
 - `uv run ruff check src tests scripts`: clean.
 - `uv run black --check src tests scripts`: clean.
-- `uv run mypy src`: no issues in 209 files.
+- `uv run mypy src`: no issues in 211 files.
 
-**Simulator smoke** (local `bazaar-sim` on 127.0.0.1:8791, memory store, dry run, `BAZAAR_ADDRESSED_OFFERS=all`,
+**Simulator smoke** (run before the rebase onto #272; local `bazaar-sim` on 127.0.0.1:8791, memory store, dry run, `BAZAAR_ADDRESSED_OFFERS=all`,
 `--no-jev`, no `DATABASE_URL`):
 - sim-team2 posted an ask and a bid addressed to t01.
 - The taker logged `WOULD accept LAV-04 on rastro for 3 · guardrails allowed` at ticks 12 and 13. Tick 11 was
@@ -241,8 +255,10 @@ and 13:55 to the close. **Merge in the 09:40–10:55 gap**, outside a bench.
    yellow `BAZAAR_ADDRESSED_OFFERS=… addressed offers off` warning.
 4. Variables, bazaar-taker only (each restarts the taker only):
    - Nothing, for addressed asks (default `asks`).
-   - Sell into addressed bids (t02-style; the reviewer found ≈ 30 neg_points of above-value bids on Saturday):
-     `printf all | railway variable set BAZAAR_ADDRESSED_OFFERS --stdin --service bazaar-taker` (README's pattern).
+   - Addressed bids (t02-style; the reviewer found ≈ 30 neg_points of above-value bids on Saturday) are sold into
+     whenever `--accept-bids` is on, main's default. Only if the taker runs with `--no-accept-bids` and Marius still
+     wants them: `printf all | railway variable set BAZAAR_ADDRESSED_OFFERS --stdin --service bazaar-taker`
+     (README's pattern).
    - For the probe to run at 15 s ticks: README item 1 (`BAZAAR_DECIDER_MIN_TICK_S=15`,
      `BAZAAR_DECIDER_TIMEOUT_S=8`, `BAZAAR_DECIDER=llm`), if not set already.
 5. The tolerance, only if Marius decides: a one-line GUARDRAILS.md commit, `dealer_ladder_value_tolerance` = 4.
@@ -263,7 +279,7 @@ and 13:55 to the close. **Merge in the 09:40–10:55 gap**, outside a bench.
 - **Addressed asks (on by default):** the same buys the taker already makes from public asks; no new guard is
   bypassed. A team could address a bait ask, but the official-value cap and the rarity caps bound the price as for
   a public ask.
-- **Addressed bids (`all`):** first live use of the sell-into-bid path. Guarded by the sell floor at `your_value`
+- **Addressed bids (with `accept_bids`, main's default):** the sell-into-bid path, live only since #272. Guarded by the sell floor at `your_value`
   (ratio 1.0), `sell_min_surplus` 5 over value plus page bonus, `protect_page_sets` (every set),
   `max_score_loss_per_move` 0.001 and approvals. The SAL-07 class of mistake (a page copy below value) is refused
   three times over.
