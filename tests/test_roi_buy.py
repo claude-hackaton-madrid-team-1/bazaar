@@ -107,3 +107,13 @@ def test_an_off_page_roi_buy_keeps_off_page_min_surplus():
 def test_a_missing_page_buy_ranks_before_an_roi_buy(tmp_path):
     t, _ = run_taker(tmp_path, {HELD: 50.0, "LAV-02": 30.0}, ask(1, HELD, 8), ask(2, "LAV-02", 10))
     assert ("accept", 2) in t.sent and ("accept", 1) not in t.sent  # one accept per tick: the page card's
+
+
+def test_a_card_read_short_is_not_read_again_so_the_reads_move_on(tmp_path):
+    offers = [ask(1, "LAV-01", 5), ask(2, "LAT-03", 6), ask(3, "LAV-06", 7), ask(4, "LAT-09", 8)]
+    t = ValuedTeam(values={"LAT-09": 30.0}, default=1.0)
+    tk, _ = taker(tmp_path, t, board(*offers), live=True, **(ON | {"roi_buy_max_value_reads_per_tick": 3}))
+    tk.on_tick(at(t, TICK))
+    assert t.value_calls == ["LAV-01", "LAT-03", "LAV-06"] and not [s for s in t.sent if s[0] == "accept"]
+    tk.on_tick(at(t, TICK + 1))  # the three read short stay known: the fourth card is read and bought
+    assert t.value_calls[3:] == ["LAT-09"] and ("accept", 4) in t.sent

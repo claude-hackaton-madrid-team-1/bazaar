@@ -116,9 +116,16 @@ def test_decision_rows_catch_a_bid_above_our_cap_an_ask_above_value_and_a_sell_a
         drow(4, 6, "accept_bid", {"ref": "SAL-01", "surplus": -3.2}),
         drow(5, 6, "accept_ask", {"ref": "LAV-02", "total": 18, "value": 20.8}),
         drow(6, 6, "accept_ask", {"ref": "LAV-02", "total": 99, "value": 20.8}, status="failed"),  # never went out
+        drow(7, 7, "roi_buy", {"ref": "LAV-01", "total": 21, "value": 20.0}),  # an ROI buy over its official value
+        drow(8, 7, "roi_buy", {"ref": "LAV-01", "total": 10, "value": 20.0}),
     ]
     found = wd.decision_findings(rows)
-    assert [(f.scope, f.at) for f in found] == [("dealer_buy", 5), ("board_accept", 6), ("board_accept", 6)]
+    assert [(f.scope, f.at) for f in found] == [
+        ("dealer_buy", 5),
+        ("board_accept", 6),
+        ("board_accept", 6),
+        ("board_accept", 7),
+    ]
 
 
 # ---------------------------------------------------------------- (b) team swaps

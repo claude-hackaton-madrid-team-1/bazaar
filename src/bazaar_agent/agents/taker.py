@@ -236,6 +236,7 @@ class TakerConfig:
 FLAGS_FILE = "flags.jsonl"  # flags sent (or that may have landed), one per message, across restarts
 ROI_KIND = "roi_buy"  # the decisions kind of an ROI buy (`roi_buy_enabled`)
 ROI_SPEND = "roi:"  # the item prefix of an ROI buy's ledger spend row: `roi_buy_max_spend` sums these
+ROI_MEMO_TICKS = 20  # an ROI read that fell short is trusted this long (the official value moves slowly)
 
 
 # ---------------------------------------------------------------- (a) standing asks on the boards
@@ -672,6 +673,9 @@ class Taker:
         self._pack_notes: set[tuple[int, str]] = set()  # (asset, verdict) already recorded and not sent
         self._pack_refused: set[int] = set()  # sealed packs the server refused to open: never sent again
         self._dry_accepts: dict[int, int] = {}
+        # ROI scan: (card, copies held) -> (the cheapest total read that fell short, its tick); not read again
+        # at that total or above for ROI_MEMO_TICKS, so the per-tick reads move on to other cards
+        self._roi_short: dict[tuple[str, int], tuple[int, int]] = {}
         self.flags = FlagBook.from_rules(rules, decisions.dir / FLAGS_FILE)  # S1: bad-faith flags, once each
         self._flag_rows: dict[int, tuple[int, bool]] = {}  # message id -> (its flag row, approved): a 429 reuses it
         if self.flags.skipped:
@@ -1209,26 +1213,40 @@ class Taker:
             return []
         held = self._ctx(run).held  # as `check` reads it: the same (card, tick, held) value is read once
         best: AskCandidate | None = None
-        start = self.values.reads
+        start, known, top = self.values.reads, 0, None
         for total, fee, o, rarity in sorted(cheapest.values(), key=lambda c: (c[0], c[2].id)):
+            n = held.get(o.ref, 0)
+            short = self._roi_short.get((o.ref, n))
+            if short is not None and total >= short[0] and tick - short[1] < ROI_MEMO_TICKS:
+                known += 1
+                continue
             if self.values.reads - start >= rules.roi_buy_max_value_reads_per_tick or not run.window.open():
                 break
-            official = self.values.value(o.ref, tick, held.get(o.ref, 0))
+            official = self.values.value(o.ref, tick, n)
             if official is None:
                 continue
             margin = max(rules.value_margin_for(rarity), float(rules.roi_buy_min_surplus))
             surplus = round(official - total, 1)
-            if surplus < margin or (best is not None and surplus <= best.surplus):
+            top = surplus if top is None else max(top, surplus)
+            if surplus < margin:
+                self._roi_short[(o.ref, n)] = (total, tick)
                 continue
-            n = held.get(o.ref, 0)
+            if best is not None and surplus <= best.surplus:
+                continue
             why = f"ROI: official value {official:g} (one more copy, {n} held) - ask {o.price} - fee {fee} on {o.venue}"
             best = AskCandidate(
                 o, rarity, fee, total, round(official, 1), surplus, False, surplus, why, own_bids.get(o.ref), roi=True
             )
+        reads = self.values.reads - start
         if best is not None:
             self.log(
                 f"tick {tick} taker: ROI candidate {best.offer.ref} on {best.offer.venue}: ask {best.offer.price} + "
-                f"fee {best.fee}, surplus {best.surplus:g} ({self.values.reads - start} value read(s))"
+                f"fee {best.fee}, surplus {best.surplus:g} ({reads} value read(s))"
+            )
+        elif reads:
+            self.log(
+                f"tick {tick} taker: ROI scan: {len(cheapest)} card(s) asked, {reads} value read(s), {known} known "
+                f"short, best surplus {top if top is not None else '?'} (none >= the min)"
             )
         return [best] if best is not None else []
 

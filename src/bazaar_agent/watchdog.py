@@ -160,7 +160,8 @@ def _buy_scope(t: Trade, decisions: Sequence[Row]) -> str:
     if t.persona is not None:  # her offer we accepted (an `accept_buy`) or our bid she took (a `bid`)
         accepted = any(_inputs(d).get("item") in refs and _near(d, t.tick) for d in _done(decisions, "dealer_accept"))
         return "board_accept" if accepted else "dealer_buy"
-    accepted = any(_inputs(d).get("ref") in refs and _near(d, t.tick) for d in _done(decisions, "accept_ask"))
+    asks = [*_done(decisions, "accept_ask"), *_done(decisions, "roi_buy")]  # an ROI buy is a board accept too
+    accepted = any(_inputs(d).get("ref") in refs and _near(d, t.tick) for d in asks)
     return "board_accept" if accepted else "maker_post"  # else a bid of ours was filled
 
 
@@ -211,8 +212,8 @@ def decision_findings(decisions: Iterable[Row]) -> list[Finding]:
             top = max(cap or 0, _int(inputs.get("final_max")) or 0)
             if price is not None and cap is not None and price > top:
                 out.append(Finding("dealer_buy", f"bid {price} > our cap {top} on thread {inputs.get('thread')}", tick))
-        elif kind in ("accept_ask", "dealer_accept"):
-            cost = _num(inputs.get("total" if kind == "accept_ask" else "ask"))
+        elif kind in ("accept_ask", "roi_buy", "dealer_accept"):  # an ROI buy's value is the official value
+            cost = _num(inputs.get("ask" if kind == "dealer_accept" else "total"))
             value = _num(inputs.get("value"))
             if cost is not None and value is not None and cost > value + 1e-9:
                 what = inputs.get("ref") or inputs.get("item")
