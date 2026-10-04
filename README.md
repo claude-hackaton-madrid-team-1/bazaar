@@ -159,6 +159,7 @@ with `uv run black src tests scripts`. The manual
 | Understand the implementation | [Architecture](docs/architecture.html), [project spec](.ai/specs/01-spec.md) |
 | Replay decisions and prepare the demo | [Observability](docs/observability.md), [pitch materials](docs/pitch/) |
 | Find work or historical decisions | [Local backlog](.ai/specs/02-plan.md), [decision log](docs/decisions.md), [team memory](.ai/memory.md) |
+| Connect a teammate’s MCP client | [MCP skill](.ai/skills/bazaar-mcp/SKILL.md), [reviewed operator proposals](docs/operations.md#exact-operator-proposals) |
 | Contribute with an AI agent | [AGENTS.md](AGENTS.md), [agent harness](docs/agent-harness.md) |
 
 `src/` holds runtime code; `tests/` holds unit and integration tests; `scripts/`
