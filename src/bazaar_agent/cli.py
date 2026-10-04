@@ -112,7 +112,7 @@ def _root(ctx: typer.Context, llm_runtime: str | None = llm_cli.LLM_RUNTIME_OPTI
     # Warnings (e.g. Phoenix or Postgres unreachable) follow the banner: stdout on Railway, which files stderr
     # as errors, stderr elsewhere so `--json` stdout stays JSON. A no-op when logging is already configured.
     logging.basicConfig(stream=log_stream(), level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
-    if tm.init_tracing("bazaar"):
+    if tm.init_tracing(os.environ.get("OTEL_SERVICE_NAME", "bazaar").strip() or "bazaar"):
         command = ctx.invoked_subcommand or "bazaar"
         ctx.with_resource(tm.command_span(command))
         tm.capture_console(console, command)
@@ -3284,6 +3284,42 @@ def agent_taker(
     _run_agent("taker", live, max_ticks, build, port, host, evals_every, learn=learn, llm_read=learn and llm_read)
 
 
+@agent_app.command("sales")
+def agent_sales(
+    live: bool = typer.Option(False, help=AGENT_LIVE_HELP),
+    max_ticks: int = typer.Option(0, help="Stop after N game ticks (0 = continue)"),
+    port: int | None = typer.Option(None, help=PORT_HELP),
+    host: str | None = typer.Option(None, help=HOST_HELP),
+) -> None:
+    """Negotiate team sales/swaps using the existing rival scanner; no dealer or market-book loop."""
+    from bazaar_agent.agents.sales import Sales
+    from bazaar_agent.agents.sales_words import sales_words
+    from bazaar_agent.agents.taker import TakerConfig
+    from bazaar_agent.learn.threads import ThreadStore
+
+    def build(team: Any, public: Any, *, settings: Any, **kw: Any) -> Any:
+        from bazaar_agent import db
+
+        shared = kw["ledger"].where.startswith("postgres")
+        thread_store = None
+        if shared:
+            thread_store = ThreadStore(lambda: db.connect(app="bazaar-sales-threads", connect_timeout_s=3), kw["log"])
+            thread_store.open()
+        return Sales(
+            team,
+            public,
+            config=TakerConfig(max_dealer_threads=0, accept_bids=True, card_hunt=True),
+            swap_jev=_swap_jev(settings, kw["rules"]),
+            words_fn=sales_words(settings, kw["rules"], kw["log"]),
+            latest_matrix=_latest_matrix(kw, settings),
+            affinity=_affinity_book(kw, shared),
+            thread_store=thread_store,
+            **kw,
+        )
+
+    _run_agent("sales", live, max_ticks, build, port, host, 0)
+
+
 @agent_app.command("maker")
 def agent_maker(
     live: bool = typer.Option(False, help=AGENT_LIVE_HELP),
@@ -3369,6 +3405,7 @@ def _venue_keeper(team: Any, settings: Any, kw: dict[str, Any], matrix: Any = No
         stats_dir=settings.data_dir / "agents",
         announce_every_ticks=ANNOUNCE_EVERY_TICKS,
         matrix=matrix.current if matrix is not None else None,
+        params=kw.get("params"),
     )
 
 

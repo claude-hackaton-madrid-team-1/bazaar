@@ -45,7 +45,17 @@ from bazaar_agent.agents.seller import (
 )
 from bazaar_agent.agents.words import WordsFn, WordsRequest
 from bazaar_agent.decisions import Status
-from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, Verdict, check, context_from, refund_row
+from bazaar_agent.guardrails import (
+    Action,
+    Context,
+    Guardrails,
+    LedgerStore,
+    Verdict,
+    check,
+    context_from,
+    kill_switch,
+    refund_row,
+)
 from bazaar_agent.intel import TEAM_ID, set_of
 from bazaar_agent.ledger_pg import LedgerUnavailable, trade_lock
 from bazaar_agent.sdk import BazaarError
@@ -246,6 +256,7 @@ class DeskView:
     round: int | None = None  # /api/clock `round`: the game day a multiplier question is asked on (AF1)
     dealer_in_use: int | None = None  # includes dealer threads opened earlier in this tick
     max_open_offers: int = 30  # /api/clock shared open-offer cap
+    budget_s: Callable[[], float] = lambda: 0.0  # optional words writer, bounded by this tick
 
 
 @dataclass
@@ -306,6 +317,7 @@ class TeamDesk:
         hunt: bool = False,
     ) -> None:
         self.team, self.rules, self.rec, self.log, self.live = team, rules, rec, log, live
+        self.sent_words: Callable[[int, str, str, int, int, str, dict[str, Any]], None] | None = None
         self.hunt = hunt  # card hunt (`card_hunt.py`): the deterministic gate instead of Jev, more team threads
         self.ledger = ledger  # the shared ledger: spend we add, listings we post (the maker's budget)
         self.ladder, self.words, self.env, self.plan_ttl = ladder or Ladder(), words, env, plan_ttl_ticks
@@ -1318,10 +1330,18 @@ class TeamDesk:
             elif talk.offer_id is not None and self._gone(v, talk):  # expired or cancelled by the server
                 self._refund(v, self._talk_offer(talk))
             talk.offer_id = None
+            text = self.words(
+                WordsRequest(
+                    f"team:{talk.team}", cash, talk.step, talk.trade.refs[1], tick=v.tick, budget_s=v.budget_s()
+                )
+            )
+            if kill_switch(self.rules) or not v.window_open():
+                self.rec.decisions.settle(did, "expired")
+                return
             if self.ledger is not None:
                 self.ledger.record(f"operator_say:{talk.thread_id}", v.tick, v.t_hours)
-            self._spend(v, -cash, talk.trade.refs[1])  # booked before the send: an outage never leaves it unbooked
-            text = self.words(WordsRequest(f"team:{talk.team}", cash, talk.step, talk.trade.refs[1], tick=v.tick))
+            self._spend(v, -cash, talk.trade.refs[1])  # booked before send, after bounded words
+
             question = self._question(v, talk.team) if talk.step == 0 else None
             if question is not None:  # words only: the structured offer below is the same with or without it
                 text = f"{text} {question}"
@@ -1334,6 +1354,13 @@ class TeamDesk:
                 if self.ledger is not None
                 else None
             )
+            if kill_switch(self.rules) or not v.window_open():
+                if reservation is not None and self.ledger is not None:
+                    publication.release(self.ledger, reservation, v.tick, v.t_hours)
+                if cash < 0 and self.ledger is not None:
+                    self.ledger.record("spend", v.tick, v.t_hours, cash, f"{TEAM_SPEND}{talk.trade.refs[1]}")
+                self.rec.decisions.settle(did, "expired")
+                return  # proven unsent: release only this attempt's asset/cash promise
             body = self.rec.send(
                 did,
                 v.tick,
@@ -1341,6 +1368,12 @@ class TeamDesk:
                 {"thread_id": talk.thread_id, "swap": terms},  # kept out of the public request fields
                 lambda: self.team.say(talk.thread_id, text, offer=terms),
             )
+            message_id = (body or {}).get("message")
+            if body is not None and type(message_id) is int and self.sent_words is not None:
+                try:
+                    self.sent_words(talk.thread_id, talk.team, v.us, v.tick, message_id, text, terms)
+                except Exception as error:  # buffered observability must never change the completed send
+                    self.log(f"team desk: sent words not buffered ({type(error).__name__})")
             if body is None and not self.rec.maybe_landed:  # refused: nothing stands, the spend comes back, but
                 # only on a definitive refusal (4xx): a 5xx may have landed, and then the spend stays booked
                 if (

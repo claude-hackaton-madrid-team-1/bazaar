@@ -31,7 +31,16 @@ import railway_sdk
 IAC = Path(__file__).resolve().parents[1] / ".railway" / "railway.py"
 REPO = "claude-hackaton-madrid-team-1/bazaar"
 SERVICES = frozenset(
-    {"phoenix", "bazaar-duels", "bazaar-taker", "bazaar-maker", "bazaar-mcp", "bazaar-sim", "bazaar-live"}
+    {
+        "phoenix",
+        "bazaar-duels",
+        "bazaar-taker",
+        "bazaar-maker",
+        "bazaar-sales",
+        "bazaar-mcp",
+        "bazaar-sim",
+        "bazaar-live",
+    }
 )
 LIVE_SHOW = "bazaar-live"
 LIVE_SHOW_REPO = "claude-hackaton-madrid-team-1/bazaar-live"
@@ -53,8 +62,17 @@ LIVE_SHOW_VARIABLES = {
     "BAZAAR_MCP_TOKEN": {"type": "preserve"},
     "BAZAAR_APPROVER_TOKEN": {"type": "preserve"},
 }
-VOLUMES = frozenset({"phoenix-data", "bazaar-duels-data", "bazaar-taker-data", "bazaar-maker-data", "bazaar-mcp-data"})
-LIVE_AGENTS = frozenset({"bazaar-taker", "bazaar-maker"})
+VOLUMES = frozenset(
+    {
+        "phoenix-data",
+        "bazaar-duels-data",
+        "bazaar-taker-data",
+        "bazaar-maker-data",
+        "bazaar-sales-data",
+        "bazaar-mcp-data",
+    }
+)
+LIVE_AGENTS = frozenset({"bazaar-taker", "bazaar-maker", "bazaar-sales"})
 LIVE_IN_COMMAND = re.compile(r"--live\b|BAZAAR_LIVE")
 PHOENIX_IMAGE = "arizephoenix/phoenix:version-20.19.0"  # the exact pin (docker-compose.yml): never a moving tag
 BUILD_COMMAND = "uv sync --locked --no-dev"  # a build runs no game command
@@ -66,6 +84,7 @@ START_COMMANDS = {
     "bazaar-duels": "/app/.venv/bin/bazaar duel run --play",
     "bazaar-taker": "/app/.venv/bin/bazaar agent taker",
     "bazaar-maker": "/app/.venv/bin/bazaar agent maker",
+    "bazaar-sales": "/app/.venv/bin/bazaar agent sales",
     "bazaar-mcp": "/app/.venv/bin/bazaar mcp serve --host 0.0.0.0",
     "bazaar-sim": "/app/.venv/bin/bazaar-sim serve --host 0.0.0.0",
     "bazaar-live": "node server/index.ts",
@@ -114,7 +133,9 @@ def test_only_the_live_agents_declare_bazaar_live_and_only_as_preserve(services:
     assert all(v is None for n, v in live.items() if n not in LIVE_AGENTS), live
 
 
-WORDS_WRITERS = frozenset({"bazaar-duels", "bazaar-taker", "bazaar-maker"})  # llm_env(): the words services
+WORDS_WRITERS = frozenset(
+    {"bazaar-duels", "bazaar-taker", "bazaar-maker", "bazaar-sales"}
+)  # llm_env(): the words services
 
 
 def test_the_bluff_kill_switch_is_hand_set_on_every_words_service_and_never_valued_here(

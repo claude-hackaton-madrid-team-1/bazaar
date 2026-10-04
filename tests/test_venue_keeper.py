@@ -660,3 +660,61 @@ def test_the_suite_never_writes_bench_books_to_a_teammates_database(tmp_path):
     k.opened = vn.Opened("v09", SecretStr(KEY), ("postgres",))
     k.on_tick(snap().clock, None, window())
     assert k._broker[1].books._connect is None  # tests/conftest.py no_bench_books_db
+
+
+def test_alliance_notice_uses_scheduled_publisher_without_renaming_or_extra_reads(tmp_path):
+    from bazaar_agent.strategy import load_strategy
+
+    broker = AnnouncingBroker()
+    k = announcing(tmp_path, broker)
+    k.params = lambda tick: load_strategy().params.model_copy(update={"preferred_sell_venue_owners": "t04,t15,t18"})
+    k.matrix = lambda tick: None  # the invitation needs no private matrix or extra API reads
+    partners = [ours(venue=vid, owner=owner) for vid, owner in (("v05", "t04"), ("v15", "t15"), ("v28", "t18"))]
+    for tick in (400, 401, 419, 420):
+        s = snap(tick=tick, t_hours=6.5 + (tick - 400) / 120, venues=(RASTRO, ours(), *partners))
+        k.on_tick(s.clock, s, window())
+    assert len(broker.notes) == 2
+    assert broker.notes[0].startswith("Alianza v05 / v15 / v28.")
+    assert "copias únicas de páginas completas" in broker.notes[0]
+    assert all(len(text) <= 280 for text in broker.notes)
+    assert k.team.opened == [] and k.plan == vk.PLAN
+    (tmp_path / "PAUSE").touch()
+    s = snap(tick=440, t_hours=6.9, venues=(ours(), *partners))
+    k.on_tick(s.clock, s, window())
+    assert len(broker.notes) == 2
+
+
+def test_alliance_notice_only_promotes_known_open_free_partners():
+    from dataclasses import replace
+
+    valid = venues_from({"venues": [ours(venue="v15", owner="t15")]})[0]
+    s = snap(venues=())
+    s = replace(
+        s,
+        venues=[
+            valid,
+            replace(valid, id="v01", owner="t01"),
+            replace(valid, id="v02", owner="t02"),
+            replace(valid, id="v03", status="closed"),
+            replace(valid, id="v04", fee_bps=1),
+            replace(valid, id="v05", fee_per_card=1),
+            replace(valid, id="v06", pending_fee=(100, 0)),
+            replace(valid, id="v07", house=True),
+            replace(valid, id="v08 forged claim"),
+        ],
+    )
+    note = vk.alliance_notice(s, "t01,t15")
+    assert note is not None and note.text.startswith("Alianza v15.")
+    assert vk.alliance_notice(s, "none") is None
+    many = replace(s, venues=[replace(valid, id=f"v{i:08d}") for i in range(100)])
+    assert len(vk.alliance_notice(many, "t15").text) <= 280
+
+
+def test_alliance_falls_back_to_existing_notice_when_no_partner_is_open(tmp_path):
+    from bazaar_agent.strategy import load_strategy
+
+    broker = AnnouncingBroker()
+    k = announcing(tmp_path, broker)
+    k.params = lambda tick: load_strategy().params
+    ran(k, 400, 6.5)
+    assert len(broker.notes) == 1 and broker.notes[0].startswith("Team 1 market (v09)")

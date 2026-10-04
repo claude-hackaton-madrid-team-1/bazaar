@@ -1,4 +1,4 @@
-"""Our own dealer threads, as the taker already reads them, kept in Postgres `threads` + `messages` (N12 part 3).
+"""Our own dealer and team threads kept in Postgres from existing reads and acknowledged sends.
 
 The public feed carries every dealer message and its structured offer, but not what only our own thread
 responses carry: `closed_reason` (`cooloff` + `until_tick`, `persona_quota`, `sold_out`, ...), the status a
@@ -14,6 +14,7 @@ as text (NUL stripped), never read back into a decision here.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -44,7 +45,8 @@ THREAD_UPSERT = (
 MESSAGE_UPSERT = (
     "insert into messages (id, thread_id, sender, tick, text, price, offer, final, ours, tactic) "
     "values (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s) "
-    "on conflict (id) do update set final = coalesce(excluded.final, messages.final), "
+    "on conflict (id) do update set text = coalesce(excluded.text, messages.text), "
+    "final = coalesce(excluded.final, messages.final), "
     "offer = coalesce(excluded.offer, messages.offer), tactic = coalesce(excluded.tactic, messages.tactic)"
 )
 
@@ -82,15 +84,22 @@ class Seen:
 def thread_row(s: Seen) -> tuple[Any, ...] | None:
     t = s.thread
     tid = _int(t.get("id"))
-    if tid is None or t.get("kind", "persona") != "persona":  # dealer conversations only
+    kind = t.get("kind", "persona")
+    counterpart = _text(t.get("with"))
+    if tid is None or kind not in ("persona", "team"):
         return None
+    if kind == "team":
+        participants = (t.get("team"), t.get("with"))
+        counterpart = next((p for p in participants if isinstance(p, str) and p != s.us), None)
+        if s.us not in participants or counterpart is None or re.fullmatch(r"t[0-9]+", counterpart) is None:
+            return None
     ticks = [tk for m in t.get("messages") or [] if isinstance(m, Mapping) and (tk := _int(m.get("tick"))) is not None]
     status = _text(t.get("status")) or "open"
     topic = t.get("topic")
     return (
         tid,
-        _text(t.get("with")),
-        "persona",
+        counterpart,
+        kind,
         json.dumps(jsonb_safe(topic), allow_nan=False) if isinstance(topic, Mapping) else None,
         _text(t.get("venue")),
         status,
@@ -162,7 +171,7 @@ def _rows(seen: list[Seen]) -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]
 
 
 class ThreadStore:
-    """Buffers the thread answers the taker read this tick; writes them after the sends."""
+    """Buffers observed threads and acknowledged sent words; writes them after the sends."""
 
     def __init__(
         self, connect: Callable[[], psycopg.Connection] | None, log: Callable[[str], None] = lambda message: None
@@ -179,12 +188,51 @@ class ThreadStore:
             tid, at = _int(thread.get("id")), _int(tick)
             if tid is None or at is None or not us:
                 return
-            self.buffer[tid] = Seen(dict(thread), us, at, dict(tactics or {}))
+            body = dict(thread)
+            prior = self.buffer.get(tid)
+            if prior is not None and prior.us == us:
+                # A pre-send snapshot later in the tick must not erase an acknowledged message.
+                messages = {}
+                for m in [*(prior.thread.get("messages") or []), *(body.get("messages") or [])]:
+                    if isinstance(m, Mapping) and (mid := _int(m.get("message", m.get("id")))) is not None:
+                        messages[mid] = m
+                body["messages"] = list(messages.values())[-200:]
+            self.buffer[tid] = Seen(body, us, at, dict(tactics or {}))
             if len(self.buffer) > BUFFER_MAX:
                 for old in sorted(self.buffer, key=lambda i: self.buffer[i].tick)[: len(self.buffer) - BUFFER_MAX]:
                     del self.buffer[old]
         except Exception as e:
             self._fail("buffer", e)
+
+    def sent(
+        self, tid: int, counterpart: str, us: str, tick: int, message_id: int, text: str, offer: dict[str, Any]
+    ) -> None:
+        """Buffer only an SDK-acknowledged outgoing message (no game request or database I/O)."""
+        if (
+            type(message_id) is not int
+            or message_id < 0
+            or type(tid) is not int
+            or tid < 0
+            or not isinstance(text, str)
+            or counterpart == us
+            or re.fullmatch(r"t[0-9]+", counterpart) is None
+            or re.fullmatch(r"t[0-9]+", us) is None
+        ):
+            return
+        self.saw(
+            {
+                "id": tid,
+                "kind": "team",
+                "team": us,
+                "with": counterpart,
+                "venue": "rastro",
+                "status": "open",
+                "topic": {"trade": "cards"},
+                "messages": [{"id": message_id, "sender": us, "tick": tick, "text": text, "offer": offer}],
+            },
+            us,
+            tick,
+        )
 
     def _db(self, tick: int) -> psycopg.Connection | None:
         if self._conn is not None and not self._conn.closed:

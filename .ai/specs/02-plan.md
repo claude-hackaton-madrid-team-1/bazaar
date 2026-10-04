@@ -835,3 +835,7 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 
 - [Spec](PM1-spec.md): validated Team4/Team15/Team18 public-ask fallback, crossing demand first, deterministic distribution and sticky one-time migration from nonpreferred markets.
 - 178 focused tests pass; independent reviews and coordinator's integrated gate/guarded deployment required.
+
+### SALES1 — autonomous sales worker and live voice
+
+See [SALES1](SALES1-spec.md). In progress: team outreach ownership, Opus 5.5, OTel, Railway service, live conversations and alliance announcements.

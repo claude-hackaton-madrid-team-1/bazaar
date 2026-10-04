@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import time
 from collections import Counter
@@ -570,6 +571,8 @@ class _TickRun:
 
 
 class Taker:
+    snapshot_dealers = True
+
     def __init__(
         self,
         team: Any,
@@ -677,6 +680,8 @@ class Taker:
         self.team_desk = TeamDesk(
             team, rules, self.rec, log, live, ledger=ledger, affinity=affinity, hunt=self.config.card_hunt
         )
+        self._desk_claim_tick: int | None = None
+        self._desk_claimed = False
         self._desk_ranks_tick: int | None = None
         # Jev's answer per unchanged offer state (GUARDRAILS.md `jev_cache_ticks`, 0 = ask every time)
         self.jev_cache: VerdictCache[JevAdvice] = VerdictCache(rules.jev_cache_ticks)
@@ -709,6 +714,7 @@ class Taker:
                 clock,
                 self.holdings,
                 parallel=self.rules.parallel_reads,
+                include_dealers=self.snapshot_dealers,
                 extra={"threads": lambda: self.team.my_threads("open")},
             )
             self._inj_us = snap.us
@@ -875,8 +881,10 @@ class Taker:
         self.team_desk.matrix = self.news.matrix if self.news is not None else None
         self._refresh_desk_ranks(run.snap.clock.tick)
         view = run.team_view = self._team_view(run, threads)
+        self._claim_team_desk(clock)
         proposals += [swap_proposal(a) for a in self._team_desk("proposals", lambda: self.team_desk.proposals(view))]
-        for tid, offer in self.team_desk.cash_offers(view):
+        cash_offers = self.team_desk.cash_offers(view) if self._desk_claimed else []
+        for tid, offer in cash_offers:
             candidates = [board_proposal(c) for c in self._board(run, market, [offer], board_venues)]
             if self.config.accept_bids:
                 candidates += self._bids(run, market, [offer], board_venues)
@@ -956,8 +964,32 @@ class Taker:
             }
         )
 
+    def _claim_team_desk(self, clock: Clock) -> bool:
+        """One durable owner per tick across Taker/SALES and overlapping redeploys.
+
+        The rollout turns the taker's desk off before enabling SALES. Off means no
+        reads, cancellations or withdrawals of the new owner's conversations.
+        """
+        if os.environ.get("BAZAAR_TEAM_THREADS", "").strip() == "0":
+            self._desk_claimed = False
+            return False
+        if self._desk_claim_tick == clock.tick:
+            return self._desk_claimed
+        self._desk_claim_tick, self._desk_claimed = clock.tick, False
+        if not self.live:
+            self._desk_claimed = True
+            return True
+        marker = f"operator_say:team_desk:{getattr(self.ledger, 'world', 'unknown')}"
+        with trade_lock(self.ledger, marker):
+            if not self.ledger.count_in_tick(marker, clock.tick):
+                self.ledger.record(marker, clock.tick, clock.t_hours)
+                self._desk_claimed = True
+        return self._desk_claimed
+
     def _team_desk(self, what: str, call: Callable[[], list[SwapAccept] | None]) -> list[SwapAccept]:
         """The team desk never costs the taker its tick: an error there is reported and the desk skips."""
+        if not self._desk_claimed:
+            return []
         try:
             return call() or []
         except (BazaarError, LedgerUnavailable):
@@ -987,6 +1019,7 @@ class Taker:
             dealer_in_use=sum(str(t.get("with")) in dealers for t in threads) + opened_now,
             ctx=lambda thread: self._ctx(run, skip_thread=thread),
             window_open=run.window.open,
+            budget_s=run.window.left,
             listing_cap=snap.clock.limits.offers_per_team_per_tick,
             max_tick_seconds=snap.clock.max_tick_seconds,
             jev=lambda state: self._ask_swap_jev(run, state),

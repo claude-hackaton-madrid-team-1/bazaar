@@ -250,6 +250,7 @@ def main(ctx=None):
     phoenix_data = volume("phoenix-data", region=REGION, sizeMB=VOLUME_MB)
     duels_data = volume("bazaar-duels-data", region=REGION, sizeMB=VOLUME_MB)
     taker_data = volume("bazaar-taker-data", region=REGION, sizeMB=VOLUME_MB)
+    sales_data = volume("bazaar-sales-data", region=REGION, sizeMB=VOLUME_MB)
     maker_data = volume("bazaar-maker-data", region=REGION, sizeMB=VOLUME_MB)
     mcp_data = volume("bazaar-mcp-data", region=REGION, sizeMB=VOLUME_MB)
 
@@ -294,6 +295,12 @@ def main(ctx=None):
         "BAZAAR_BENCH_MATCH_PROBE": preserve(),  # once: ONE non-crossing match probe (agents/bench_match_probe.py)
     }
     maker = agent("bazaar-maker", "agent maker", maker_data, bench_env)
+    sales = agent(
+        "bazaar-sales",
+        "agent sales",
+        sales_data,
+        {"BAZAAR_LLM_RUNTIME": preserve(), "OTEL_SERVICE_NAME": "bazaar-sales"},
+    )
     # The runtime tools for teammates' Claude Code, over MCP: bearer token, rate limits, DRY RUN.
     mcp = mcp_server("bazaar-mcp", mcp_data)
     sim = simulator()
@@ -306,6 +313,7 @@ def main(ctx=None):
             duels,
             taker,
             maker,
+            sales,
             mcp,
             sim,
             live,
@@ -313,6 +321,7 @@ def main(ctx=None):
             duels_data,
             taker_data,
             maker_data,
+            sales_data,
             mcp_data,
         ],
     )

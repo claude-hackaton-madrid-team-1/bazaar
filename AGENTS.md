@@ -262,6 +262,9 @@ Report**; `/build` emits it and `/acceptance` aggregates it. Rules (apply on eve
 - NEVER write a secret (team key, broker keys, `TYPESAFE_API_KEY`, `.env` values, bearer
   tokens) — this file is public in the repo.
 
+## Sales ownership (2026-10-04)
+The dedicated `bazaar-sales` Railway service owns team negotiation threads using the existing TeamDesk and guarded trade executors. Set `BAZAAR_TEAM_THREADS=0` on taker before enabling sales live. A durable per-tick claim prevents overlapping desk writers. Sales reuses scanner/matrix data and publishes OTel traces; the live UI uses its authenticated feed and existing ElevenLabs provider. Public market announcements use the keeper's existing cadence and configured open zero-fee allies; market names remain unchanged.
+
 # Agent lifecycle (GENERIC — reusable across projects)
 
 > The generic addyosmani/agent-skills lifecycle. Project-specific contract lives in
