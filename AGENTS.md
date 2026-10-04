@@ -106,7 +106,13 @@ The mechanics the rules audit corrected on Sat 3 Oct (commit 8dbf50b7) live in `
   dealers, current tick and time left in it, threads (open / negotiate / accept).
 - **Judging:** negotiation quality, market making, ideas and approach, and the code itself;
   a Sunday presentation (strategy, how we built it, key learnings) is about 40%. Never counts:
-  number of trades, fees, or luck opening packs.
+  number of trades, fees, or luck opening packs. Sunday format (organisers, Sun 09:18,
+  `docs/transcripts/2026-10-04-invofox-3.md`): from 15:00 a "Submit your project" link on the Bazaar
+  (team key; code, slides, artifacts, explanation); one hour to prepare; presentations in ranked order,
+  5 minutes for the top three teams and 3 minutes for the rest; winners at 17:30. The judges ask how we
+  approached the challenge, what we built, why that way, and what we learned. Round weights: Friday 20 %,
+  Saturday 40 %, Sunday 40 %. Don Ernesto (`banco`) is open to everyone; Team 12's fix stops a seller's
+  bad trade from destroying a venue's market-making value (how the score changed was not said).
 - **Venue:** Saturday 09:00–23:00; Sunday 09:00–15:00 CEST, no all-nighter.
 
 ## Stack (LOCKED — do not relitigate)
