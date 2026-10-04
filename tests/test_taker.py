@@ -840,3 +840,25 @@ def test_disabled_hourly_cap_allows_dealer_opening_after_large_spend(tmp_path):
     ledger.record("spend", TICK - 1, 1.4, 10_000, "earlier")
     t.on_tick(clock())
     assert any(sent[0] == "open_thread" for sent in team.sent)
+
+
+def test_team_negotiation_precedes_dealer_messages_and_expired_dealer_work_is_dropped(tmp_path, monkeypatch):
+    team = FakeTeam()
+    t, _, _ = taker(tmp_path, team, FakePublic(), live=True)
+    now = [1000.0]
+    t.now = lambda: now[0]
+    conv = Conversation("abuela", "LAV-08", "uncommon", 52, "r", Negotiation(BidPlan(18, 1, 22)), 50, TICK)
+    dm = DeskMove(conv, Move("bid", 18, reason="next rung"), 25, False)
+    monkeypatch.setattr(t, "_desk_moves", lambda run: [(dm, {})])
+    order = []
+    monkeypatch.setattr(t, "_workshop", lambda run, threads: order.append("workshop"))
+
+    def team_converse(view, taken):
+        order.append("team")
+        now[0] += 60  # bounded team work used the remaining tick; no dealer message may spill over
+
+    monkeypatch.setattr(t.team_desk, "converse", team_converse)
+    t.on_tick(clock())
+    assert order == ["workshop", "team"]
+    assert not [s for s in team.sent if s[0] in ("say", "close_thread")]
+    assert [r["status"] for r in rows(tmp_path) if r.get("kind") == "dealer_bid"] == ["expired"]

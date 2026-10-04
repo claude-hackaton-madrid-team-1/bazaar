@@ -1474,3 +1474,9 @@ Coordinator's guarded pack negotiation 2670 at ticks 1804–1809 offered 17→20
 ### [2026-10-04] build-error — TT2 focused test selection and pending holdings
 
 Initial focused commands named nonexistent test_taker_targets.py (and earlier review test_taller_publication.py); no tests ran in those commands. Re-ran actual tracked test files. Keeping the full bid commitment initially also counted its hoped-for card as already held; exclude only that exact still-open bid's expected card while retaining cash/exposure and all real/settling holdings.
+
+### [2026-10-04] finding — TR1: actual team-trade points, not album proximity
+Real snapshots show neg_points 0→3.5 at tick1824, matching settlement1301: RET-07 bought from t02 for14 versus card value17.5. Outcome `score=.2` is the evaluator's surplus ratio, not the official scoreboard delta. The observed -100.2 at1466 follows the round3 reset and must not be called a trade loss. TeamDesk previously searched nearest-page swaps separately and merged the unrestricted plan, then ranked replies/rival rank/page proximity before expected gain (it did not discard every other page). TR1 uses one all-page search and expected exchange surplus first; safeguards and equal-gain ties remain. Team negotiation messages now precede dealer messages after accepts and Workshop reservations; expired dealer work is dropped.
+
+### [2026-10-04] build-error — TR1 planner container type
+Mypy rejected the post-blocklist assignment after simplifying to one plan: its threads are a tuple while the filtered value is a list. Materialize the plan as a list before the existing filter; no strategy change.

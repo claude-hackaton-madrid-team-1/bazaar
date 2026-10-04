@@ -800,3 +800,9 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 - Stop treating an unfilled cheaper bid as an executable alternative to a profitable ask.
 - Retain full pending cash/exposure and settling-card protection until confirmed cancellation.
 - Verify actual public/addressed taker paths, independent review and CI before guarded rollout.
+
+## TR1 — Team negotiation surplus first
+
+- Spec: [TR1-spec.md](TR1-spec.md).
+- One all-page swap search; expected gain before album/rival-rank ties. Team messages precede dealer counter-messages, with existing accept, Workshop and deadline safety unchanged.
+- Focused 158 tests passed; independent review/full gate and rollout pending coordinator.

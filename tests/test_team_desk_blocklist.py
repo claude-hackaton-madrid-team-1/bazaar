@@ -40,7 +40,6 @@ def test_a_planned_swap_with_a_blocked_team_is_dropped_from_a_fresh_plan(tmp_pat
         threads = (trade("t17"), trade("t02"))
 
     monkeypatch.setattr(td, "build_plan", lambda *a, **k: Plan())
-    monkeypatch.setattr(td, "closest_pages", lambda pages: frozenset())
     d, _ = desk(tmp_path, Team(), team_desk_never_trade=RIVALS)
     d._plan = None
     assert [t.counterparty for t in d._trades(view())] == ["t02"]
