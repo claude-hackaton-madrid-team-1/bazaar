@@ -22,9 +22,10 @@ pushed). Builds on `bench-baseline` (scoring and session facts) and the night re
 4. **Scored with the real rule** (alone above the stall = 1.0 because nobody has ever beaten it; below = 0.5·E/Es),
    session 9's world (`cal_normal20`, 300 seeds): **lookahead E[pts] 0.64, P(above) 0.29, P(below) 0.14** vs
    `edge` with `BAZAAR_BENCH_GUARD_MARGIN=none` 0.57 / 0.15 / 0.08, `edge` (margin 10) 0.51 and `exact` 0.500.
-   Robust: 0.59–0.67 in every ±50 % world. Real-book replays: **b137 (session 8) 0.90**, b120 (session 7) 0.51.
-5. **Deploying it needs a merge** (src/** → bazaar-maker, -taker, -duels, … redeploy): only after Duels III ends and
-   before ~12:30; never 12:37–12:42 (session 9 = t 17.0, the LAST bench). The variable can be set first with
+   Robust: 0.58–0.67 in every ±50 % world. Real-book replays: **b137 (session 8) 0.90**, b120 (session 7) 0.50
+   (replays check the decisions on real quote paths; the outcome still rests on drawn limits and lives, §4).
+5. **Deploying it needs a merge** (src/** → bazaar-maker, -taker, -duels, … redeploy): only after Duels III ends
+   (expected ~11:35–11:40, see §5) and before ~12:25, a ~45 min window; never 12:37–12:42 (session 9 = t 17.0, the LAST bench). The variable can be set first with
    `--skip-deploys`: today's code ignores an unknown value loudly and stays `exact`. Fallback with no merge:
    `BAZAAR_BENCH_POLICY=edge` + `BAZAAR_BENCH_GUARD_MARGIN=none` (maker-only restart): 0.57 in the sim, but it tied
    the stall on both real replays.
@@ -192,6 +193,11 @@ And the live code fed the real JSON of each tick (scratchpad `live_look.py`, see
   22(73)×9(76), two pairs where exact (and the stall) made one; 22×10 crossed the next tick anyway, so this one is
   neutral in reality.
 
+How much to trust b137's 0.90: the +7.6 % rests on seller b137-12 still being there at tick 1784. It was matched
+the tick it arrived, so its real life is unobserved and is drawn from the prior (P(life ≥ 2) = 0.875). The real books
+lean the same way (none of the 15 unmatched traders left after a single tick), but the replay validates the decision
+on real quote paths, not its outcome.
+
 ## 5. Chosen policy and deployment
 
 **Policy:** `BAZAAR_BENCH_POLICY=lookahead` on **bazaar-maker** only (`src/bazaar_agent/agents/bench_lookahead.py`,
@@ -215,7 +221,10 @@ It never sends a pair whose quotes do not cross (test `test_it_only_ever_sends_p
 1. `railway variables --service bazaar-maker --set BAZAAR_BENCH_POLICY=lookahead --skip-deploys` (any time: the
    running code ignores an unknown value loudly and stays `exact`; `bench_config_from_env`).
 2. Push `feat/bench-beat-stall`, PR, merge. A merge touching `src/**` redeploys maker, taker, duels and the rest:
-   **only after Duels III has finished** (it started at t 15.367 ≈ 10:59) and before ~12:25 (`scripts/merge_safe.sh`).
+   **only after Duels III has finished** and before ~12:25 (`scripts/merge_safe.sh`). Duels III starts at t 15.367
+   (≈ 10:59). Duels II ran 612 duels at 16 duel ticks in 192 ticks (`feed_events` duels.scheduled t1239 →
+   duels.finished t1431); at 12 duel ticks that scales to ~144 ticks ≈ 36 min at 15 s, so it should end ~11:35–11:40
+   (watch for `duels.finished` "Duels III"). That leaves ~45 min for PR, CI, merge and deploy.
 3. Check the maker's start line: `broker bench lookahead (exact unless a crossing matching earns more in rollouts)`.
    During the bench, deviations log `tick N broker: bench lookahead: k pair(s) instead of exact's m, +x expected P`,
    and their `broker_match` decisions carry the reason `bench lookahead: …`.
