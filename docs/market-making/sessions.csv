@@ -7,4 +7,4 @@ session,run,day,game_hour,start_tick,venue,mechanism,policy,our_pairs,quoted_sur
 6,b103,Sat,13.0,1401,v19,board,exact,4,29,0.854,0.5,tie,0,reports/mm-probe.md §2.2; reports/bench-books.md
 7,b120,Sun,14.65,1690,v19,board,exact + one-shot match probe (refused 400 bad_match),7,178,0.967,0.5,tie,0,reports/bench-baseline.md Q2 Q5
 8,b137,Sun,15.0,1774,v19,board,exact,4,97,0.895,0.5,tie,0,reports/market-making-dossier.md §4
-9,,Sun,17.0,2254,v19,board,lookahead_safe,,,,,pending,,README.md (session 9)
+9,b155,Sun,17.0,2254,v19,board,lookahead_safe (tick 2262 skipped on a /me timeout),6,101,0.841,0.472,below,0,README.md (session 9); reports/bench-v3.md

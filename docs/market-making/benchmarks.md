@@ -239,9 +239,9 @@ What the deviations are, on the real quotes (bench-sim §4):
 - Paired sign test on the replays (zero-below): b120 192 / 81 draws for safe, b137 1 / 71 for #292. The split comes
   from the objectives (#292 holds for surplus; safe plays P(above)), not from in-sample priors (identical priors).
 
-**Session 9** (the real outcome of `lookahead_safe`): see the [README session table](README.md#sessions-1-to-9).
-A replay of its book was not run for this page; the command is the same with its run id
-(`--replay <run> --plugin scripts/bench_posterior_proof.py`).
+**Session 9** (b155, the real outcome of `lookahead_safe`: 0.472, below the stall): see the
+[README](README.md#session-9). Its replay, the what-we-did scoring and the attribution are in
+[reports/bench-v3.md](reports/bench-v3.md) (`--replay b155`, `--whatwedid`).
 
 ## 12. Saturday statistics (mm-probe scripts, read-only)
 

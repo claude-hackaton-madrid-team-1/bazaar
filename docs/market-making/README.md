@@ -20,8 +20,9 @@ in [`reports/`](reports/) and [`night/`](night/) are the evidence; this page is 
 - **What we built**: a recorder for the real bench books (sessions 7–8), a simulator fitted to them, and two
   look-ahead brokers that plan over sampled futures. Best in simulation: `lookahead_safe`, E[bench_points] 0.67 vs
   0.50 for `exact` (P above the stall 0.35, P below 0.15).
-- **Session 9 (12:37, the last bench) ran `lookahead_safe`** (PR #292, Marius's choice). Result: **pending**, see
-  [Session 9](#session-9).
+- **Session 9 (12:37, the last bench) ran `lookahead_safe`** (PR #292, Marius's choice) and finished **slightly below
+  the stall**: `/me bench_points` 0.500 → 0.472, efficiency 0.841, board market 9.00 → 8.75. Two moments explain it: a
+  maker tick skipped on a `/me` timeout (2262) and one deliberate deviation that lost (2264). See [Session 9](#session-9).
 - **Organic: 0 trades on v19 all weekend.** Other teams' routers posted on venues that opened earlier; nobody ever
   bid on v19.
 
@@ -54,7 +55,7 @@ Efficiency and bench_points from `/me` (`me_snapshots`) after each session. Data
 | 6 | b103 | Sat h13 (1401) | v19, `exact` (the hand probe was never sent) | 4 (29) | 0.854 | 0.5 | tie | nobody above |
 | 7 | b120 | Sun 10:16 (1690), hard, unscheduled | v19, `exact` + one-shot match probe (refused) | 7 (178) | 0.967 | 0.5 | tie | all 18 teams 0.5 |
 | 8 | b137 | Sun 10:37 (1774) | v19, `exact` | 4 (97) | 0.895 | 0.5 | tie | 16 teams 0.5; t07, t08 ≈ 0 |
-| 9 | – | Sun 12:37 (~2254), last | v19, **`lookahead_safe`** | pending | pending | pending | pending | pending |
+| 9 | b155 | Sun 12:37 (2254), last | v19, **`lookahead_safe`** | 6 (101) | 0.841 | **0.472** | **below** | 13 teams 0.00 on the board; nobody visibly above |
 
 Notes:
 - Saturday's `/me` efficiency may be the running round average rather than the session's own (mm-probe gives a
@@ -66,7 +67,29 @@ Notes:
 
 ### Session 9
 
-Pending: the `bench-deploy` session posts the result after the bench (~12:45). This section is updated then.
+Run b155, ticks 2254–2269, 19 traders seen (10 sellers, 9 buyers; buyer b155-2 never seen). Sources: `bench_books`,
+`bench_evidence`, `decisions` ids 6453–6486, the maker log (`Market Test b155 over (ticks 2254–2270): 6 pair(s),
+quoted surplus 101, 0 refused`), `me_snapshots`, `leaderboard_snapshots`; analysis in [bench-v3](reports/bench-v3.md).
+
+| Tick | What happened | Effect |
+|---|---|---|
+| 2255 | `lookahead_safe` held S11 (43) × B4 (49) one tick ("score 0.552 against 0.500, 0 pairs") | neutral: the same pair matched at 2256 |
+| 2256, 2257 | S11 × B4 at 45; S18 (47) × B0 (64) at 55 | = stall |
+| **2262** | **maker tick skipped**: `read refused network (GET /api/me: The read operation timed out); nothing sent`. No book read, no `bench_books` rows | buyer b155-2 (the only trader never seen) was probably alive only this tick; the stall would have seen it |
+| 2263 | S10 (29) × B9 (73), S14 (35) × B7 (59), S12 (39) × B8 (48) | = stall's set |
+| **2264** | **deviation**: S15 (50) × B6 (50) instead of the stall's S13 (46) × B6, keeping relaxing S13 for rising buyers B5/B3 ("score 0.573 against 0.500") | lost: S13 left after 2266 at 41, never crossed |
+
+- **Result**: `bench_points` 0.500 → **0.472**, `bench_efficiency` 0.895 → 0.841 (`me_snapshots` tick 2270). Board market
+  9.00 → 8.75 (−0.25) between ticks 2262 and 2282 while 13 teams moved 0.00; t07 / t08 +0.58 / +0.68 (back to the
+  stall after ≈ 0 in session 8); t05 / t12 small rises mixed with organic; t15, t04, t10 also fell.
+- **Per session or round average?** −0.25 on the board fits `/me bench_points` being the Sunday round average (session 9
+  alone ≈ 3 × 0.472 − 1.0 = 0.416); a per-session 0.472 would move it ≈ −0.07. bench-v3's replay cannot separate the two.
+  Cost: ≈ −0.1 final points.
+- **Attribution (bench-v3 replay, in-sample)**: our six pairs score 0.727 vs the stall's 0.830 (P(below) 0.93). Giving the
+  stall's choice at both 2262 and 2264 closes 84 % of the gap; neither alone does. Only `lookahead_bold` would have
+  beaten the stall on this book (P(above) 0.61).
+- **Fixes, not shipped** (`src/**`, after the game): the maker should run the broker even when its `/me` read fails; and
+  the planner's "keep a relaxing seller for rising buyers" bet needs a life prior that is not over-optimistic.
 
 ## What we tried
 
@@ -94,8 +117,11 @@ Harness commands and every number: [benchmarks.md](benchmarks.md).
 
 Through session 8, nothing beat the stall: `exact` held the 0.5 floor in every session with the maker up, which is
 what a working board venue earns (t07 and t08 show the cost of not matching: ≈ 0). The best policy we found offline
-is `lookahead_safe` (sims) / #292's `lookahead` (the session-8 replay); neither had a live result before session 9.
-Session 9's outcome: [Session 9](#session-9).
+is `lookahead_safe` (sims) / #292's `lookahead` (the session-8 replay). Its one live session (9) finished slightly
+below the stall, mostly from a skipped tick combined with one deviation ([Session 9](#session-9)). **Nothing we ran ever
+beat the stall live.** After session 9, bench-v3 ranks `lookahead_bold` first under the linear reading (0.707) and
+`lookahead_safe` first under zero-below (0.602); the maker was switched to `lookahead_bold` at 13:15 in case an
+unscheduled test fires (none is on `/api/schedule`).
 
 ## Decision log
 
@@ -120,7 +146,10 @@ say, it says so.
 | Sun ~11:34–11:40 | **Marius chose `lookahead_safe`**; `BAZAAR_BENCH_POLICY=lookahead_safe` set on bazaar-maker with `--skip-deploys`; #292 fast-forwarded to `192f6ac0` (lookahead + lookahead_safe/bold) | Marius | the record gives no stated reason; on the table: safe better in sims under zero-below (the main risk after t07/t08), b120 replay 0.806 vs 0.502, b137 0.783 vs 0.899 | `_sat-review/prompts/bench-deploy.md`, STATUS 11:40 |
 | Sun 11:45 | #292 merged at tick 2045 via `scripts/merge_safe.sh` (after Duels III, before the ~12:25 deadline); maker log `bench lookahead_safe (posterior samples...)` verified 11:48; still on after the 11:51 and 11:54 redeploys | bench-deploy session (merge by serban-marius) | deploy guard; rollback = `BAZAAR_BENCH_POLICY=exact` | STATUS 11:45–12:04 |
 | Sun 12:15 | v2 (`slack`, time budget) kept on its branch, not deployed | orchestrator | not reviewed for s9; `src/**` merge = 3 services redeploy | STATUS 11:19, 12:15 |
-| Sun 12:37 | Session 9 runs `lookahead_safe` | – | – | [Session 9](#session-9) |
+| Sun 12:37 | Session 9 runs `lookahead_safe`: 0.472, below the stall | – | tick 2262 skipped on a `/me` timeout; deviation at 2264 lost | [Session 9](#session-9) |
+| Sun 12:50 | bench-v3: b155 replay, read downtime, three readings, every policy rerun (worktree on Sonnet 5.5, chosen by Jev 0.88) | mm-hub, Marius | learn from session 9 | [bench-v3](reports/bench-v3.md) |
+| Sun 13:05 | Organic push: matchmaking notices on v19 every 20 ticks until 14:55 naming live near-misses between two other teams (first at tick 2399); one invitation thread to t03 (thread 3690, on El Rastro, closed after the message). Maker switch to `exact` declined | Marius | organic is the only market-making score left | STATUS 13:04–13:14 |
+| Sun 13:15 | bazaar-maker `BAZAAR_BENCH_POLICY` → `lookahead_bold` (deploy 31bd6a51; log `bench lookahead_bold`) in case an unscheduled test fires | Marius | bench-v3: the only policy above the stall on b155 | STATUS 13:17 |
 
 ## What is still unknown
 
@@ -143,7 +172,7 @@ No private values (card values, limits, cash) here or anywhere in this folder.
 | Claim | Evidence |
 |---|---|
 | We read the scoring before optimising it: matching the free stall = half, top three = full | RULES.md:78–82; [bench-baseline Q1](reports/bench-baseline.md) |
-| We scored exactly the stall's level in sessions 1–8 (session 1 on our free starter stall, 2–8 with our own broker: 36 pairs, 0 refused; efficiency 0.854–0.967), and nobody beat the stall | `/me`; [sessions.csv](sessions.csv); leaderboard deltas (dossier §4.5) |
+| We scored exactly the stall's level in sessions 1–8 (session 1 on our free starter stall, 2–8 with our own broker: 36 pairs, 0 refused; efficiency 0.854–0.967), and nobody beat the stall. Our look-ahead broker's one live session (9) finished slightly below it; we can say why, tick by tick | `/me`; [sessions.csv](sessions.csv); leaderboard deltas (dossier §4.5) |
 | We found out why with one deliberate experiment: a single non-crossing match, refused `400 bad_match`; the server checks quotes, so only timing and partner choice among crossing traders can help | t1692, `decisions` id 4264 |
 | We recorded every bench book from session 7 and fitted a simulator that reproduces the real quote paths (two-bump sellers, relaxing quotes) | `bench_books`; [bench-sim §1](reports/bench-sim.md) |
 | In that simulator an all-knowing broker beats the stall by +8–10 % of possible gains, almost all from **timing** | [bench-sim §2](reports/bench-sim.md) |
@@ -153,8 +182,8 @@ No private values (card values, limits, cash) here or anywhere in this folder.
 
 **Do not claim** (from [mm-probe §6.1](reports/mm-probe.md), updated with Sunday)
 
-- That we beat the stall, unless session 9's `bench_points` is above 0.5.
-- "First team above the stall", same condition.
+- That we beat the stall: we never did (sessions 1–8 tied, session 9 finished below).
+- "First team above the stall": nobody visibly was.
 - That the probe found an edge: it settled the rule the other way (the server checks quotes); `probe` never ran in a
   bench and its stop latch could never fire.
 - "+4.5" or any limit-world EV from Saturday night: that world does not exist.
