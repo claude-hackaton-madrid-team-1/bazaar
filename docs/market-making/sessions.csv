@@ -1,0 +1,10 @@
+session,run,day,game_hour,start_tick,venue,mechanism,policy,our_pairs,quoted_surplus,efficiency,bench_points,vs_stall,teams_above_stall,source
+1,,Sat,3.0,201,v08,auto (starter stall),engine crossed (we were the stall),0,,0.899,0.5,tie,0,reports/mm-probe.md §2.2; reports/bench-baseline.md Q2
+2,b35,Sat,5.0,441,v19,board,exact,4,161,0.933,0.5,tie,0,reports/mm-probe.md §2.2; night/w1a-bench-sim.md
+3,b52,Sat,7.0,681,v19,board,exact,5,85,0.878,0.5,tie,0,reports/mm-probe.md §2.2
+4,b69,Sat,9.0,921,v19,board,exact,6,119,0.891,0.5,tie,0,reports/mm-probe.md §2.2
+5,b87,Sat,11.0,1161,v19,board,exact (edge was on 18:37-19:37 and 19:45-19:52; exact from 19:52),6,165,0.886,0.5,tie,0,reports/mm-probe.md §2.2; notes-night.md (MARKET_TEST_H11_READY)
+6,b103,Sat,13.0,1401,v19,board,exact,4,29,0.854,0.5,tie,0,reports/mm-probe.md §2.2; reports/bench-books.md
+7,b120,Sun,14.65,1690,v19,board,exact + one-shot match probe (refused 400 bad_match),7,178,0.967,0.5,tie,0,reports/bench-baseline.md Q2 Q5
+8,b137,Sun,15.0,1774,v19,board,exact,4,97,0.895,0.5,tie,0,reports/market-making-dossier.md §4
+9,,Sun,17.0,2254,v19,board,lookahead_safe,,,,,pending,,README.md (session 9)
