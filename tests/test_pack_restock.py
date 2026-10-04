@@ -158,3 +158,31 @@ def test_deployed_policy_is_explicit_and_quota_stays_three():
     rules = load_guardrails().rules
     assert rules.pack_restock_enabled and rules.max_price_pack == 22
     assert rules.max_packs_per_game_hour == 3 and rules.cash_floor == 5
+
+
+@pytest.mark.parametrize("pending", [False, True])
+def test_restock_does_not_open_pack_promised_in_offer_or_unknown_publication(tmp_path, pending):
+    from bazaar_agent.agents import publication
+
+    class PromisedPackTeam(FakeTeam):
+        def open_pack(self, asset_id):
+            self.sent.append(("open_pack", asset_id))
+            return {"cards": []}
+
+    team = PromisedPackTeam()
+    t, _, ledger = taker(tmp_path, team, FakePublic(), live=True, pack_restock_enabled=True, open_sealed_packs=True)
+    if pending:
+        publication.reserve(ledger, TICK, clock().t_hours, "t01", {"assets": [6]}, {"cash": 22})
+    else:
+        team.offers = [
+            {
+                "id": 800,
+                "maker": "t01",
+                "status": "open",
+                "venue": "rastro",
+                "give": {"assets": [{"id": 6, "kind": "pack", "ref": "sobre_barrio"}]},
+                "want": {"cash": 22},
+            }
+        ]
+    t.on_tick(clock())
+    assert not any(sent[0] == "open_pack" for sent in team.sent)

@@ -16,9 +16,9 @@ Add one explicit policy flag using existing planner, pack-slot gate and taker ca
 ## Honest implementation report
 
 - Verified: explicit acquisition without holding-EV/Jev veto; regression keeps EV13.3 below price22 as a negative holding diagnostic and still proposes a22P ladder.
-- Verified: pack availability, shared/dealer quotas, cash floor, price ceiling, sole copy, sell floor and expired tick remain effective.
+- Verified: pack availability, shared/dealer quotas, cash floor, price ceiling, sole copy, sell floor and expired tick remain effective. Pack opening excludes assets already offered or durably reserved after an unknown publication; no extra game API reads.
 - Verified: fake server cycle negotiates below opening30, accepts22, settles next tick, opens the acquired pack, then maker refreshes holdings and posts its pulled duplicate above actual value4.
-- Verified: legacy strategy/gate behavior; final focused suite evidence: `232 passed in 1.30s`. Static checks: `All checks passed!`, `734 files already formatted`, `475 files would be left unchanged`, `Success: no issues found in 5 source files`; generated docs and diff checks clean.
+- Verified: legacy strategy/gate behavior; final focused suite evidence: `234 passed in 1.56s`. Static checks: `All checks passed!`, `734 files already formatted`, `475 files would be left unchanged`, `Success: no issues found in 5 source files`; generated docs and diff checks clean.
 - Pending: current-main full gate and independent verdicts before rollout.
 
 Honest metric: 3/4 acceptance criteria verified locally (75%); final integration/review outstanding. Unverified: live pack acquisition, resale conversion and score gain. Could-not-do: none; this worker intentionally performs no live trade, merge or deployment.

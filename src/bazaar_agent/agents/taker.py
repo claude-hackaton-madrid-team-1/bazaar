@@ -1220,6 +1220,12 @@ class Taker:
         packs = [p for p in sealed_packs(run.snap.me) if p.asset_id not in self._pack_refused]
         if not packs:
             return
+        clock = run.snap.clock
+        offers = publication.with_pending(self.ledger, run.snap.me, run.offers, run.snap.us, clock.tick, clock.t_hours)
+        committed = open_commitments(offers, run.snap.us).listed
+        packs = [p for p in packs if p.asset_id not in committed]
+        if not packs:
+            return
         tick = run.snap.clock.tick
         choices = [choose(market, p, run.params, restock=self.rules.pack_restock_enabled) for p in packs]
         choice = next((c for c in choices if c.verdict == "open"), choices[0])
