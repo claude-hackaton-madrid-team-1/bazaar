@@ -280,12 +280,10 @@ def ask_candidates(
         total = o.price + fee
         surplus = case.value - total
         bid = own_bids.get(o.ref)
-        if surplus < params.min_buy_surplus or (bid is not None and total >= bid.price):
+        if surplus < params.min_buy_surplus:
             said[o.id] = (
                 f"ask {o.price} + fee {fee} = {total} leaves {surplus:.1f} under its worth {case.value:.1f} "
                 f"(min_buy_surplus {params.min_buy_surplus:g})"
-                if surplus < params.min_buy_surplus
-                else f"our own bid for {o.ref} at {bid.price if bid else 0} is cheaper"
             )
             continue
         score = round(surplus * (1 + params.scarcity_weight * case.urgency), 2)
@@ -2472,8 +2470,17 @@ class Taker:
             return False
         clock = run.snap.clock
         skip_thread = p.desk.conv.thread_id if p.desk else p.cash_thread
-        skip_offer = p.candidate.replaces_bid.id if p.candidate and p.candidate.replaces_bid else None
-        ctx = self._ctx(run, skip_thread=skip_thread, skip_offer=skip_offer)
+        # A posted bid is not a fill or freed cash: it stays committed until cancellation succeeds.
+        ctx = self._ctx(run, skip_thread=skip_thread)
+        bid = p.candidate.replaces_bid if p.candidate else None
+        if bid is not None:
+            # Only this still-open bid's hoped-for card is excluded; real and settling copies remain held.
+            pending = open_commitments(
+                [o for o in run.offers if o.get("id") == bid.id and o.get("status") == "open"], run.snap.us
+            )
+            held = Counter(ctx.held)
+            held.subtract(pending.wanted)
+            ctx = replace(ctx, held=dict(held))
         maker = p.candidate.offer.maker if p.candidate is not None else None  # a dealer is not a counterparty
         ask = p.candidate.offer.price if p.candidate is not None else None  # the maker's share: without the fee
         final = p.final and p.desk is not None  # a dealer's final: its cap is `final_cap_for` (N14a)
@@ -2827,13 +2834,13 @@ class Taker:
         return fresh.tick == clock.tick and action_budget_s(fresh) > 0
 
     def _withdraw(self, run: _TickRun, bid: OpenOffer) -> None:
-        """A cheaper ask filled the card our bid was waiting for: withdraw the bid, refund its spend."""
+        """An accepted ask replaces our bid: withdraw it and refund only a confirmed cancellation."""
         clock = run.snap.clock
         verdict = check(Action("cancel", str(bid.id)), self._ctx(run), self.rules)
         did = self.rec.decide(
             clock.tick,
             "cancel_bid",
-            f"cancel our bid {bid.id} for {bid.ref}: bought it cheaper · guardrails {verdict}",
+            f"cancel our bid {bid.id} for {bid.ref}: accepted an ask · guardrails {verdict}",
             inputs={"offer_id": bid.id, "ref": bid.ref, "price": bid.price},
             reason="replaced",
             guardrail=str(verdict),
