@@ -17,6 +17,7 @@ import json
 import math
 import re
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, get_args
@@ -189,6 +190,9 @@ class Guardrails(BaseModel):
 
     protect_page_sets: str = "none"
     protect_page_exceptions: str = "none"  # card refs `protect_page_sets` lets us sell as a last copy
+    # True: `protect_page_sets` keeps our only copy only while its page is complete (a caller that cannot tell keeps
+    # protecting it). False: every only copy of a listed set is kept.
+    protect_complete_pages_only: bool = False
     open_sealed_packs: bool = False
     taller_enabled: bool = False
     max_taller_per_game_hour: int = Field(default=2, ge=0, le=20)
@@ -290,12 +294,16 @@ class Guardrails(BaseModel):
         """The least we may receive for an excepted card (0: not excepted)."""
         return card_minimums(self.protect_page_exceptions).get(ref, 0)
 
-    def protects(self, ref: str, rarity: str | None, copies: int) -> bool:
+    def protects(self, ref: str, rarity: str | None, copies: int, complete: Iterable[str] | None = None) -> bool:
         """Our only copy of a page card of a protected (new) page: never sold. A copy of unknown rarity
         counts as a page card (fail closed); a duplicate may still be sold. A card named in
-        `protect_page_exceptions` is never protected (that card only, not its set)."""
+        `protect_page_exceptions` is never protected (that card only, not its set). With
+        `protect_complete_pages_only`, a copy whose page is not complete (`complete`: the sets whose page is, from
+        /me) may be sold too, at our value and above like any sale; without `complete` it stays protected."""
         code = ref.split("-", 1)[0].strip().upper() if "-" in ref else ""
         page_card = str(rarity or "").strip().lower() not in OFF_PAGE_RARITIES
+        if self.protect_complete_pages_only and complete is not None and code not in {c.upper() for c in complete}:
+            return False
         return copies <= 1 and page_card and code in set_codes(self.protect_page_sets) and not self.excepted(ref)
 
     def spend_room(self, cash_available: int, spent_last_hour: int) -> int:
@@ -391,6 +399,7 @@ ENFORCED_BY: dict[str, str] = {
     "flag_trusted_dealers": "agents.inspector.FlagBook (flag_step: the desk) + guardrails (never in flag_dealers)",
     "inspect_accepts": "agents.accept_gate (taker accepts, cli dealer buy, duel run --play, runtime duel_move)",
     "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
+    "protect_complete_pages_only": "guardrails.protects (check, counter_bids: only a complete page keeps its copy)",
     "protect_page_exceptions": "guardrails.protects + check (every sale >= MIN) + maker ask floors (maker_jev, relist)",
     "open_sealed_packs": "guardrails.check (open_pack) + agents.taker",
     "taller_enabled": "guardrails.check (taller, + max_score_loss_per_move) + agents.taker._taller (level_watch)",
@@ -1029,7 +1038,8 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
             v.append(f"sell price {action.price} < {rules.sell_min_value_ratio} × your_value {action.your_value}")
     selling = action.kind in SELLING
     copies = _copies(ctx, action.item)
-    if selling and rules.protects(action.item, action.rarity, copies):
+    complete = ctx.cards.complete if ctx.cards is not None else None  # /me's complete pages (None: protect)
+    if selling and rules.protects(action.item, action.rarity, copies, complete):
         v.append(f"{action.item} is our only copy of a page card of a new page (protect_page_sets)")
     if selling and (wrong := _not_a_copy_of_the_excepted_card(action, ctx, rules)):
         v.append(wrong)

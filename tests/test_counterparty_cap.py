@@ -391,11 +391,20 @@ def test_a_hand_sell_or_swap_never_offers_a_pages_last_free_copy(cli_env):  # no
 
     from bazaar_agent import cli
 
-    # ask 77 already holds asset 3, so asset 4 is the last free LAT-03: #223 protects every set
+    # ask 77 already holds asset 3, so asset 4 is the last free LAT-03: #223 protects every set, and with
+    # `protect_complete_pages_only` (Marius, Sun 4 Oct) that holds while the LAT page is complete
+    pages = cli_env._me["album"]["pages"]
+    for page in pages:
+        page["complete"] = page.get("set") == "LAT"
     swap = CliRunner().invoke(cli.app, ["sell", "swap", "LAT-03", "--for", "LAV-08", "--to", "t05", "--give-cash", "5"])
     listing = CliRunner().invoke(cli.app, ["sell", "list", "LAT-03", "--price", "5", "--to", "t09"])
     for out in (swap, listing):
         assert out.exit_code == 1 and "protect_page_sets" in out.output.replace("\n", " "), out.output
+    assert cli_env.sent == []
+    for page in pages:  # an incomplete page's last copy may be sold above our value (1.2 here): a dry run, no send
+        page["complete"] = False
+    listing = CliRunner().invoke(cli.app, ["sell", "list", "LAT-03", "--price", "5", "--to", "t09"])
+    assert listing.exit_code == 0 and "protect_page_sets" not in listing.output, listing.output
     assert cli_env.sent == []
 
 

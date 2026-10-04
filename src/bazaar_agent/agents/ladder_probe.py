@@ -311,8 +311,11 @@ def probe_state(
     """What Jev reads for `ladder_probe_worth_it` (compact, JSON-safe); with `slots`, the scored slots per level
     this round (an empty slot counts zero, so a probe that fills one is worth more than one that does not)."""
     ladder: dict[str, Any] = {"our_dealer_deals": dict(deals)}
+    probes = list(probes)
     if slots is not None:
         ladder["slots_scored_this_round"] = slots.facts()
+        ladder["empty_slots_this_round"] = sum(slots.empty(lv) for lv in set(slots.levels.values()))
+    tops = sum(p.top for p in probes)
     return {
         "cash": cash,
         "cash_floor": floor,
@@ -320,4 +323,17 @@ def probe_state(
         "spent_last_hour": spent,
         "ladder": ladder,
         "probe": [p.facts() for p in probes],
+        "probes_spend_share_of_cash_room": round(tops / room, 2) if room > 0 else None,
+        "scoring": LADDER_SCORING,
     }
+
+
+# What the ladder is worth, for Jev (Marius, Sun 4 Oct: "Jev should decide but we need to give more info"). Measured on
+# Saturday's board (docs/research/2026-10-04/dealing.md §1, §4); facts, not instructions.
+LADDER_SCORING = {
+    "rule": "each round, our best 3 negotiated deals per dealer level score a share of that dealer's price range; "
+    "an empty slot scores 0; a deal at the dealer's opening ask scores 0",
+    "measured_saturday": "our first 3 deals at L3 added about +1.1 board points each and 3 at L4 about +0.55 to +0.70 "
+    "each; a 4th deal at a level added 0; no dealer buy at or under our value ever lowered our negotiating score",
+    "cash": "cash we hold never scores by itself; a probe's top never passes the official value of the card",
+}
