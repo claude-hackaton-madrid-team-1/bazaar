@@ -50,8 +50,12 @@ def test_kill_switch_accept_quota_sells_and_flags():
     off = gr.parse_guardrails("- `trading_enabled` = false — x").rules
     assert not gr.check(gr.Action("bid", "LAV-03", "common", 9), ctx(), off).allowed
     assert "accept(s) already" in str(gr.check(gr.Action("duel_accept", "7"), ctx(accepts_this_tick=1), rules))
-    assert "your_value" in str(gr.check(gr.Action("sell", "LAT-09", "rare", 30, your_value=35.0), ctx(), rules))
-    assert gr.check(gr.Action("sell", "LAT-09", "rare", 40, your_value=35.0), ctx(held={"LAT-09": 2}), rules).allowed
+    assert "your_value" in str(gr.check(gr.Action("sell", "LAT-08", "rare", 30, your_value=35.0), ctx(), rules))
+    assert gr.check(gr.Action("sell", "LAT-08", "rare", 40, your_value=35.0), ctx(held={"LAT-08": 2}), rules).allowed
+    last_lat08 = gr.check(gr.Action("sell", "LAT-08", "rare", 40, your_value=35.0), ctx(held={"LAT-08": 1}), rules)
+    assert "protect_page_sets" in str(last_lat08)  # La Latina stays protected...
+    lat10 = gr.Action("sell", "LAT-10", "rare", 200, your_value=35.0)  # ...but for its one card (SX1)
+    assert gr.check(lat10, ctx(held={"LAT-10": 1}), rules).allowed
     assert "allow_flags" in str(gr.check(gr.Action("flag", "m1"), ctx(), rules))
 
 
@@ -92,8 +96,15 @@ def test_the_ledger_counts_pack_spends_by_pack_id_in_the_last_game_hour(tmp_path
 
 def test_a_buy_with_no_price_cap_for_its_rarity_is_refused():
     rules = REAL.rules
-    assert "no max_price for rarity 'epic'" in str(gr.check(gr.Action("bid", "LAV-11", "epic", 150), ctx(), rules))
+    legendary = gr.check(gr.Action("bid", "LAV-12", "legendary", 150), ctx(), rules)
+    assert "no max_price for rarity 'legendary'" in str(legendary)
     assert not gr.check(gr.Action("buy", "XYZ-01", None, 5), ctx(), rules).allowed
+    # An epic has a hard cap since buy targets (GUARDRAILS.md `max_price_epic`); without the file, none.
+    epic = gr.check(gr.Action("bid", "LAV-11", "epic", rules.max_price_epic + 1), ctx(), rules)
+    assert f"max_price_epic {rules.max_price_epic}" in str(epic)
+    assert "no max_price for rarity 'epic'" in str(
+        gr.check(gr.Action("bid", "LAV-11", "epic", 5), ctx(), gr.Guardrails())
+    )
 
 
 # ---------------------------------------------------------------- our venue (build only)
@@ -230,8 +241,8 @@ def test_dealer_final_lift_off_keeps_every_cap_as_today():
     rules = REAL.rules
     assert rules.dealer_final_lift == 0
     assert rules.final_cap_for("uncommon") == rules.max_price_uncommon
-    final = gr.check(gr.Action("accept_buy", "LAV-08", "uncommon", 27, final=True), ctx(), rules)
-    assert str(final) == "denied: price 27 > max_price_uncommon 26"
+    final = gr.check(gr.Action("accept_buy", "LAV-08", "uncommon", 31, final=True), ctx(), rules)
+    assert str(final) == "denied: price 31 > max_price_uncommon 30"
 
 
 def test_dealer_final_lift_lets_only_a_final_pass_the_card_cap():
@@ -310,3 +321,19 @@ def test_under_v2_a_duel_move_outside_our_limit_is_still_denied():
 def test_a_bad_trusted_dealer_list_fails_fast(value):
     with pytest.raises(gr.GuardrailsError, match="flag_trusted_dealers"):
         gr.parse_guardrails(f"- `flag_trusted_dealers` = {value} — x")
+
+
+def test_a_second_venue_needs_max_venues_2():
+    ctx_one = ctx(has_venue=True)
+    one = gr.check(
+        gr.Action("venue_open", "venue", None, 270),
+        ctx_one,
+        gr.Guardrails(allow_venue_open=True, venue_open_after_game_hours=0),
+    )
+    assert not one.allowed and "never open a second one" in str(one)
+    two = gr.check(
+        gr.Action("venue_open", "venue", None, 270),
+        ctx_one,
+        gr.Guardrails(allow_venue_open=True, venue_open_after_game_hours=0, max_venues=2),
+    )
+    assert "never open a second one" not in str(two)

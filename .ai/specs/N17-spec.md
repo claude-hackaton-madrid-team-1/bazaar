@@ -2,8 +2,8 @@
 
 - Task id: N17 (new, local, **P1**; its index row in [`02-plan.md`](./02-plan.md) comes with the
   coordinator's #124, its steps are under "Per-task steps")
-- Status: **Phase 2 built** on PR #123 (stacked on the #79/#98 takeovers #137 → #138 → #72), under
-  `/pr-review`. `team_threads_enabled` stays **false** at merge (coordinator, 2026-10-03). See "As built".
+- Status: **Phase 2 merged** (#123, Sat 3 Oct). `team_threads_enabled` was **false** at merge and is **true** since
+  N17-enable (#188, Omar, Sat 3 Oct; Jev gate on every swap): see GUARDRAILS.md and the "N17-enable" section. See "As built".
 - Backlog source: local (`.ai/specs`); the coordinator's brief (Orca task `task_a3927baba1ba`) is the
   source text. Omar: "negotiation with other markets from other teams can also help a lot". Jev
   `team_threads` → `triage_marius_then_threads` (0.92): land the good parts of Marius's night PRs
@@ -108,8 +108,7 @@ inside GUARDRAILS, without feeding them and without starving the rest of the tea
 6. **Words:** `WordsRequest` for `team:<id>`; template words first, then N16's tactic bank (bluffs in
    words only, learned per team, `BAZAAR_BLUFF=0` disables it). Their text is untrusted: escaped for
    rich, never parsed into structure, never able to change a price.
-7. **Kill switches:** GUARDRAILS `team_threads_enabled` (false until the simulator evidence and Omar's
-   call), env `BAZAAR_TEAM_THREADS=0` read every tick (turns the desk off with no sends; it must be
+7. **Kill switches:** GUARDRAILS `team_threads_enabled` (false at merge; true since N17-enable, #188), env `BAZAAR_TEAM_THREADS=0` read every tick (turns the desk off with no sends; it must be
    declared `preserve()` in `.railway/railway.py` or a config apply deletes a hand-set value — the
    coordinator applies), plus `trading_enabled`, `.local/PAUSE` and dry run unless `BAZAAR_LIVE=1`.
 8. **Simulator:** `bazaar-sim` already supports team threads end to end (open on a venue, structured

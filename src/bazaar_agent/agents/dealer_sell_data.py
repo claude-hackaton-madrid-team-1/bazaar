@@ -75,9 +75,13 @@ class Trader:
         return self.name or self.id
 
 
+DEALER_KINDS = (None, "dealer", "collector", "trickster", "banker")  # `traders` stores them all as 'dealer'
+
+
 def trader_from(row: Mapping[str, Any]) -> Trader | None:
-    """A dealer from a `traders` row or an `/api/dealers` persona; None for anything else."""
-    if not row.get("id") or row.get("kind") not in (None, "dealer"):
+    """A dealer from a `traders` row or an `/api/dealers` persona of any kind (dealer, collector, trickster,
+    banker: the table stores them all as 'dealer'); None for anything else."""
+    if not row.get("id") or row.get("kind") not in DEALER_KINDS:
         return None
     menu = row.get("menu") if isinstance(row.get("menu"), Mapping) else {}
     unlock = row.get("unlock") if isinstance(row.get("unlock"), Mapping) else {}
@@ -223,3 +227,55 @@ def market_from_feed(
         curves.append(SellCurve(t.dealer, rarity[t.asset_ids[0]], t.opening_ask, t.fill_price))
     traders = [trader_from(d) for d in dealers if isinstance(d, Mapping)]
     return SellMarket(tuple(t for t in traders if t is not None), fills_from(curves), "api+feed")
+
+
+# ---------------------------------------------------------------- the ladder's slots today (RULES.md "Scoring")
+
+LADDER_SLOTS = 3  # our best three dealer deals per level count; a missing one counts as zero
+
+
+def full_levels(levels: Mapping[str, int | None], deals: Mapping[str, int]) -> frozenset[int]:
+    """The levels whose ladder slots are full today: `LADDER_SLOTS` scored deals with their dealers."""
+    count: dict[int, int] = {}
+    for dealer, n in deals.items():
+        level = levels.get(dealer)
+        if level is not None:
+            count[level] = count.get(level, 0) + n
+    return frozenset(level for level, n in count.items() if n >= LADDER_SLOTS)
+
+
+def ladder_deals(events: Iterable[Mapping[str, Any]], us: str) -> dict[str, int]:
+    """dealer -> our dealer deals that score today (buys and sells: both are ladder deals), from the snapshot's
+    feed events (no request): our threads since the latest `day.opened` that filled away from the dealer's own
+    opening price (a deal there captures none of its range). Only our own events are matched: a day of every
+    team's threads would make `intel.dealer_threads` slow."""
+    from bazaar_agent.intel import dealer_threads
+
+    if not us:
+        return {}
+    rows = [e for e in events if isinstance(e, Mapping)]
+    since = max((_tick(e) for e in rows if e.get("type") == "day.opened"), default=0)
+    threads: set[int] = set()
+    mine: list[dict[str, Any]] = []
+    for e in rows:
+        p, kind = e.get("payload"), e.get("type")
+        if _tick(e) < since or not isinstance(p, Mapping):
+            continue
+        thread = p.get("thread") if type(p.get("thread")) is int else None
+        if kind == "thread.opened" and p.get("team") == us and thread is not None:
+            threads.add(thread)
+        elif not (kind == "thread.message" and thread in threads) and not (
+            kind == "settlement" and isinstance(p.get("parties"), list) and us in p["parties"]
+        ):
+            continue
+        mine.append(dict(e))
+    out: dict[str, int] = {}
+    for t in dealer_threads(mine, us):
+        if t.ours and t.fill_price is not None and t.fill_price != t.opening_ask:
+            out[t.dealer] = out.get(t.dealer, 0) + 1
+    return out
+
+
+def _tick(event: Mapping[str, Any]) -> int:
+    tick = event.get("tick")
+    return tick if type(tick) is int else 0

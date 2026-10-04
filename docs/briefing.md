@@ -24,14 +24,15 @@ The four quests from slide 3: **Collect · Haggle · Trade · Run a market**. Th
 | Judges | 40 | *"Your ideas and your craft."* In the audio: *"we will also take a more promising look at the draft itself. How have we solved the problems?"* |
 
 - **Never counts:** number of trades, fees collected, pack luck, gifts, easter eggs, organiser grants.
-- **Rounds:** rounds are averaged; Friday counts half. *[audit, Sat 3 Oct: fitted on `/me` snapshots]* A round starts on the organisers' `round` action in `/api/schedule`, not when the doors open:
+- **Rounds:** rounds are averaged; Friday counts half. *[audit, Sat 3 Oct: fitted on `/me` snapshots]* A round starts on the organisers' `round` action in `/api/schedule`:
   - round 2 started at tick 160;
-  - round 3 starts at game hour 16.65, about **Sun 11:34**, so Sunday 09:00–11:34, with two Market Tests, still counts for Saturday's round;
+  - round 3 starts at game hour 16.65, **Sun 09:00 CEST**, coinciding with Sunday opening and Chamberí release. The h14.65/h15 Market Tests precede the opening anchor; whether they fire at opening or are skipped, and their round attribution if fired, are UNVERIFIED;
   - a new round's weight ramps from 0 to full over about 160 ticks;
   - Friday had 0 market-making for every team and stays in the average.
 - **How the 30-point blocks split** *[audit, fitted]*:
   - Market-making per round = **22.5 × `bench_points` + 7.5 × organic**, where organic is value created between other teams on our venue, capped at the top-3 mean. The free stall alone is `bench_points` 0.5 = 11.25 of 30; nine teams sat at exactly that level and two at the organic cap.
   - Negotiating per round ≈ ladder 7.5 + duels 7.5 + team trades 15 (estimate). Each part is capped at the top-3 mean: once we are at the cap, more of it adds nothing that round.
+- **Separate scoring models** *[Omar, Sat 3 Oct]*: RULES.md counts duels inside the Negotiating 30, but each mechanism has its own formula (duels: pie share × (1 − decay)^rounds, no cash or card moves; ladder: share of a dealer's range; team trades: price − `your_value`; market: 22.5 × bench + 7.5 × organic). Never mix their numbers or lessons; see `.ai/context.md`.
 - **What moves which part** *[audit]*:
   - `neg_points` moves only on settlements with other teams, by price − our `your_value` of that copy.
   - Dealer deals score only through the ladder.
@@ -53,7 +54,7 @@ The four quests from slide 3: **Collect · Haggle · Trade · Run a market**. Th
 - **Page** = the commons, uncommons and rares of a set (10 cards). A complete page gives a bonus; the epic and the legendary on top give a bit more.
 - Everyone starts the same: 400 P, 11 commons, 3 uncommons and 1 rare.
 - **Private values:** every team has the same six set multipliers, shuffled.
-- Value verified against the API: `book × affinity × [1, 0.25, 0.1][copy]` (#23). The `your_value` of a card in hand is the value of the last copy.
+- Value verified against the API: `book × affinity × [1, 0.25, 0.1][copy]` (#23). The `your_value` of a card in hand is the collection value lost by removing that copy *[audit, 41 of 41 assets]*: its copy marginal, and for our only copy of a page card on a complete page, the whole page bonus. Selling that copy cost points on Sat 3 Oct (tick 948: `neg_points` 134.7 → 44.6) whatever "holdings never score" suggests (sold at 29 with `your_value` 118.6: price − `your_value` = −89.6; `.ai/memory.md`, tick 947).
 - **The example from the slides:** A has a duplicate copy worth 6 P to them, and B is missing it for their page and it is worth 24 P to them. They close at 14 P: A gains +8 and B gains +10, so **+18 P** is created. That is what scores.
 - **In circulation at tick 0:** 0 epics and 0 legendaries. LAV-09, MAL-09 and MAL-07 have a single copy (#22).
 
@@ -80,7 +81,7 @@ The four quests from slide 3: **Collect · Haggle · Trade · Run a market**. Th
   - L3 Doña Pilar: a collector who prefers SAL and RET and sells only the Gold pack, list 420, opening ask 504, 1 per team per hour.
   - L4 Los Pícaros: sell no packs and swap the card in the offer (read the structure; flag it).
   - A `banco` dealer (Don Ernesto) appears in the feed but has not been announced.
-  - At the finale (game hour 21.65) **all four stalls close**.
+  - At the finale, game hour 21.65, about Sun 14:00 CEST, **all dealer stalls close**, including Banco.
 - **Some dealers lie.** `POST /api/flags`: a correct flag adds points and a wrong one subtracts. In the audio: *"there might be even some occurrences where you can track bad behavior by the API. If you're correct, you can earn extra points."*
 
 ## Duels
@@ -98,8 +99,8 @@ One-on-one between teams, under aliases. Each pair plays twice, as seller and as
   - The audit's hedge sends both forms (branch `fix/audit-duel-days-top-level`).
 - **Sessions:**
   - Duels II, about Sat 20:34: 16 ticks, decay 0.08, `rounds: 2` (68 duels for us), at most 6 at once.
-  - Duels III, about Sun 13:34: 12 ticks, decay 0.1, at most 4 at once.
-  - The Grand Final is scheduled at game hour 21.65.
+  - Duels III, h18.65, about Sun 11:00 CEST: two issues, price and days, 12-tick duels, decay 0.10, `rounds: 2`, at most 4 at once.
+  - The Grand Final is scheduled at h21.65, about Sun 14:00 CEST: two issues, 12-tick duels, decay 0.10, `rounds: 1`, at most 4 at once.
 - The first session is practice and does not score. Details in #4, #5 and #7.
 
 ## Our own market
@@ -165,21 +166,32 @@ In the audio:
 
 More in #16.
 
-## Windows this weekend (live `/api/schedule`, Sat 3 Oct 17:50)
+## Windows this weekend (live `/api/schedule`, Sun 4 Oct)
 
-Game hours count only ticking time, so at a steady pace one game hour is one wall hour. Friday ticked only 2.65 h.
+The [live schedule](https://bazaar.causaprima.ai/api/schedule), read with one keyless GET on 4 Oct,
+returned `now_hours: 13.367`. Its Sunday opening anchor is h16.65 at `2026-10-04T09:00:00+02:00`,
+with `tick_seconds: 15`; closing is h22.65 at `2026-10-04T15:00:00+02:00`.
+One game hour is one real hour on Sunday. Intermediate times below are calculated from that anchor,
+assuming no further pause or schedule change; they are scheduled times, not observed events.
 
-| Game hour | Madrid (if no pause) | What |
+| Game hour | Sunday CEST | Schedule entry / action |
 |---|---|---|
-| 9, 11, 13 | Sat 17:55, 19:55, 21:55 | Market Tests (round 2) |
-| 9.15–11.15 | Sat 18:04–20:04 | Salamanca fever: Pilar pays 25 % over book for SAL (official `persona_patch`) |
-| 11.65 | Sat 20:34 | Duels II (price + days, 2 rounds) |
-| 14.083 | Sat 23:00 → Sun 09:00 | Doors close; Sunday opens at 15 s ticks |
-| 14.65, 15 | Sun 09:34, 09:55 | Hard Market Test (12 traders), then a Market Test: **still round 2** |
-| 16.65–16.7 | Sun 11:34 | Chamberí released, **round 3 starts**, 150 P for everyone (doesn't score) |
-| 17, 19 | Sun 11:55, 13:55 | Market Tests (round 3) |
-| 18.65 | Sun 13:34 | Duels III |
-| 20.083 | Sun 15:00 | "The Bazaar closes" |
-| 21, 21.45, 21.65, 22.65 | after the close | Market Test, finale warning, all four stalls close + Grand Final, score freeze: scheduled after the doors close, so watch for the organisers moving the hours, and keep every runner up after 15:00 |
+| 14.65 | Before opening anchor; execution UNVERIFIED | "The hard Market Test: firmer and more impatient traders"; `bench`, 12 traders, 16 ticks |
+| 15 | Before opening anchor; execution UNVERIFIED | "The Market Test: every venue gets the same synthetic book"; `bench`, 10 traders, 16 ticks |
+| 16.65 | 09:00 | "Sunday opens"; `day_opens`, 15 s ticks. "Round 3 starts"; `round`, ladder restarts. "Chamberí released"; `set_release`, CHA |
+| 16.7 | ~09:03 | "The Sunday allowance: 150 primas for everyone"; `grant_all`, does not score |
+| 17 | ~09:21 | "The Market Test: every venue gets the same synthetic book"; `bench`, 10 traders, 16 ticks |
+| 18.65 | ~11:00 | "Duels III: two issues, shorter clock, harder decay"; `duels`, price + days, 12-tick duels, decay 0.10, 2 rounds, at most 4 concurrent |
+| 19 | ~11:21 | "The Market Test: every venue gets the same synthetic book"; `bench`, 10 traders, 16 ticks |
+| 21 | ~13:21 | "The Market Test: every venue gets the same synthetic book"; `bench`, 10 traders, 16 ticks |
+| 21.45 | ~13:48 | "finale warning"; `announce` |
+| 21.65 | ~14:00 | "Finale: stalls close"; `persona`, disables abuela, chato, pilar, picaros and banco. "The Grand Final: the last duel wave, on the big screen"; `duels`, price + days, 12-tick duels, decay 0.10, 1 round, at most 4 concurrent |
+| 22.55 | ~14:54 | "freeze warning"; `announce` |
+| 22.65 | 15:00 | "Scores freeze"; `end_round`. "The Bazaar closes"; `day_closes` |
 
-The source is `GET /api/schedule`. The organisers move events (Duels II moved from h13 to h11.65 and round 3 from h18 to h16.65), so always re-read it.
+The h14.65 hard Market Test and h15 Market Test are dated before the Sunday opening anchor.
+Whether they fire at opening or are skipped is **UNVERIFIED**. Do not assign them a Sunday wall time
+or assume which round receives them. Check the feed and active round when the doors open.
+The `set_release` entry carries h16.649999999999995, displayed as h16.65 above.
+The schedule also places Saturday's "Closed until Sunday 09:00" at h16.65, with wall time
+`2026-10-03T23:00:00+02:00`. The organisers can move events; re-read the schedule before acting.

@@ -391,7 +391,7 @@ class PicarosClient:
         return {"tick": 860 + self.reads // self.reads_per_tick, "next_tick_in": 30, "tick_seconds": 30}
 
     def me(self) -> dict[str, Any]:
-        return {"cash": 400, "assets": []}
+        return {"id": "t01", "cash": 400, "assets": []}
 
     def my_offers(self) -> dict[str, Any]:
         return {"offers": []}
@@ -478,3 +478,62 @@ def test_a_rare_of_another_set_never_widens_the_range():
     pooled = [fill(1, "LAV-09", 55, "t07"), fill(2, "RET-09", 135, "t03"), fill(3, "RET-10", 130, "t12")]
     assert class_fills(intel.tape(pooled), "picaros", "LAV-10") == [55]
     assert plan_for(pooled).accept_max is None  # one LAV fill: we only bid
+
+
+def cli_dealer_buy(monkeypatch, tmp_path, client: Any, dealers: list[dict[str, Any]], history: list[dict[str, Any]]):
+    from typer.testing import CliRunner
+
+    from bazaar_agent import cli
+    from bazaar_agent.config import Settings
+
+    monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
+    monkeypatch.setattr(cli, "team_client", lambda settings: client)
+    monkeypatch.setattr(cli, "public_client", lambda settings: FakePublic(dealers=dealers, events=history))
+    monkeypatch.setattr(cli, "_history", lambda events_file, live: deepcopy(history))
+    monkeypatch.setattr(cli, "_feed_reader", lambda settings: lambda limit: deepcopy(history))
+    monkeypatch.setattr(cli, "_rarity_of", lambda item: "rare")
+    monkeypatch.setattr(cli, "_ledger", lambda source, live=False: Ledger(tmp_path / "ledger.jsonl"))
+    monkeypatch.setattr("time.sleep", lambda seconds: None)
+    args = ["dealer", "buy", "LAV-10", "--start", "54", "--max", "67", "--dealer", "picaros", "--live"]
+    return CliRunner().invoke(cli.app, args)
+
+
+class AcceptingPicaros(PicarosClient):
+    """Their asks come down to 59: inside the range only when our own 63 is (wrongly) counted as a fill."""
+
+    def thread(self, tid: int) -> dict[str, Any]:
+        n = len(self.sent)
+        if not n:
+            return {"status": "open", "standing_offers": []}
+        ask = [70, 66, 59][min(n, 3) - 1]
+        o = {"id": 900 + n, "maker": "picaros", "status": "open", "final": False, "want": {"cash": ask}}
+        o["give"] = {"types": ["card:LAV-10"]}
+        return {"status": "closed" if self.closed else "open", "standing_offers": [o]}
+
+
+def test_dealer_buy_leaves_our_own_fills_out_of_a_tricksters_range(monkeypatch, tmp_path):
+    """#228 review P2: with two other teams' LAV rare fills (58, 59) and our own 63, the taker only bids; the CLI
+    counted our 63 as the third fill (range 58-63, cap 59) and would take an ask of 59."""
+    history = [fill(1, "LAV-09", 58, "t07"), fill(2, "LAV-09", 59, "t03"), fill(3, "LAV-10", 63, "t01")]
+    client = AcceptingPicaros()
+    result = cli_dealer_buy(monkeypatch, tmp_path, client, [PICAROS], history)
+    assert result.exit_code == 0, result.output
+    assert client.accepted == []  # two fills by others: we only bid
+
+
+def test_dealer_buy_refuses_a_dealer_missing_from_api_dealers(monkeypatch, tmp_path):
+    client = PicarosClient()
+    result = cli_dealer_buy(monkeypatch, tmp_path, client, [], REAL)
+    assert result.exit_code == 1 and "not listed in /api/dealers" in " ".join(result.output.split())
+    assert client.sent == [] and not client.closed  # nothing opened
+
+
+def test_dealer_buy_refuses_a_trickster_while_our_team_id_is_unknown(monkeypatch, tmp_path):
+    class NoId(PicarosClient):
+        def me(self) -> dict[str, Any]:
+            return {"cash": 400, "assets": []}
+
+    client = NoId()
+    result = cli_dealer_buy(monkeypatch, tmp_path, client, [PICAROS], REAL)
+    assert result.exit_code == 1 and "team id is unknown" in " ".join(result.output.split())
+    assert client.sent == []

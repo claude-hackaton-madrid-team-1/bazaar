@@ -18,11 +18,14 @@ import time
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from bazaar_sim import bench, catalog
+from bazaar_sim import bench, catalog, dealers
 from bazaar_sim.errors import SimError, not_found, wait_for_tick
 from bazaar_sim.models import Asset, ClockState, Event, Team, Venue, WorldState
+
+if TYPE_CHECKING:
+    from bazaar_sim.scenario import Scenario
 
 MAX_EVENTS = 2000  # kept in the snapshot; the public feed serves the last 500
 FEED_CAP = 500
@@ -69,7 +72,18 @@ class SimConfig:
     venue_live_ticks: int = 0
     rivals_enabled: bool = True
     rival_inbound_threads: bool = False  # one rival opens a silent team thread to each player (slot pressure)
+    scenario: str = ""  # "sunday": the calibrated Sunday replay (`bazaar_sim.scenario`); empty: the plain simulator
+    game_tick_seconds: float = 0.0  # game time one tick adds (0: the tick length); a compressed replay keeps 15 s here
+    latency_p50_ms: float = 0.0  # a scenario's per-request latency (lognormal around the median); 0: none
+    latency_p95_ms: float = 0.0
     limits: dict[str, int] = field(default_factory=lambda: dict(LIMITS))
+
+    def compression(self) -> float:
+        """How many times faster than the real pace a scenario replay runs (1.0: real pace or no scenario). The
+        game's limits are per real second (5 req/s per key), so a replay at 2 s ticks instead of 15 s scales them."""
+        if not self.scenario or not self.game_tick_seconds or self.tick_seconds >= self.game_tick_seconds:
+            return 1.0
+        return self.game_tick_seconds / self.tick_seconds
 
     def __post_init__(self) -> None:
         bench.preset(self.bench_preset)  # a typo in SIM_BENCH_PRESET or SIM_BENCH_MATCH_RULE fails at boot
@@ -78,6 +92,16 @@ class SimConfig:
 
     @classmethod
     def from_env(cls) -> SimConfig:
+        config = cls._plain_from_env()
+        name = os.environ.get("SIM_SCENARIO", "").strip()
+        if not name:
+            return config
+        from bazaar_sim import scenario
+
+        return scenario.configure(config, name)
+
+    @classmethod
+    def _plain_from_env(cls) -> SimConfig:
         return cls(
             tick_seconds=max(0.2, min(60.0, _env_float("SIM_TICK_SECONDS", 10.0))),
             seed=_env_int("SIM_SEED", 7),
@@ -127,12 +151,26 @@ class World:
         self.lock = threading.RLock()
         self.stream_only: list[Event] = []  # `tick` events: on the live stream, never on /api/feed
         self.keys = {key_digest(key_for(n)): player_team_id(n) for n in range(1, config.player_teams + 1)}
+        self.scenario = self._load_scenario(config)
+        catalog.configure(extra_released=tuple(state.released), scenario_dealers=self.scenario is not None)
+
+    @staticmethod
+    def _load_scenario(config: SimConfig) -> Scenario | None:
+        if not config.scenario:
+            return None
+        from bazaar_sim import scenario
+
+        return scenario.load(config.scenario)
 
     # ---------------------------------------------------------------- creation
 
     @classmethod
     def create(cls, config: SimConfig, now: Callable[[], float] = time.time) -> World:
         state = WorldState(seed=config.seed)
+        if config.scenario:
+            from bazaar_sim import scenario
+
+            state.released = list(scenario.load(config.scenario).initially_released)
         state.clock = ClockState(tick_seconds=config.tick_seconds, tick_started_at=now(), booted_at=now())
         state.chato_open_tick = config.chato_open_ticks
         state.pilar_open_tick = config.pilar_open_ticks
@@ -167,6 +205,10 @@ class World:
         values = list(catalog.AFFINITY_VALUES)
         rng.shuffle(values)
         team = Team(id=team_id, name=name, bot=bot, affinity=dict(zip(catalog.set_codes(), values, strict=True)))
+        if self.scenario is not None:
+            team.unlocked = list(
+                self.scenario.dealer_ids
+            )  # Sunday: every dealer has been open to everyone since Saturday
         self.state.teams[team_id] = team
         hand = [("common", 11), ("uncommon", 3), ("rare", 1)]
         released = catalog.released_sets()
@@ -174,6 +216,8 @@ class World:
             pool = [c.ref for c in catalog.cards().values() if c.rarity == rarity and c.set_code in released]
             for _ in range(n):
                 self.mint(rng.choice(pool), team_id, "starting grant")
+        if self.scenario is not None:
+            self.scenario.give_saturday_stock(self, team_id, rng)  # every team played Saturday
         self.emit("team.joined", {"team": team_id, "name": name, "level": 1})
 
     # ---------------------------------------------------------------- ids, randomness, events
@@ -192,6 +236,16 @@ class World:
     def tick(self) -> int:
         return self.state.clock.tick
 
+    def style(self, dealer_id: str) -> dealers.Style:
+        """The dealer's haggling style: the hand-set one, with a scenario's measured numbers laid over it."""
+        base = dealers.STYLES[dealer_id]
+        return base if self.scenario is None else self.scenario.style(base)
+
+    @property
+    def game_tick_seconds(self) -> float:
+        """Game time one tick adds: the tick length, unless a compressed replay keeps the real pace's 15 s."""
+        return self.config.game_tick_seconds or self.state.clock.tick_seconds
+
     @property
     def t_hours(self) -> float:
         return round(self.state.clock.t_seconds / 3600.0, 4)
@@ -203,6 +257,8 @@ class World:
 
     def open_to_all_tick(self, dealer_id: str) -> int | None:
         """The tick a gated dealer opens to every team (None: always open, or never scheduled)."""
+        if self.scenario is not None and dealer_id in catalog.SCENARIO_ONLY_DEALERS:
+            return 0  # opened to everyone on Saturday
         if dealer_id == "chato":
             return self.state.chato_open_tick
         if dealer_id == "pilar":
@@ -323,7 +379,7 @@ class World:
         with self.lock:
             c = self.state.clock
             c.tick += 1
-            c.t_seconds += c.tick_seconds
+            c.t_seconds += self.game_tick_seconds
             c.tick_started_at = self.now()
             self.emit_stream_only("tick", {"tick": c.tick, "tick_seconds": c.tick_seconds})
             market.settle_due(self)
@@ -336,6 +392,8 @@ class World:
             if self.config.rivals_enabled:
                 rivals.on_tick(self)
             threads.levels_tick(self)
+            if self.scenario is not None:
+                self.scenario.on_tick(self)
             scoring.snapshot_if_due(self)
             self._prune()
 

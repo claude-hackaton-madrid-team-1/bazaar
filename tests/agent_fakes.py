@@ -147,6 +147,14 @@ class FakeTeam:
         self.sent.append(("cancel", offer_id))
         return {"id": offer_id, "status": "cancelled"}
 
+    def duels(self, done=False):
+        self.reads.append("duels")
+        return {"duels": deepcopy(getattr(self, "live_duels", []))}
+
+    def schedule(self):
+        self.reads.append("schedule")
+        return deepcopy(getattr(self, "schedule_payload", {"now_hours": 1.5, "upcoming": []}))
+
     def list_offer(self, give, want, venue=None, to=None, expires_in_ticks=40):
         self.sent.append(("list_offer", give, want, venue))
         return {"id": next(self._ids), "status": "open"}

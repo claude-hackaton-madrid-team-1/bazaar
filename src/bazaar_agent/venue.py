@@ -232,7 +232,9 @@ class KeyVault:
             row = (
                 self._db()
                 .execute(
-                    "select count(*) from venue_broker_keys where target = %s and venue <> %s", (self.target, CLAIM)
+                    "select count(*) from venue_broker_keys where target = %s and venue <> %s "
+                    "and substr(venue, 1, 6) <> '_once:'",
+                    (self.target, CLAIM),
                 )
                 .fetchone()
             )
@@ -254,6 +256,26 @@ class KeyVault:
                     "broker_key = excluded.broker_key "
                     "where venue_broker_keys.opened_tick < %s or venue_broker_keys.broker_key = %s returning venue",
                     (self.target, CLAIM, self.owner, tick, tick - CLAIM_STALE_TICKS, self.owner),
+                )
+                .fetchone()
+            )
+        except Exception as e:
+            self._failed(e)
+            return False
+        return row is not None
+
+    def claim_once(self, name: str, tick: int) -> bool:
+        """Take the named one-time claim for this target, once for the whole game across processes and restarts:
+        True only for the process whose insert created the row. Any error (Postgres unreachable, a skipped call)
+        is False: a caller that must never send twice sends nothing. The row's key column stays empty, so `load`
+        never reads it as a broker key, and nothing gives the claim back."""
+        try:
+            row = (
+                self._db()
+                .execute(
+                    "insert into venue_broker_keys (target, venue, broker_key, opened_tick) values (%s, %s, '', %s) "
+                    "on conflict (target, venue) do nothing returning venue",
+                    (self.target, f"_once:{name}", tick),
                 )
                 .fetchone()
             )
@@ -334,6 +356,7 @@ class KeyVault:
                     self._db()
                     .execute(
                         "select venue, broker_key from venue_broker_keys where target = %s and venue <> %s "
+                        "and substr(venue, 1, 6) <> '_once:' "
                         "and broker_key <> '' and (%s::text is null or venue = %s) order by created_at desc limit 1",
                         (self.target, CLAIM, venue, venue),
                     )

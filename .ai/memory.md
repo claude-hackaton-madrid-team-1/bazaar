@@ -1137,3 +1137,219 @@ Tick 1028: the desk put MAL-06 #468 into a swap counter to t05 seconds before a 
 t02 (cancelled next tick, no fill). `committed_context` subtracts the copies in our open offers as read by THAT
 command, so two writers posting in the same instant can still race; re-read `/api/me/offers` right before a hand post
 and keep one copy free per card. A shell check piped through `grep` returns grep's exit code, not the check's.
+
+### [2026-10-03] finding — selling a team-bought copy costs its neg_points, even to a dealer (SAL-07, tick 947)
+SAL-07 (asset 438) came from t02 at tick 320 for 23 and completed Salamanca (/me your_value 118.6). Sold to Pilar
+for 29 (hand-run `dealer sell`, floor 20): /me `neg_points` 134.2 → 44.6 at tick 948 (−89.6 = 29 − 118.6), board
+`negotiating` 20.75 → 16.48 at its next update (tick 950, updates every 10 ticks): 0.048 score per neg_point. Buying
+it back from Abuela (21) restored the page, not the points. While we led in neg_points, gains moved the board ~0
+(ticks 376–386): k is relative to the other teams, so losses and gains are measured apart. `max_score_loss_per_move`
+(MI1) now refuses a sale estimated below −0.2 unless `bazaar approve <card> --sell --min <P>`; `bazaar impact`.
+
+### [2026-10-03] gotcha — a duel ladder measured to the deadline tick never sends our floor
+v2's free offers to a rival that never priced ran `our_target(elapsed / total)`, and the runner never sends on the
+deadline tick, so the floor (progress 1.0) was never sent: in Duels I our last silent offer (D − 1) stayed ~9 % off
+our limit. Compressing the curve to end earlier (#215 first cut) also lowered D − 3/D − 2, the ticks every Duels I
+silent deal closed on (−0.49 duel points on replay). Fix: keep the curve, put only the last
+`duel_silent_floor_lead` ticks we send at our floor. Test any "end earlier" change by diffing every earlier tick.
+
+### [2026-10-03] gotcha — two "free spare" pickers tie on one copy: the Workshop must see the team desk's talks (#235 reviews)
+Every copy of a card in /me carries the same `your_value`, so the team desk's `desk_copy` (cheapest, then lowest id)
+and the Workshop's kept copy (most valued, then lowest id) are the same asset: a swap posted in the tick gives #1 while
+the Workshop crafts #2 and #3, and the page ends on a promised copy. `_taller` now runs before the desk posts, treats
+every card of a live desk talk, a sell thread's asset and a card accepted this or last tick as busy, and promises its
+crafted copies in `run.offers`. `/api/taller` is not in docs/api/openapi.json: its shape is the level's `how` text.
+
+### [2026-10-03] gotcha — an approval tool must never reach an agent: keep it out of `tools.TOOLS`
+`tools.TOOLS` feeds the desk's in-process server, every subagent allow-list and the remote MCP server at once, so a
+spec added there is callable by our own LLMs. The human tools (HA2) live in `runtime/human_tools.py` and only
+`mcp_server.build_app(..., approver=...)` serves them, behind `X-Approver-Token`. Testing them over the TestClient: the
+per-token tool-call bucket has a burst of 5 with a frozen clock, so advance the fake clock between calls.
+`tests/test_railway_iac.py::test_the_show_holds_no_team_key_and_no_database` failed on main (BAZAAR_KEY,
+GAME_VIEW_TOKEN, ELEVENLABS_VOICE_SELLER undeclared in its list): fixed with HA2.
+
+### [2026-10-03] finding — the server refuses a too-early venue notice `wait`; our generic one spammed it after every restart (MM2)
+`executions` (sdk_method `broker_announce`, ticks 439-1166): 26 accepted, 12 refused `wait`, each 2-8 ticks after an
+accepted notice; accepted gaps went as low as 10 ticks (616 → 626), so the server's gap is about 10 ticks, not 20
+(UNVERIFIED: its exact message). The keeper remembered its notice in memory only, so every maker redeploy announced
+again. The 33 accepted notices on v19 were the same generic text naming no card; v19 had 0 organic trades. MM2: the
+notice names the page cards the most other teams miss (team matrix), one every 24 ticks, the feed's newest
+`venue.announcement` for our venue counting as the last one.
+
+### [2026-10-03] finding — the ranking reserved a dealer ladder's TOP, so the best buy never opened (UB1, ticks 1095-1166)
+`strategy.guarded` checked every dealer buy at `mv.limit` (the ladder's top): MAL-09 (top 67) read "cash 58 - 67 <
+cash_floor 5" for 70 ticks while Los Pícaros asked 60-65 and a first bid of 50 was affordable; `_all_denied` then said
+"none affordable". A ladder is now ranked at its first rung (caps still at its top); each rung is checked when sent,
+and a rung refused only for cash/spend bids the most we may still commit. Second loop found in `decisions` (ticks
+1205-1227): RET-09/RET-10 walked at 50 > official value 49 and reopened 48, 49 every three ticks against asks of 64-73:
+every guardrail walk of a dealer thread now rests on the card for an hour (#248 review: a cash walk replayed too).
+### [2026-10-03] finding — what scores (rules audit) and why breaking a complete page still cost points
+Marius's rules audit (8dbf50b7, PR #222; `docs/briefing.md` "Scoring", `STRATEGY.md` "What scores") fitted the score on `/me`
+snapshots. Holdings, the album and `collection_value` never score by themselves; a card scores only when it moves: a team
+trade (price − our `your_value` → `neg_points`) or a dealer deal (ladder share of that dealer's own range, opening price 0,
+its final the whole range, best 3 per level, restarted every round). Per round, market ≈ 22.5 × `bench_points` + 7.5 ×
+organic, negotiating ≈ ladder 7.5 + duels 7.5 + team trades 15, each capped at the top-3 mean. Incident that this does NOT
+excuse: selling SAL-07, the only copy on a complete Salamanca page (Sat 3 Oct ~18:28), took `neg_points` from 134.7 to 44.6
+at tick 948 (coordinator's decode of `/me`; score 28.25 → 23.98, rank 5 → 12, per `protect_page_sets`), although holdings
+"never score": the page cards we had bought from teams were revalued at the new `your_value`. Our reading (inferred, not in the audit): team-acquired cards are
+marked at the current `your_value`, not frozen at the trade. Lesson: a rules-text inference that touches the album gets
+checked against the live `/api/me` score before it is acted on. `protect_page_sets` lists every set (hard rule).
+
+
+### [2026-10-03] build-error — a fail-closed guard that needs Postgres turned every PR's sim smoke red (#233)
+symptom: on main, `scripts/sim_smoke.py` failed at `dealer buy LAT-01` with "no_buyback_ticks ... (our sales
+unreadable)" → root cause: `no_buyback_ticks` refuses every card buy when the impact board cannot read our sales, and
+the smoke runs with no Postgres by design → fix (#258): a simulator target (`guardrails.simulator_target`, read once
+from `Settings.simulator`) skips the unread case; the real game still fails closed, now also on a tape more than 3
+ticks behind. A new rule that reads Postgres must say what it does on the simulator, and run the smoke before merging.
+
+
+### [2026-10-03] gotcha — the shared ledger table only takes kinds spend, accept and listing
+`sql/schema.sql` has `check (kind in ('spend','accept','listing'))`; the JSONL ledger has no such check, so a new kind
+passes every file-ledger test and fails live with `CheckViolation` (found by the #236 reviews). A Workshop craft is
+booked as `spend` at price 0 with item `taller:<refs>` and counted by prefix (`count_since(kind, t_hours, prefix)`).
+
+### [2026-10-04] finding — activity audit of Saturday (ticks 160-1445): what stopped the agents, and what 15 s ticks break
+From `decisions`/`executions` (read-only). Taker rejections: `max_price_uncommon` 341 (204 ticks, asks 27-33 vs cap 26,
+ticks 174-310), `cash_floor` 100 + `max_spend` 72 (all before the Sat 16:35 loosening: floor 100/50, hourly 150), `max_price_rare`
+71 (ticks 684-724, asks 98-104 vs 95), jev undecided below 0.75 on team swaps 231 (ticks 576-1322, Jev 0.26-0.44). The taker's
+256-tick gap (502 to 758) was cash stuck at 81 under floor 50. The maker's 59-tick LAT-10 sell 86 refusal (973-1277) is
+`max_score_loss_per_move` asking for a human approval (a hard rule, kept). `dealer_sell` breaker held 948-1065 until a manual reset.
+Two real bugs: (1) the taker runs BAZAAR_DECIDER=llm and `needed_budget_s` = 13 s, but a 15 s tick leaves ~10 s: every Jev-gated
+move would read "no tick budget for jev" (20 team opens already did at 30 s ticks); `decider()` now answers Jev below
+BAZAAR_DECIDER_MIN_TICK_S (30). (2) the team desk re-cancelled a lapsed swap offer every tick (`offer_not_open` 36 times on 9
+offers, 241 ticks, thread never freed); it now frees the thread and keeps the spend booked until a thread read ends the offer.
+
+### [2026-10-04] build-error — one-shot claims counted as opened venues (PR #263)
+Claim-only storage made `opened_before()` true (regression: `2 failed, 22 deselected`) → it excluded `_claim`
+but counted `_once:bench_match_probe` → exclude the literal `_once:` prefix from both venue count and load.
+Keep real keyless venue markers; an in-memory SQL regression covers both states and target isolation.
+Validation also hit local Postgres contention: the full suite stalled inside psycopg, then a retry failed
+the `rival_board` lock-timing test; the parallel coverage run hit a schema lock timeout in approvals setup.
+Both affected tests passed alone (`2 passed in 2.89s`); the final full gate without competing coverage passed:
+`5331 passed, 1 skipped, 2 xfailed, 42 subtests passed in 100.01s (0:01:40)`.
+
+### [2026-10-04] build-error: PR #263 merge verification separator
+The ad hoc memory-preservation check expected an extra blank line and failed despite retaining both parents' entries.
+The corrected check verifies the exact main prefix and PR-only entry, ignoring only separator newlines; both pass.
+
+### [2026-10-04] finding — Sunday guardrails for 15 s ticks (Omar approved): caps 30/105, dealer_sell auto re-arm
+`max_price_uncommon` 26 -> 30 and `max_price_rare` 95 -> 105 are only ceilings: `official_value_margin` and the server's
+`/api/me/value` still refuse any buy above our value (test_raising_the_card_caps_never_lifts_the_official_value_cap). The
+`dealer_sell` breaker tripped by the watchdog now lapses after `dealer_sell_breaker_reset_ticks` = 40 game ticks via its
+`until_tick` in `guard_breakers` (shared, never wall clock); evidence older than the trip is spent, so only a NEW below-value
+sale re-trips it. Existing sell guards remain binding. Two replay tests pin their historical cap to 26.
+PR #265 is limited to these three guardrail changes; duel sending and request budgets match origin/main.
+
+### [2026-10-04] build-error — PR #265 local test gate stalled in psycopg (SU1)
+The first full gate stopped progressing after 1,838 passed tests and was interrupted after 153.45 s.
+The interrupt trace ended in `psycopg_binary/_psycopg/waiting.pyx:236`; a local PostgreSQL diagnostic
+showed no blocked sessions. Cause unconfirmed; rerun the isolated suite with a 60 s traceback diagnostic.
+
+### [2026-10-03] finding — no team has tried prompt injection on us yet; "pretend" alone is a dealer habit (IJ1)
+`bazaar injections --backfill` over the shared archive (23,548 feed events to tick 1171, 193 stored thread
+messages, 68 duels): 50 tagged texts, 0 attempts. 42 are venue announcements (v05, v07, v04, v20, v21, v24, v02)
+describing their JSON offer format or a priced match (`code_or_json`, `money_command`); 8 are dealer lines, 7 of
+them Pilar or Chato saying "I never pretend otherwise", which `role_play` reads as a role cast. Severity now needs a
+cast ("pretend to be", "act as", "you are now"), so those are weak. Team-thread words were never stored before IJ1
+(the feed carries a team's text as null; ThreadStore keeps only our dealer threads): the taker records them from now.
+
+### [2026-10-04] build-error — existing-index DDL blocks injection recorder startup and backfill (#234)
+`CREATE INDEX IF NOT EXISTS` still takes a ShareLock, so startup can wait behind a writer and a backfill can
+block live inserts until its transaction ends. Check `to_regclass` first, bound setup lock/statement waits
+to 1.5 s, and commit schema setup before backfill reads; `store()` now does no DDL. Local Postgres regression
+tests cover the held-write transaction, missing-index timeout and released setup locks.
+
+### [2026-10-04] build-error — injection setup test shadows the imported conn fixture (#234)
+Ruff F811 on a local connection named `conn` → the module imports that name as a fixture → renamed the local
+connection to `fresh`; the fixture and its callers are unchanged.
+
+### [2026-10-04] build-error — inline team messages were recorded as dealer proofs (IJ1, #234)
+`Taker._keep()` sees every listed thread but labeled each `dealer_thread`; the later team-desk pass then
+recorded the same message under `team_thread`. Derive the source from thread kind and test both passes
+against one buffer. Keep extraction inside the recorder's never-raises guards; malformed metadata must not
+cost a taker move or stop the duel runner's post-send processing.
+
+### [2026-10-04] gotcha — duel exit status does not prove post-send completion (#234)
+`run_per_tick` catches tick exceptions, so a sent move plus CLI exit 0 can hide a failed recorder. The wiring
+regression now checks the final `evals.after_tick` call as well, including an injected extractor TypeError.
+The new test also hit Ruff F811 on the imported `duel_cli` fixture parameter; mark that intentional fixture reuse.
+
+### [2026-10-04] build-error — motion pitch browser and check tooling
+Computer-use and graph reads required unavailable approval; local Chrome failed its sandbox handshake → used the web-access cloud Chrome fallback, muted public reads only. Re-injecting HTML into one document retained its script context and broke the QA harness → navigate to a fresh blank page before each injection. A quoting edit broke the capture self-check → fixed with a triple-quoted JavaScript string. PPTX finalizer lacked RUNTIME_NODE_MODULES → passed the supplied runtime path. No game or Railway writes.
+
+### [2026-10-04] build-error — pitch recording fallback
+WebM capture could not encode without ffmpeg and the system Python lacked Pillow → captured checked real board frames and encoded a GIF with the bundled presentation Python runtime. The source is the muted idle board while doors are closed, not a trade recording.
+
+### [2026-10-04] build-error — PR #268 merge gate caught pitch checker lint
+The full Ruff gate rejected `docs/pitch/motion/check.py` for a missing explicit `zip` strictness and long lines;
+its format check also failed. Added `strict=True` for the two script languages, wrapped the embedded JavaScript,
+and formatted the checker. Its offline self-check passed: 7 slides, 165 seconds, embedded images and source comments.
+### [2026-10-04] finding
+Sunday schedule correction: one keyless GET https://bazaar.causaprima.ai/api/schedule returned
+`now_hours: 13.367`, "Sunday opens" at h16.65 with wall `2026-10-04T09:00:00+02:00` and 15 s ticks,
+and "The Bazaar closes" at h22.65 with wall `2026-10-04T15:00:00+02:00`. One game hour is one real hour.
+"Round 3 starts" and "Chamberí released" are h16.65, 09:00 CEST, with the ladder restart;
+150 P grant h16.7 ~09:03; Market Tests h17/h19/h21 ~09:21/11:21/13:21; Duels III h18.65 ~11:00
+(two issues, 12-tick duels, decay 0.10); finale warning h21.45 ~13:48; all five dealer stalls close
+and Grand Final duels start h21.65 ~14:00; "Scores freeze" h22.65, 15:00. Intermediate wall times
+assume no further pause or schedule change. The hard Market Test h14.65 and Market Test h15 precede
+the opening anchor: whether they fire at opening or are skipped, and their round attribution if fired,
+are UNVERIFIED. The previous Sunday wall-time estimates are superseded; full entries: `docs/briefing.md`.
+
+### [2026-10-04] finding — the schedule's Sunday is h16.65-h22.65 = exactly 1440 ticks of 15 s; /api/clock says t = 13.37
+`/api/schedule` has `day_opens sun` at h16.65 and `day_closes sun` at h22.65 (6 h = 1440 ticks of 15 s), Duels III at h18.65
+(tick 480), Market Tests h17/h19/h21 (ticks 84/564/1044), the finale at h21.65 (tick 1200), the Sunday allowance at h16.7
+(tick 12). But `/api/clock` shows t = 13.367 (Saturday ended early), and the hard Market Test (h14.65) and the h15 one are
+dated BEFORE the doors open: the organisers must jump the clock or fire them at the open (the `sunday` scenario fires them
+at ticks 2 and 19, then continues). If t stays 13.37 at the open, every entry shifts by 3.28 h (787 ticks).
+
+### [2026-10-04] finding — the calibrated Sunday scenario (SIM_SCENARIO=sunday): what it models and how
+`src/bazaar_sim/scenario.py` + `data/sunday.json` (written by `scripts/sim_calibrate.py` from feed_events, dealer_curves,
+duels, competitor_profiles and the keyless API): five dealers (Picaros and Don Ernesto exist only here), measured openings/
+floors/patience per dealer, Picaros repeat a final 18 % of the time (text only: no dealer ever re-priced after a final in
+2 days of data), Pilar's Salamanca +25 % and Abuela's uncommon fever (the size is ASSUMED 1.15: the feed has none), Radio
+Rastro news at the 0.7 h cadence, the Workshop (`POST /api/taller`, three of a rarity -> one of the next), 16 rivals fitted to
+Saturday (5.8 listings/tick, 20-tick lifetime, 38 % cancelled, 0.1 trades/tick, 6 reciprocal pairs) and ~32 assets a team.
+Unmodelled: Pilar/Ernesto buying epics (the sim's dealer sell topics need a page card), bench efficiency per trader (the
+feed has none), real duel rival styles. `SIM_TICK_SECONDS=2` compresses the pace: the game clock still adds 15 s a tick, the
+per-second limits scale x7.5 and latency /7.5 (`SimConfig.compression`), so per-tick budgets compare with the real pace.
+
+### [2026-10-04] gotcha — `catalog.configure()` is process-wide: a scenario world sets released sets and the dealer list
+`World.__init__` calls `catalog.configure(extra_released=..., scenario_dealers=...)`, so two worlds with different scenarios in
+one process step on each other (the simulator runs one). Tests that build a scenario world reset it with `catalog.configure()`.
+
+### [2026-10-04] gotcha — `scripts/tick_profile.py` was stale: `traces.per_tick` gained `agent=`
+`TypeError: per_tick() got an unexpected keyword argument 'agent'` on every profiled agent; the wrapper now forwards kwargs.
+
+### [2026-10-04] finding — our agents on a compressed Sunday (620 ticks at 2 s, Jev OFF, local sim, one key): ticks are not the limit
+`scripts/sim_sunday.py --ticks 620 --tick-seconds 2` and a real-pace sample (90 ticks of 15 s): taker wall p50 0.15 / p95 0.27 s
+of a 1.4 s budget (real pace: 0.55 / 1.05 s of 12.7 s), maker 0.05 s, duels 0.01 s; 0 x 429, 0 dropped, key at 0.74 req/s of
+5. The blockers are ours: the taker sent a write in only 45 of 620 ticks (49 messages, 16 threads, 3 accepts), refusals
+`spend > max_spend_per_game_hour` (182), cash floor (98), `price > official value` (32), `jev undecided` (436: with Jev off the
+taker takes no board ask); the maker posted ONE ask in 620 ticks (few spare copies, `protect_page_sets` all sets), and with no
+venue (`allow_venue_open = false`) mm_points and bench_points stay 0 through all four Market Tests. Score 0 -> 39.6
+(ladder 26.7, duels 11.6 from Duels III at tick 480, negotiating 1.4). The real taker has Jev on: the run could not test that.
+
+### [2026-10-04] build-error — PR #269 Sunday runner isolation and integrated review (SS1)
+Remote admin DSNs reached DROP/CREATE before child socket guards applied; a child also carried DATABASE_URL.
+Validate libpq parameters and loopback hosts before connecting, reject PG environment overrides and real-game
+names, strip DATABASE_URL from children, and force an explicit sim/dead database plus empty env files.
+The main merge conflicted in appended memory and generated README status: retain both histories and regenerate.
+The bluff wiring test randomly chose the valid plain arm; pin its seed, preserving production selection.
+Schedule elapsed now_hours disagreed with absolute at_hours; add the scenario opening origin.
+Scenario dealer menus advertised epic/legendary cards rejected by page-only validation; allow scenario rarities
+while retaining release/menu checks and ordinary simulator behavior.
+Review also caught that `/dev/null` fails the settings loader's regular-file check; all runner children now
+receive the run's actual empty environment file, including the simulator server.
+The runner's advertised `--jev` could not work with stripped credentials and loopback guards; remove that
+unsupported flag and always run these offline profiles with `--no-jev`.
+
+### [2026-10-04] gotcha — ST1 architecture Sunday refresh
+The generated architecture still used Saturday's eyebrow and a wrong Sunday hour anchor in its template.
+Move both texts into the status JSON; the single keyless schedule read confirms h16.65 = Sunday 09:00 CEST.
+Keep h14.65/h15 tests explicitly UNVERIFIED at opening. A Sunday-focused axis avoids overlapping event labels.
+
+### [2026-10-04] build-error — PR #231 stale branch failed current Railway IaC tests
+The PR head retained removed live-show variables and conflicted with main's new bench probe wiring.
+Merge current main, keep probe and edge-confirmation variables together, and retain the edge-only confirmation guard.

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from bazaar_sim.models import Negotiation
 
@@ -50,6 +50,7 @@ class Style:
     loved_sets: tuple[str, ...] = ()  # a collector pays `love_mult` x book for these sets' cards
     love_mult: float = 1.0
     love_rarities: tuple[str, ...] = ("uncommon", "rare", "epic")
+    repeats_final: float = 0.0  # chance a team's message after the final is answered with the same final, not a walk
 
 
 ABUELA = Style(
@@ -102,7 +103,43 @@ PILAR = Style(
     loved_sets=("SAL", "RET"),
     love_mult=1.2,
 )
-STYLES = {s.dealer: s for s in (ABUELA, CHATO, PILAR)}
+# Scenario-only dealers (the real /api/dealers, Saturday): Los Pícaros are a trickster (strictness 0.1: they keep
+# talking after their "final", but never re-priced one in the Friday+Saturday feed, 18 % only spoke again) and Don
+# Ernesto a banker (patience 0.95, shrewdness 0.95: a firm floor, a long fuse; 9 % of his 33 threads closed a deal).
+PICAROS = Style(
+    "picaros",
+    {"rare": 1.16, "epic": 1.15},
+    {"rare": (0.825, 0.97), "epic": (0.83, 0.96), "pack": (0.85, 0.95)},
+    buy_open=0.4,
+    buy_ceiling=0.5,
+    patience=3,
+    buy_patience=3,
+    matches_moves=False,
+    generosity=0.6,
+    memory=0.3,
+    cooloff_at=-6.0,
+    cooloff_ticks=20,
+    kindness_discount=0,
+    spam_penalty=False,
+    repeats_final=0.18,
+)
+BANCO = Style(
+    "banco",
+    {"uncommon": 1.3, "rare": 1.3, "epic": 1.3},
+    {"uncommon": (0.97, 1.05), "rare": (0.97, 1.05), "epic": (0.97, 1.05), "pack": (0.97, 1.08)},
+    buy_open=0.6,
+    buy_ceiling=0.8,
+    patience=8,
+    buy_patience=8,
+    matches_moves=True,
+    generosity=0.1,
+    memory=1.0,
+    cooloff_at=-2.0,
+    cooloff_ticks=60,
+    kindness_discount=0,
+    spam_penalty=True,
+)
+STYLES = {s.dealer: s for s in (ABUELA, CHATO, PILAR, PICAROS, BANCO)}
 
 ABUELA_LINES = {
     "open": ("Hola, cariño, have you eaten? {name} for {p} P. A good start for your album.",),
@@ -144,7 +181,38 @@ PILAR_LINES = {
     "accept_buy": ("Trato hecho. {p} P for your {name}; it goes in my album.",),
     "walk": ("Then we are done. Buenas tardes.",),
 }
-LINES = {"abuela": ABUELA_LINES, "chato": CHATO_LINES, "pilar": PILAR_LINES}
+PICAROS_LINES = {
+    "open": ("¡Amigo! {name}, {p} P, un chollo. Solo hoy, y solo para ti.",),
+    "open_buy": ("{name}? Te damos {p} P ahora mismo, sin preguntas.",),
+    "move": (
+        "Vale, vale, {p} P, que somos hermanos. Esto es un regalo.",
+        "{p} P y nos quedamos sin cenar. Dime que sí.",
+    ),
+    "hold": ("{p} P, es lo que hay. Mañana ya no estamos.", "Que se acaba, amigo: {p} P."),
+    "final": ("{p} P, última oferta, palabra de Paco y de Nando. Se acaba ahora mismo.",),
+    "final_buy": ("{p} P y no pasamos de ahí. Última oferta, se acaba ahora mismo.",),
+    "accept": ("¡Hecho! {name} por {p} P. Un placer, y no mires dos veces.",),
+    "accept_buy": ("¡Hecho! {p} P por tu {name}. Que corra el dinero.",),
+    "walk": ("Nos vamos, amigo. Otra vez será.",),
+}
+BANCO_LINES = {
+    "open": ("Don Ernesto. {name}: {p} P. El precio de la casa.",),
+    "open_buy": ("{name}. La casa ofrece {p} P por la reserva.",),
+    "move": ("Usted se mueve {d}; la casa, {c}: {p} P.", "{p} P. No tengo prisa."),
+    "hold": ("{p} P. La casa no tiene prisa.", "Sigue siendo {p} P."),
+    "final": ("{p} P. Es la última palabra de la casa.",),
+    "final_buy": ("{p} P. Es la última palabra de la casa.",),
+    "accept": ("De acuerdo. {name} por {p} P. La casa le agradece.",),
+    "accept_buy": ("De acuerdo. {p} P por {name}. Entra en la reserva.",),
+    "walk": ("La casa no insiste. Buenos días.",),
+}
+LINES = {
+    "abuela": ABUELA_LINES,
+    "chato": CHATO_LINES,
+    "pilar": PILAR_LINES,
+    "picaros": PICAROS_LINES,
+    "banco": BANCO_LINES,
+}
 
 
 @dataclass(frozen=True)
@@ -286,6 +354,11 @@ def reply(
         done = neg.model_copy(update={"last_team_price": team_price, "pending_reply": False})
         return Reply("accept", team_price, _say(style, key, rng, name=name, p=team_price), done)
     if neg.final:
+        if style.repeats_final and rng.random() < style.repeats_final and neg.ask is not None:
+            again = neg.model_copy(update={"pending_reply": False})  # a trickster: its "final" is not a walk
+            return Reply(
+                "final", neg.ask, _say(style, "final_buy" if neg.side == "buy" else "final", rng, p=neg.ask), again
+            )
         done = neg.model_copy(update={"pending_reply": False})
         return Reply("walk", None, _say(style, "walk", rng), done)
     if neg.ask is None:
@@ -334,3 +407,48 @@ def _haggle(
     moved_text = "move" if give > 0 else "hold"
     text = _say(style, moved_text, rng, p=ask, d=step, c=give)
     return Reply("offer", ask, text, neg.model_copy(update=update))
+
+
+def calibrated(style: Style, data: dict[str, object]) -> Style:
+    """`style` with a scenario's measured numbers (`sunday.json` -> dealers -> <id>) laid over it.
+
+    Only what the data measured moves: the opening multipliers (`open_mult`), the secret floors as a share of list
+    (`floor_range`: the p10-p90 of what threads that filled after 2+ steps paid), the buy side's opening bid and
+    ceiling, the dealer's patience (asks before its final) and how often it speaks again after a final. A missing or
+    unusable number keeps the hand-set one."""
+    from dataclasses import replace
+
+    changes: dict[str, Any] = {}
+    raw_open = data.get("open_mult")
+    if isinstance(raw_open, dict):
+        merged = {
+            **style.open_mult,
+            **{k: float(v) for k, v in raw_open.items() if _num(v) and not k.startswith("sobre_")},
+        }
+        changes["open_mult"] = merged
+    raw_floor = data.get("floor_range")
+    if isinstance(raw_floor, dict):
+        floors = dict(style.floor_range)
+        for key, band in raw_floor.items():
+            if isinstance(band, dict) and _num(band.get("lo")) and _num(band.get("hi")):
+                floors["pack" if str(key).startswith("sobre_") else str(key)] = (float(band["lo"]), float(band["hi"]))
+        changes["floor_range"] = floors
+    steps = data.get("steps_to_final")
+    if isinstance(steps, dict) and _num(steps.get("median")):
+        changes["patience"] = max(2, round(float(steps["median"])))
+    buys = data.get("buys")
+    if isinstance(buys, dict):
+        opening = buys.get("opening_bid_over_book")
+        fill = buys.get("fill_over_book")
+        if isinstance(opening, dict) and _num(opening.get("p50")) and style.dealer not in ("pilar", "banco"):
+            changes["buy_open"] = float(opening["p50"])
+        if isinstance(fill, dict) and _num(fill.get("p75")) and style.dealer not in ("pilar", "banco"):
+            changes["buy_ceiling"] = max(float(fill["p75"]), float(changes.get("buy_open", style.buy_open)))
+    fake = data.get("fake_final")
+    if isinstance(fake, dict) and style.dealer == "picaros" and _num(fake.get("rate_text_after_final")):
+        changes["repeats_final"] = float(fake["rate_text_after_final"])
+    return replace(style, **changes)
+
+
+def _num(value: object) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)

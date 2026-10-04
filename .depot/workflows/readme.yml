@@ -1,0 +1,53 @@
+# Depot CI Migration
+# Source: .github/workflows/readme.yml
+#
+# Changes made:
+# - Changed runs-on from "blacksmith-4vcpu-ubuntu-2404" to "depot-ubuntu-latest" in job "refresh"
+
+name: readme
+
+# Keeps the root README and docs/architecture.html current after every merge: the "Live status"
+# block (plan backlog, CLI commands, team memory) on the merged code, the "Activity" block (recent
+# merges, open PRs), and the architecture page rendered from docs/architecture.status.json.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, closed, reopened]
+  workflow_dispatch:
+
+concurrency:
+  group: readme
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  refresh:
+    runs-on: depot-ubuntu-latest # was: blacksmith-4vcpu-ubuntu-2404. Nonstandard GitHub runner label detected, changed to default Depot runner.
+    timeout-minutes: 5
+    steps:
+      - uses: useblacksmith/checkout@v1
+        with:
+          ref: main
+          fetch-depth: 100
+      - name: Rebuild the README blocks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/readme_status.py --activity
+      - name: Rebuild the architecture page
+        run: python3 scripts/architecture_page.py
+      - name: Commit when it changed
+        run: |
+          if git diff --quiet -- README.md docs/architecture.html; then
+            echo "README and architecture page already current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md docs/architecture.html
+          git commit -m "docs: refresh README live status and architecture page [skip ci]"
+          git pull --rebase origin main
+          git push origin HEAD:main

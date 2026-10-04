@@ -11,6 +11,8 @@ from bazaar_agent.agents.dealer import Move, Outcome
 from bazaar_agent.config import Settings
 from bazaar_agent.guardrails import GUARDRAILS_FILE, Ledger, parse_guardrails
 
+ABUELA_LISTED = [{"id": "abuela", "kind": "dealer", "level": 1, "status": "active"}]  # /api/dealers
+
 OWN = 85  # the thread `dealer buy` opens
 ACCEPT_20 = ((Move("accept", 20, 7), OWN),)
 
@@ -72,7 +74,7 @@ def dealer_buy(monkeypatch, tmp_path):
         monkeypatch.setattr(cli, "_rules", lambda: parse_guardrails(venue_off, GUARDRAILS_FILE))
         monkeypatch.setattr(cli, "team_client", lambda settings: client)
         monkeypatch.setattr(cli, "_ledger", lambda source, live=False: ledger)
-        monkeypatch.setattr(cli, "_dealer_personas", lambda settings: [])  # no /api/dealers read: today's plan
+        monkeypatch.setattr(cli, "_dealer_personas", lambda settings: ABUELA_LISTED)  # listed, not forgiving
         monkeypatch.setattr("bazaar_agent.agents.dealer.negotiate", fake_negotiate)
         result = CliRunner().invoke(cli.app, ["dealer", "buy", "sobre_barrio", "--start", "6", "--max", "20", "--live"])
         return result, seen.get("verdicts")

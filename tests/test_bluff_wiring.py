@@ -242,6 +242,7 @@ def duel_rows(tmp_path):
 def test_duel_run_bluffs_in_the_text_only_and_the_kill_switch_restores_todays_words(duel_cli, monkeypatch):
     cli, client, tmp_path = duel_cli
     monkeypatch.setenv(ENV, "1")
+    monkeypatch.setenv("BAZAAR_BLUFF_SEED", "0")  # Exercise a bluff, not the randomly selected plain control arm.
     result = CliRunner().invoke(cli.app, ["duel", "run", "--play", "--no-jev", "--max-ticks", "1"])
     assert result.exit_code == 0, result.output
     ((kind, did, price, days, text),) = client.sent

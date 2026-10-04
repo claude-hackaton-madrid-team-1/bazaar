@@ -33,6 +33,7 @@ Kind = Literal[
     "news",  # a Radio Rastro item or an official schedule lever (`news.NewsSentinel`): quoted, maybe a rumour
     "schedule",  # an official scheduled event (`/api/schedule`, `/api/levels`) with its lead time (`schedule_watch`)
     "rival_move",  # a team that climbed ranks fast, and why, from public data (`rank_watch`)
+    "activity_stall",  # no agent of ours sent anything for the stall window, and its top blocker (`activity`)
 ]
 Source = Literal["rules", "llm", "outcome"]  # outcome: derived from our own scored outcomes
 # What the outcome learner writes: everything else in the table is the feed reader's (N12).

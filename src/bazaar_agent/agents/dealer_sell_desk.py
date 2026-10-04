@@ -11,7 +11,10 @@ read, decide, one send. `SellDesk` runs inside the maker behind `dealer_sell_ena
   - a thread opens only with a dealer we have unlocked and have NO open thread with (`/api/me/threads`: the
     taker's buy threads share the one open conversation per dealer);
   - candidates are spare copies (`strategy._spare`), never a protected card, never a copy an open offer of ours
-    lists (locked) or the maker wants to list, never the last free copy of a page card;
+    lists (locked: board offers, the maker's targets, and thread offers such as a team swap) or the maker wants
+    to list, never the last free copy of a page card; a copy that stops being a spare mid-thread walks;
+  - the dealer follows the ladder's scoring (`candidates`): the highest level that buys the copy and has bid our
+    floor, a level with fewer than three scored deals today first; a trickster's FINAL is no limit;
   - every accept passes the offer inspector (`accept_gate.dealer_gate`), `guardrails.check` and the shared
     ledger's accept slot; every send is a decision row plus an execution row; a deal is a `dealer_sell` row;
   - a dealer may take our ask with words only ("Trato hecho"): the thread's `deal` status says so, and so does
@@ -22,10 +25,11 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from bazaar_agent import impact_board
 from bazaar_agent.agents.dealer import Move, settled_price, with_name
 from bazaar_agent.agents.dealer_memory import DealerMemory, address_for, recall_dealer
 from bazaar_agent.agents.dealer_sell import (
@@ -34,12 +38,20 @@ from bazaar_agent.agents.dealer_sell import (
     SellNegotiation,
     ask_schedule,
     decide_sell,
+    is_trickster,
     latest_dealer_bid,
     only_copy,
     see_bids,
     sell_topic,
 )
-from bazaar_agent.agents.dealer_sell_data import REFRESH_TICKS, Fill, SellMarket, market_from_feed
+from bazaar_agent.agents.dealer_sell_data import (
+    REFRESH_TICKS,
+    Fill,
+    SellMarket,
+    full_levels,
+    ladder_deals,
+    market_from_feed,
+)
 from bazaar_agent.agents.strategy_gate import DEALER_SELL, StrategyGate
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.jev.decider import needed_budget_s
@@ -94,6 +106,7 @@ class Candidate:
     expected: float  # the dealer's typical fill for this rarity
     name: str = ""
     fill: Fill | None = None
+    level: int | None = None  # the dealer's ladder level (`traders.level`, `/api/dealers`); None: not known
 
     @property
     def gain(self) -> float:
@@ -112,18 +125,23 @@ def candidates(
     events: Sequence[Any] = (),
     personas: Mapping[str, Persona] | None = None,
     fever: Mapping[str, Mapping[str, float]] | None = None,
+    deals: Mapping[str, int] | None = None,
 ) -> list[Candidate]:
     """Spare copies an unlocked dealer we have no open thread with buys, whose floor that dealer has been seen
-    to bid for the rarity. Best first: its typical fill minus what we lose.
+    to bid for the rarity. Best first by the ladder's scoring (RULES.md: our best three deals per level count, a
+    missing one as zero, higher levels weigh more; a sale to a dealer is a ladder deal): a level with fewer than
+    `LADDER_SLOTS` scored deals today first (`deals`: dealer -> our deals today, `ladder_deals`; None: unknown),
+    then the highest level, then its typical fill minus what we lose.
 
     `personas` (the persona model, `/api/dealers`): a dealer whose published menu does not buy the copy's rarity
-    in its set is dropped (never a common to Pilar), and the rank uses its typical fill × `sell_weight` (a
+    in its set is dropped (never a common to Pilar), and the gain uses its typical fill × `sell_weight` (a
     favourite set, an official `fever`: dealer -> set -> pct over book). Ranking only: floors, expected fills
-    and every ask stay as they are. Without personas: today's candidates and order."""
+    and every ask stay as they are."""
     from bazaar_agent.strategy import _spare, bonus_at_stake, build_market
 
     m = build_market(me, catalog, events, [])
     busy_ids, locked_ids = set(busy), set(locked)
+    levels = dealer_levels(market, personas)
     cards = [a for a in me.get("assets") or [] if a.get("kind") == "card" and isinstance(a.get("id"), int)]
     free: dict[str, int] = {}
     for a in cards:
@@ -155,15 +173,50 @@ def candidates(
                 weights[(int(a["id"]), t.id)] = weight
             seen.add((ref, t.id))
             cand = Candidate(int(a["id"]), ref, card.rarity, round(ours, 1), float(value), floor, t.id, fill.expected)
-            out.append(Candidate(**{**cand.__dict__, "name": t.greeting, "fill": fill}))
-    if not personas:
-        return sorted(out, key=lambda c: (-c.gain, c.asset_id))
-    return sorted(out, key=lambda c: (-weighted_gain(c, weights.get((c.asset_id, c.dealer), 1.0)), c.asset_id))
+            out.append(replace(cand, name=t.greeting, fill=fill, level=levels.get(t.id)))
+    full = full_levels(levels, deals or {})
+
+    def rank(c: Candidate) -> tuple[bool, int, float, int]:
+        gain = weighted_gain(c, weights.get((c.asset_id, c.dealer), 1.0)) if personas else c.gain
+        return (c.level in full, -(c.level or 0), -gain, c.asset_id)
+
+    return sorted(out, key=rank)
 
 
 def weighted_gain(c: Candidate, weight: float) -> float:
     """The rank of a candidate under the persona model: the dealer's typical fill × its weight, minus our loss."""
     return round(c.expected * weight - c.value, 1)
+
+
+def dealer_levels(market: SellMarket, personas: Mapping[str, Persona] | None = None) -> dict[str, int | None]:
+    """dealer -> its ladder level: the sell data's (`traders.level`, `/api/dealers`), else its persona's."""
+    out: dict[str, int | None] = {t.id: t.level for t in market.traders}
+    for pid, p in (personas or {}).items():
+        if out.get(pid) is None and p.level > 0:
+            out[pid] = p.level
+    return out
+
+
+def dealer_kind(dealers: Iterable[Any] | None, dealer: str) -> str:
+    """The dealer's published kind (`/api/dealers` `kind`: dealer, collector, trickster, banker); "dealer" when the
+    snapshot does not say. A payload that does not parse never costs the tick."""
+    try:
+        persona = parse_personas(dealers or []).get(dealer)
+    except Exception:  # noqa: BLE001
+        return "dealer"
+    return persona.kind if persona is not None else "dealer"
+
+
+def listed_assets(snap: Any) -> set[int]:
+    """Our copies an open offer of ours already gives, THREAD offers included (the taker's team swaps, our own sell
+    asks), from the snapshot's `/api/me/offers` (no request): the maker's `locked` holds only its board offers and
+    targets."""
+    from bazaar_agent.agents.seller import offers_in, open_commitments
+
+    offers = getattr(snap, "offers", None)
+    if not isinstance(offers, Mapping):
+        return set()
+    return set(open_commitments(offers_in(dict(offers)), str(getattr(snap, "us", "") or "")).listed)
 
 
 def fever_by_dealer(events: Iterable[MarketEvent], t_hours: float) -> dict[str, dict[str, float]]:
@@ -227,6 +280,7 @@ class SellTalk:
     # How we address the dealer (`dealer_memory.address_for`); None: its published name (`cand.name`) as before.
     address: str | None = None
     memory: dict[str, Any] = field(default_factory=dict)  # the dealer's memory when the thread opened (facts)
+    dealer_kind: str = "dealer"  # `/api/dealers` kind: a trickster's FINAL is read as an ordinary bid
     neg: SellNegotiation = field(init=False)
 
     def __post_init__(self) -> None:
@@ -261,9 +315,11 @@ class SellTalk:
             )
         )
 
-    def step(self, clock: Any, me: Mapping[str, Any] | None = None) -> str:
+    def step(self, clock: Any, me: Mapping[str, Any] | None = None, locked: Iterable[int] = ()) -> str:
         """Play one tick. `me` (this tick's /api/me): our copy gone from it while the thread is ours means the
-        dealer took our ask (a settlement carries no thread id). A game refusal is logged, never raised."""
+        dealer took our ask (a settlement carries no thread id). With `locked` (copies other open offers of ours
+        give), a copy that stopped being a spare walks before any ask or accept. A game refusal is logged, never
+        raised."""
         from bazaar_agent.agents.dealer import Hold
         from bazaar_agent.sdk import BazaarError
 
@@ -286,6 +342,9 @@ class SellTalk:
                     self.status = "accepted_pending"
                     self.hooks.log(f"thread {self.tid}: accepted, not settled after 2 ticks: check it by hand")
                 return self.status
+            if why := self._not_spare(me, locked):
+                self._walk(clock, f"not a spare any more: {why}")
+                return self.status
             self._move(thread, clock)
         except Hold as e:
             self.hooks.log(f"tick {clock.tick} dealer_sell: HOLD: {e}")
@@ -294,8 +353,13 @@ class SellTalk:
         return self.status
 
     def _open(self, clock: Any) -> None:
+        from bazaar_agent.agents.dealer import Hold
+
         c = self.cand
-        denied = self.hooks.guard("dealer_sell", self.plan.start)
+        try:
+            denied = self.hooks.guard("dealer_sell", self.plan.start)
+        except Hold as e:  # no thread yet: nothing to hold open, so a hold ends the talk unopened (#227 review)
+            denied = str(e)
         if denied:
             self.status = "refused"
             self.hooks.log(f"tick {clock.tick} dealer_sell: guardrails refuse to open: {denied}")
@@ -341,18 +405,35 @@ class SellTalk:
         self._deal(None, clock, "our copy left /me")
         return True
 
+    def _not_spare(self, me: Mapping[str, Any] | None, locked: Iterable[int]) -> str | None:
+        """Why our copy stopped being a spare (None: it still is one, or this /me does not name its card): every
+        other copy of its card left /me or is given by another open offer of ours (`locked`), so ours is the last
+        free copy of a page card."""
+        c = self.cand
+        assets = [a for a in (me or {}).get("assets") or [] if isinstance(a, Mapping)]
+        if not any(a.get("id") == c.asset_id and a.get("ref") == c.ref for a in assets):
+            return None  # no view of our copy's card to judge by (the guard's own count still applies)
+        taken = set(locked) - {c.asset_id}  # our own sell ask lists our copy: it is not "taken" by another offer
+        others = [a.get("id") for a in assets if a.get("ref") == c.ref and a.get("id") != c.asset_id]
+        free = sum(1 for i in others if i not in taken)
+        if only_copy(c.ref, c.rarity, free + 1):
+            return f"{c.ref} #{c.asset_id} is our last free copy ({len(others)} other, {free} not on an offer of ours)"
+        return None
+
     def _move(self, thread: dict[str, Any], clock: Any) -> None:
         c, tid = self.cand, self.tid
         bid, offer_id, final = latest_dealer_bid(thread, c.dealer, c.asset_id)
         see_bids(self.neg, thread, c.dealer, c.asset_id)
         final_min = math.ceil(self.final_share * self.neg.asks[0] - 1e-9) if self.neg.asks else 0
-        move = decide_sell(self.neg, bid, offer_id, final, final_min)
+        move = decide_sell(self.neg, bid, offer_id, final, final_min, self.dealer_kind)
         if self.ticks > self.max_ticks and move.kind != "accept":
             move = Move("walk", reason=f"no deal after {self.max_ticks} ticks")
         verb = "ask" if move.kind == "bid" else move.kind
+        said = (
+            (" FINAL (a trickster's: read as a bid)" if is_trickster(self.dealer_kind) else " FINAL") if final else ""
+        )
         self.hooks.log(
-            f"tick {clock.tick} dealer_sell: {c.dealer} bids {bid}{' FINAL' if final else ''} → {verb} "
-            f"{move.price or ''} ({move.reason})"
+            f"tick {clock.tick} dealer_sell: {c.dealer} bids {bid}{said} → {verb} {move.price or ''} ({move.reason})"
         )
         if move.kind == "accept" and move.price is not None and move.offer_id is not None:
             nxt = self._accept(thread, clock, move.price, move.offer_id, move.reason)
@@ -488,7 +569,8 @@ class SellDesk:
         return self.gate.allows(DEALER_SELL, tick, lambda: self.gate_state(snap))
 
     def gate_state(self, snap: Any) -> dict[str, Any]:
-        """What Jev reads: our spare copies (a page keeps one) with `your_value`, cash, and the last no-deals."""
+        """What Jev reads: our spare copies (a page keeps one) with `your_value`, the score guard's estimate of
+        selling each one to a dealer (`score_impact`, in the same order), cash, and the last no-deals."""
         me = snap.me or {}
         copies: dict[str, list[float]] = {}
         for a in me.get("assets") or []:
@@ -500,6 +582,7 @@ class SellDesk:
             "cash": me.get("cash"),
             "cash_floor": self.rules.cash_floor,
             "duplicates": spare,
+            "score_impact": [self.sale_impact(snap, str(s["card"])) for s in spare],
             "rules": {
                 "min_surplus": self.rules.dealer_sell_min_surplus,
                 "final_min_first_ask_share": self.rules.dealer_sell_final_min_first_ask_share,
@@ -509,6 +592,25 @@ class SellDesk:
             },
             "history": {"no_deals_this_process": walked, "sells_opened_last_hour": len(self.opened_at)},
         }
+
+    def sale_impact(self, snap: Any, ref: str) -> dict[str, Any] | None:
+        """The score guard's estimate (`impact_board.sell_state`) of selling our cheapest copy of `ref` (then the
+        lowest id) to a dealer at its own `your_value`: our sell floor is never lower, so no sale of ours scores
+        worse. None when it cannot be built: one broken estimate never turns the whole sell strategy off."""
+        try:
+            me = snap.me or {}
+            assets = me.get("assets") or []
+            held = [
+                a for a in assets if isinstance(a, Mapping) and a.get("kind") == "card" and str(a.get("ref")) == ref
+            ]
+            copy = min(held, key=lambda a: (float(a.get("your_value") or 0), int(a["id"])))
+            price = float(copy.get("your_value") or 0)
+            rarity = copy.get("rarity") if isinstance(copy.get("rarity"), str) else None
+            tick = int(snap.clock.tick)
+            estimate = impact_board.sell_state(me, ref, rarity, price, None, self.rules, tick, asset=int(copy["id"]))
+            return {"card": ref, **estimate}
+        except Exception:  # noqa: BLE001 — the estimate only informs Jev; the guard still checks every send
+            return None
 
     def taker_wants(self, tick: int) -> set[str]:
         """Dealers the taker wanted in the last `dealer_sell_taker_window_ticks` (#200: its buys come first)."""
@@ -545,8 +647,13 @@ class SellDesk:
         if not self.rules.dealer_sell_enabled:
             return
         clock = snap.clock
+        try:  # every copy an open offer of ours gives, thread offers included: none of them is free
+            committed = set(locked) | listed_assets(snap)
+        except Exception as e:  # noqa: BLE001 - unreadable: no sell move this tick (fail closed)
+            self.log(f"tick {clock.tick} dealer_sell: our open offers unreadable ({type(e).__name__}): holding")
+            return
         if self.talk is not None:
-            self.talk.step(clock, snap.me)
+            self.talk.step(clock, snap.me, committed)
             if self.talk.done:
                 c = self.talk.cand
                 self.log(f"tick {clock.tick} dealer_sell: {c.ref} with {c.dealer}: {self.talk.status}")
@@ -571,6 +678,10 @@ class SellDesk:
             personas, fever = self.persona_inputs(snap)
         except Exception:  # noqa: BLE001
             personas, fever = None, None
+        try:  # the ladder slots we already scored today, from the snapshot's feed (no request)
+            deals: dict[str, int] | None = ladder_deals(snap.events or [], str(getattr(snap, "us", "") or ""))
+        except Exception:  # noqa: BLE001 - unknown: the level order alone
+            deals = None
         found = candidates(
             snap.me,
             snap.catalog,
@@ -578,10 +689,11 @@ class SellDesk:
             params,
             self.rules,
             busy=busy,
-            locked=locked,
+            locked=committed,
             events=snap.events,
             personas=personas,
             fever=fever,
+            deals=deals,
         )
         found = [c for c in found if self._retry_ok(c, clock)]
         if not found:
@@ -617,9 +729,10 @@ class SellDesk:
             self.rules.dealer_sell_final_min_first_ask_share,
             address=address,
             memory=memory.facts(),
+            dealer_kind=dealer_kind(getattr(snap, "dealers", None), c.dealer),
         )
         self.opened_at.append((clock.t_hours, c.dealer))
-        self.talk.step(clock, snap.me)
+        self.talk.step(clock, snap.me, committed)
         if self.talk.done:
             self._ended(self.talk, clock)
             self.talk = None
@@ -637,14 +750,15 @@ def standard_hooks(
 ) -> SellHooks:
     """`guardrails.check` on a fresh context (the kill switch first), the shared ledger's accept slot, the
     offer inspector's accept gate (S1), and a `dealer_sell` row for each deal. A shared ledger that cannot
-    answer holds the tick (`dealer.Hold`): no write without it."""
-    from dataclasses import replace
-
+    answer, the kill switch on at the send, or approvals (or values) that cannot be read hold the tick
+    (`dealer.Hold`): no write, and never a walk (GUARDRAILS.md: the kill switch holds, unreadable approvals
+    hold a dealer thread)."""
     from bazaar_agent.agents.accept_gate import dealer_gate
     from bazaar_agent.agents.dealer import Hold
     from bazaar_agent.agents.inspector import CardIndex
     from bazaar_agent.guardrails import Action, action_kind, check, kill_switch
     from bazaar_agent.ledger_pg import LedgerUnavailable
+    from bazaar_agent.official_values import unread_only
 
     cards = CardIndex.from_catalog(catalog)
     topic = sell_topic(cand.asset_id)
@@ -655,9 +769,19 @@ def standard_hooks(
         except LedgerUnavailable as e:
             raise Hold(f"{e}; no write without the shared ledger (fail closed)") from None
         action = Action(
-            action_kind(kind), cand.ref, cand.rarity, price, your_value=cand.your_value, scope="dealer_sell"
+            action_kind(kind),
+            cand.ref,
+            cand.rarity,
+            price,
+            your_value=cand.your_value,
+            scope="dealer_sell",
+            asset=cand.asset_id,  # the score impact rule prices this copy, not the worst copy of the card
         )
         verdict = check(action, ctx, rules)
+        if verdict.halted:  # the switch went on after the step read it: hold (a walk is a write too)
+            raise Hold(f"kill switch on: {'; '.join(verdict.violations)}")
+        if not verdict.allowed and unread_only(verdict.violations):  # approvals unreadable: hold, never walk
+            raise Hold("; ".join(verdict.violations))
         return None if verdict.allowed else "; ".join(verdict.violations)
 
     def reserve(price: int, clock: Any) -> bool | None:

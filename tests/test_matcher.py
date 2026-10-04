@@ -344,8 +344,17 @@ def test_on_the_simulators_bench_we_realise_at_least_what_its_auto_venue_realise
     assert all(limits[str(m.buy.id)] >= limits[str(m.sell.id)] for m in plan)  # quotes shade: never a loss
 
 
-def test_an_offer_addressed_to_one_team_is_never_matched_by_the_broker():
-    addressed = {**book_sell(1, "LAV-03", 20, "mA"), "to": "t07"}
-    book = BrokerBook(offers=[addressed, book_buy(2, "LAV-03", 30, "mB")])
-    quotes = quotes_from(book)
-    assert [q.id for q in quotes.quotes] == [2] and quotes.skipped == 1
+def test_an_offer_addressed_to_one_team_is_matched_only_to_that_teams_offer():
+    addressed = {**book_sell(1, "LAV-03", 20, "mA"), "to": "mC"}
+    book = BrokerBook(offers=[addressed, book_buy(2, "LAV-03", 40, "mB"), book_buy(3, "LAV-03", 25, "mC")])
+    plan = plan_matches(quotes_from(book).quotes, Fee())
+    # mB bids more, but the ask is addressed to mC: card by card, mC's bid takes it at the midpoint
+    assert [(m.sell.id, m.buy.id, m.price) for m in plan] == [(1, 3, 22)]
+    # nobody named by `to` bids (the book may show `to` as a team id and makers as pseudonyms): no match at all
+    alone = BrokerBook(offers=[{**book_sell(1, "LAV-03", 20, "mA"), "to": "t07"}, book_buy(2, "LAV-03", 40, "mB")])
+    assert plan_matches(quotes_from(alone).quotes, Fee()) == []
+    # an addressed bid crosses only its addressee's ask, and the fee still has to fit under the bid
+    bid_to = {**book_buy(5, "LAV-03", 30, "mB"), "to": "mA"}
+    other = BrokerBook(offers=[book_sell(4, "LAV-03", 10, "mD"), book_sell(6, "LAV-03", 28, "mA"), bid_to])
+    assert [(m.sell.id, m.buy.id) for m in plan_matches(quotes_from(other).quotes, Fee())] == [(6, 5)]
+    assert plan_matches(quotes_from(other).quotes, Fee(1000, 1)) == []  # 28 + 3 + 1 > 30

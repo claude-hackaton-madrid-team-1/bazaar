@@ -296,6 +296,8 @@ def render_backlog(plan: str) -> str:
 def render_page(data: dict[str, Any], plan: str, template: str) -> str:
     boxes = "\n      ".join(render_box(k, v) for k, v in data["boxes"].items())
     return Template(template).substitute(
+        eyebrow=html.escape(data.get("eyebrow", "")),
+        timeline_note=_inline(data.get("timeline_note", "")),
         boxes=boxes,
         timeline=render_timeline(data.get("timeline", {})),
         waiting=render_items(data["waiting_on_you"]),

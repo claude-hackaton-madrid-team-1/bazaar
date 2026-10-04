@@ -1,5 +1,7 @@
 """N14a evidence: the final-aware replay (`bazaar dealer finals`) on Chato-shaped threads."""
 
+from pathlib import Path
+
 from bazaar_agent.agents.dealer_finals import finals_rows
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.intel import DealerThread
@@ -42,7 +44,10 @@ def test_the_cli_prints_each_lift_and_the_deals_it_would_take(monkeypatch):
     from typer.testing import CliRunner
 
     from bazaar_agent import cli
+    from bazaar_agent import guardrails as gr
 
+    pinned = gr.parse_guardrails("- `max_price_uncommon` = 26 — pinned").rules  # the replay's cap, not today's rule
+    monkeypatch.setattr(gr, "load_guardrails", lambda *a, **k: gr.LoadedRules(pinned, (), (), Path("GUARDRAILS.md")))
     monkeypatch.setattr(cli, "_events", lambda live: [{"id": 1}])
     monkeypatch.setattr("bazaar_agent.intel.dealer_threads", lambda events, us=None: [T253, T228])
     result = CliRunner().invoke(cli.app, ["dealer", "finals", "--lift", "0", "--lift", "0.25", "--threads"])

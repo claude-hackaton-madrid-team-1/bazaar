@@ -18,8 +18,14 @@ from bazaar_sim.models import Team
 from bazaar_sim.views import asset_brief, asset_name, venues_view
 from bazaar_sim.world import World
 
-LEVEL_OF = {"abuela": 1, "chato": 2, "pilar": 3}
-LEVEL_WEIGHT = {1: 1.0, 2: 1.5, 3: 2.0}  # "higher levels weigh more" (RULES.md); the real weights are not published
+LEVEL_OF = {"abuela": 1, "chato": 2, "pilar": 3, "picaros": 4, "banco": 5}
+LEVEL_WEIGHT = {
+    1: 1.0,
+    2: 1.5,
+    3: 2.0,
+    4: 2.5,
+    5: 3.0,
+}  # "higher levels weigh more" (RULES.md); the real weights are not published
 LADDER_SCALE = 10.0
 REFRESH_TICKS = 5
 
@@ -27,7 +33,9 @@ REFRESH_TICKS = 5
 def ladder_points(team: Team) -> float:
     total = 0.0
     for dealer, level in LEVEL_OF.items():
-        shares = sorted((d.share for d in team.deals if d.dealer == dealer and d.negotiated), reverse=True)[:3]
+        shares = sorted(
+            (d.share for d in team.deals[team.round_start_deal :] if d.dealer == dealer and d.negotiated), reverse=True
+        )[:3]
         total += LEVEL_WEIGHT[level] * LADDER_SCALE * sum(shares) / 3
     return round(total, 2)
 
