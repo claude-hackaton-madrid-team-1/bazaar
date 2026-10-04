@@ -240,7 +240,8 @@ def test_cash_refund_after_restart_is_once_only_and_not_swap_budget(tmp_path):
     assert d.ledger.spent_since(0) == 0  # arbitrary operator offer cannot invent credit
 
 
-def test_cash_counter_drops_tick_expiring_during_reservation(tmp_path, monkeypatch):
+@pytest.mark.parametrize("stop", ["deadline", "pause"])
+def test_cash_counter_drops_tick_expiring_during_reservation(tmp_path, monkeypatch, stop):
     from dataclasses import replace
 
     from bazaar_agent.agents import publication
@@ -249,11 +250,16 @@ def test_cash_counter_drops_tick_expiring_during_reservation(tmp_path, monkeypat
     open_ = True
     record = d.ledger.record
 
+    d.rules = d.rules.model_copy(update={"pause_file": str(tmp_path / "PAUSE")})
+
     def expire(kind, *args, **kwargs):
         nonlocal open_
         record(kind, *args, **kwargs)
         if kind == "listing":
-            open_ = False
+            if stop == "pause":
+                (tmp_path / "PAUSE").touch()
+            else:
+                open_ = False
 
     monkeypatch.setattr(d.ledger, "record", expire)
     v = replace(v, window_open=lambda: open_)
@@ -263,3 +269,82 @@ def test_cash_counter_drops_tick_expiring_during_reservation(tmp_path, monkeypat
     assert d.ledger.spent_since(0) == 0
     assert publication.with_pending(d.ledger, v.me, [], v.us, v.tick, v.t_hours) == []
     assert d.ledger.count_in_tick("operator_say:42", v.tick) == 1
+
+
+@pytest.mark.parametrize("venue_id,owner", [("v15", "t15"), ("v28", "t18"), ("v05", "t04"), ("v07", "t10")])
+def test_alliance_cash_counter_uses_actual_venue_and_persists_ack(tmp_path, venue_id, owner):
+    from dataclasses import replace
+
+    from bazaar_agent.agents.market import Venue
+
+    offer = {**bid(902, "LAT-03", 1, maker="t05"), "venue": venue_id}
+    d, team, v = counter_desk(tmp_path, offer)
+    payload = team.thread_payloads[42]
+    payload["venue"] = venue_id
+    v = replace(
+        v,
+        threads=[payload],
+        venues=[Venue(venue_id, owner, 0, 0, "open", "board", 0, False)],
+        params=v.params.model_copy(update={"preferred_sell_venue_owners": owner}),
+    )
+    acknowledged = []
+    d.sent_words = lambda *args: acknowledged.append(args)
+    d.proposals(v)
+    d.converse(v, set())
+    terms = next(s[2] for s in team.sent if s[0] == "say")
+    asset = next(a for a in v.me["assets"] if a["id"] == terms["give"]["assets"][0])
+    assert terms["want"]["cash"] >= asset["your_value"] + v.params.sell_min_surplus
+    assert acknowledged[0][-1] == venue_id
+    assert "LAT-03" in acknowledged[0][5] and venue_id in acknowledged[0][5]
+    rows = [json.loads(line) for line in (tmp_path / "agents" / "decisions.jsonl").read_text().splitlines()]
+    assert next(r["inputs"]["venue"] for r in rows if r.get("kind") == "team_cash_offer") == venue_id
+
+
+@pytest.mark.parametrize(
+    "owner,status,ref",
+    [("t01", "open", "LAT-03"), ("t05", "open", "LAT-03"), ("t18", "closed", "LAT-03"), ("t18", "open", "LAV-01")],
+)
+def test_alliance_counter_retains_venue_and_only_copy_protections(tmp_path, owner, status, ref):
+    from dataclasses import replace
+
+    from bazaar_agent.agents.market import Venue
+
+    d, team, v = counter_desk(tmp_path, {**bid(902, ref, 1, maker="t05"), "venue": "v15"})
+    payload = team.thread_payloads[42]
+    payload["venue"] = "v15"
+    v = replace(
+        v,
+        threads=[payload],
+        venues=[Venue("v15", owner, 0, 0, status, "board", 0, False)],
+        params=v.params.model_copy(update={"preferred_sell_venue_owners": owner}),
+    )
+    d.proposals(v)
+    d.converse(v, set())
+    assert not any(s[0] == "say" for s in team.sent)
+
+
+@pytest.mark.official_values
+@pytest.mark.parametrize("preferred", ["t10", "t18"])
+def test_alliance_buy_counter_keeps_official_ceiling_and_preference_boundary(tmp_path, preferred):
+    from dataclasses import replace
+
+    from bazaar_agent.agents.market import Venue
+
+    d, team, v = counter_desk(tmp_path, {**ask(901, "LAV-02", 50, maker="t05", to="t01"), "venue": "v07"})
+    payload = team.thread_payloads[42]
+    payload["venue"] = "v07"
+    v = replace(
+        v,
+        threads=[payload],
+        venues=[Venue("v07", "t10", 0, 0, "open", "board", 0, False)],
+        params=v.params.model_copy(update={"preferred_sell_venue_owners": preferred}),
+    )
+    d.proposals(v)
+    d.converse(v, set())
+    sent = [s for s in team.sent if s[0] == "say"]
+    if preferred == "t10":
+        assert len(sent) == 1
+        assert sent[0][2]["give"]["cash"] == int(10 - v.params.min_buy_surplus)
+        assert d.ledger.spent_since(0) == sent[0][2]["give"]["cash"]
+    else:
+        assert sent == []

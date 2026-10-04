@@ -1560,6 +1560,18 @@ Ruff and Black disagreed on a multiline string concatenation in the new Sales pr
 
 PR304 CI deterministically failed two assertions pinning runtime max_price_pack to30 after main's authorized policy changed it to430. Reproduced locally:2failed. Tests now verify the loaded ceiling's exact allowed/denied boundary, pack quota and cash floor, while separately proving conservative constructor defaults remain20/off. Runtime/config unchanged. Focused pack/Pilar suite:26passed0.54s. This was stale expected data, not CI flakiness. Pre-commit caught an overlong updated test docstring; wrapped it before committing.
 
+### [2026-10-04] finding — Sales alliance negotiation gaps
+At ticks2300–2373 Sales recorded26 openings,21 cash offers,6 swaps and21 walks. Repeated RET-07@23 to t18 at2356/2361/2366/2370 and RET-10@54 to t16 at2364/2368 showed outreach bypassed the desk rest window. Cash counters only considered El Rastro even when outreach opened on allied markets. SALES4 persists the existing rest window and retains validated allied venues for cash counters. Public SDK verification: v07 belongs to t10 and is open/zero-fee; t18 venues v18 and v28 are closed.
+
+### [2026-10-04] build-error — alliance slice integration
+StrategyParams is Pydantic, not a dataclass: use model_copy. A sent-words fixture expected seven arguments but actual ACK persistence now includes venue as the eighth: update the fixture. Parallel cooldown code required DeskView.tick_seconds before its focused tests could run; integrated field now uses the live clock.
+
+### [2026-10-04] gotcha — operator sale reconciliation and announcement limits
+Pilar thread3670 settled LAV-09 at56 and Chato3702 settled LAV-06 at15; cash326→397, ladder.193→.256. Picaros3672 closed without a sale, then CLI reservation cleanup lost the publication mutex. After confirming the thread closed, no standing offer and both RET-04 copies still held, released only that operation's pending reservation at2373. A diagnostic Clock import used nonexistent bazaar_agent.clock; corrected to bazaar_agent.ticks. Broker credentials live in KeyVault Postgres, not Maker env; the guarded alliance announcement was refused by the server's20-tick notice limit and was not published. Existing automatic notices continue.
+
+
+### [2026-10-04] build-error — late cash-counter pause and stale alliance assertion
+Independent review reproduced PAUSE created during reservation still allowing a cash counter. Final pre-send check now includes the kill switch; proven-unsent promises are released and cash refunded, while unknown sends stay reserved. Deadline/pause regression passes. Adding t10 exposed one test pinning the previous owner list; updated only its expected configured list. Final focused gate:284 passed in1.97s; Ruff/Black/mypy clean.
 ### [2026-10-04] gotcha
 Manual guarded dealer sales initially refused the shared publication mutex: read-only pg_locks identified bazaar-sales holding the session lock while outreach generated words. Coordinated service-local Taker/Maker/Sales pauses let the coordinator reserve dealer threads 3670 and 3672 without bypassing a lock. Maker/Sales resumed; Taker remains paused pending the pack-restock policy rollout. GET /api/clock timed out at ticks 2354–2356 and recovered on the next tick; this policy change adds no SDK/network fix. A diagnostic import of nonexistent card_hunt.enabled failed; corrected to the actual CLI default-on switch and a remote nonsecret environment check (BAZAAR_CARD_HUNT unset).
 
