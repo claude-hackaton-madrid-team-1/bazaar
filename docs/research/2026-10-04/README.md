@@ -1,5 +1,8 @@
 # Saturday review (Sat 3 Oct): start here
 
+*Historical record: written before Sunday's 09:00 open, as a pre-flight; the game closed Sun 4 Oct 15:00. The other
+reports in this folder, written during Sunday, are listed under [Sunday reports](#sunday-reports).*
+
 Entry point to five research reports on Team 1's Saturday. Written Sun 4 Oct ~01:00 Madrid, for decisions that must
 be made before Sunday's 09:00 open (15 s ticks, last day). Every code or parameter reference below was re-read on
 `origin/main` **03244c12**. Numbers come from the reports. Private values are not here (§7).
@@ -195,3 +198,19 @@ commit, PR, slide or public channel.
 - Which clock scenario happens (item 2 decides).
 - Every expected-points range, which comes from the reports and rests on their stated calibration (round weighting
   × 0.6 is inferred).
+
+## Sunday reports
+
+Written during Sunday (4 Oct) by separate sessions, each self-contained with its own sources:
+
+| Report | Question |
+|---|---|
+| [bench-books.md](bench-books.md) | Why `bench_books` is empty in prod (recorder deployed after the last Market Test) |
+| [bench-search.md](bench-search.md) | A lookahead broker policy that beats the free stall on the Market Test, in simulation |
+| [bench-sim.md](bench-sim.md) | Calibrated simulation of the Market Test against the free stall |
+| [card-hunt.md](card-hunt.md) | What moves our score on Sunday, and why dealer buys bring no negotiation points |
+| [dealing-fixes.md](dealing-fixes.md) | Code fixes for three dealing defects found in the Saturday review |
+| [duel-days-fix.md](duel-days-fix.md) | Duels days latch stuck at `conflict`: root cause, fix, reset |
+| [egg-hunter.md](egg-hunter.md) | The Easter-egg hunter: how eggs fire and how the agent looks for them |
+| [market-making-dossier.md](market-making-dossier.md) | Market making and the Market Test: everything the team measured, with sources |
+| [retry-loop.md](retry-loop.md) | A guardrail refusal retried 99 times (picaros RET-09), and the fix |
