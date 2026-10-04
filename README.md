@@ -1472,6 +1472,8 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 | PR | Title | Branch |
 |---|---|---|
+| [#273](../../pull/273) | docs: bazaar-mcp skill for teammates' Claude Code | `docs/bazaar-mcp-skill` |
+| [#272](../../pull/272) | feat: safe shared trading and operator control for Sunday | `codex/sunday-ready` |
 | [#267](../../pull/267) | docs: simplify README and refresh the implemented architecture (DOC1) | `codex/docs-cleanup` |
 | [#266](../../pull/266) | ci: limit Depot to unit, integration, formatter and linter | `codex/ci-four-checks` |
 | [#244](../../pull/244) | fix(taller): interlock with dealer sells, promise a craft before its POST (#239 review follow-ups) | `fix/sa1-taller-hardening` |
