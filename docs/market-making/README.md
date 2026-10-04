@@ -143,7 +143,7 @@ No private values (card values, limits, cash) here or anywhere in this folder.
 | Claim | Evidence |
 |---|---|
 | We read the scoring before optimising it: matching the free stall = half, top three = full | RULES.md:78–82; [bench-baseline Q1](reports/bench-baseline.md) |
-| Our broker tied the stall in all 8 sessions through session 8 (efficiency 0.854–0.967, 0 refused matches), and nobody beat it | `/me`; [sessions.csv](sessions.csv); leaderboard deltas (dossier §4.5) |
+| We scored exactly the stall's level in sessions 1–8 (session 1 on our free starter stall, 2–8 with our own broker: 36 pairs, 0 refused; efficiency 0.854–0.967), and nobody beat the stall | `/me`; [sessions.csv](sessions.csv); leaderboard deltas (dossier §4.5) |
 | We found out why with one deliberate experiment: a single non-crossing match, refused `400 bad_match`; the server checks quotes, so only timing and partner choice among crossing traders can help | t1692, `decisions` id 4264 |
 | We recorded every bench book from session 7 and fitted a simulator that reproduces the real quote paths (two-bump sellers, relaxing quotes) | `bench_books`; [bench-sim §1](reports/bench-sim.md) |
 | In that simulator an all-knowing broker beats the stall by +8–10 % of possible gains, almost all from **timing** | [bench-sim §2](reports/bench-sim.md) |

@@ -1,5 +1,10 @@
 # Market making and the Market Test: the dossier (Team 1)
 
+> **Status after the move to `docs/market-making/`.** This dossier is kept as written on Sunday morning. Two things
+> changed after it: session 9 ran **`lookahead_safe`** (Marius's choice at ~11:40; #292 merged at 11:45 with
+> bench-search's commits), not #292's `lookahead` that §2, §6 and §8 describe; and the result of session 9 is in the
+> [README](../README.md#session-9). Saturday's h11 ran `exact`, not `edge` (§2 row 5; see the README's decision log).
+
 *Sun 4 Oct 2026, written 11:10–11:30 Madrid (session 9 added after it ran, §2) by the `mm-dossier` session. Read-only on the game, Railway and Postgres.
 It collects what the team already measured; it does not redo the work. Every number carries its source. Short names
 for sources:*
