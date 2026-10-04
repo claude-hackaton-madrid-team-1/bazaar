@@ -43,6 +43,7 @@ def test_proactive_sale_posts_exact_guarded_terms_and_reserves_copy(tmp_path):
     assert ledger.count_in_tick("operator_say:42", v.tick) == 1
     assert ledger.count_in_tick("listing", v.tick) == 1
     assert ledger.spent_since(0) == 0
+    assert ledger.count_since(f"operator_say:sales_contact:{ledger.world}:{v.us}:t05:LAT-03", -1) == 1
     actor.on_tick(v, matrix)
     assert len([x for x in team.sent if x[0] == "say"]) == 1
 
@@ -192,13 +193,19 @@ def test_pause_during_words_blocks_sale_after_opening(tmp_path):
     assert ledger.count_in_tick("listing", v.tick) == 0
 
 
-def test_pause_during_last_ledger_write_releases_only_proven_unsent_promise(tmp_path, monkeypatch):
+@pytest.mark.parametrize("stage", ["listing", "contact"])
+def test_pause_during_last_ledger_write_releases_only_proven_unsent_promise(tmp_path, monkeypatch, stage):
     actor, team, ledger, v, matrix = setup(tmp_path)
     record = ledger.record
 
     def pause(kind, *args, **kwargs):
         record(kind, *args, **kwargs)
-        if kind == "listing":
+        if (
+            kind == "listing"
+            and stage == "listing"
+            or kind.startswith("operator_say:sales_contact:")
+            and stage == "contact"
+        ):
             (tmp_path / "PAUSE").touch()
 
     monkeypatch.setattr(ledger, "record", pause)
@@ -289,3 +296,47 @@ def test_unknown_structured_open_stops_promotion_in_same_tick(tmp_path):
 
     team.open_thread = unknown
     assert actor.on_tick(v, matrix) is True
+
+
+def test_exact_sale_terms_precede_optional_words_and_fit_voice_prefix(tmp_path):
+    actor, team, _, v, matrix = setup(tmp_path)
+    actor.words = lambda _: "Gracias. " * 90
+    texts = []
+    say = team.say
+
+    def capture(tid, text, **kwargs):
+        texts.append(text)
+        return say(tid, text, **kwargs)
+
+    team.say = capture
+    actor.on_tick(v, matrix)
+    terms = team.sent[1][2]
+    assert texts[0].startswith(f"Te ofrezco LAT-03 por {terms['want']['cash']} P en rastro.")
+    assert "rastro" in texts[0][:280] and "LAT-03" in texts[0][:280]
+    assert "Gracias." in texts[0] and "your_value" not in texts[0]
+
+
+def test_recent_buyer_card_contact_rotates_across_restart_without_price_bypass(tmp_path):
+    from bazaar_agent.agents.team_desk import REST_TICKS
+
+    actor, team, ledger, v, matrix = setup(tmp_path)
+    lead = actor._lead(v, matrix)
+    assert lead is not None
+    ledger.record(actor._marker(v, lead), v.tick, v.t_hours, lead.price, lead.ref)
+    restarted = SalesOutreach(team, actor.rules, ledger, actor.rec, lambda _: None, True)
+    assert restarted._lead(v, matrix) is None
+    raised = replace(v, params=v.params.model_copy(update={"sell_min_surplus": v.params.sell_min_surplus + 1}))
+    assert restarted._lead(raised, matrix) is None
+    matrix = replace(matrix, cells=(*matrix.cells, Cell("t06", "LAT-03", 0, 0, True, 9, 10, 0.4)))
+    rotated = restarted._lead(v, matrix)
+    assert rotated is not None and rotated.to == "t06"
+    later = replace(v, t_hours=v.t_hours + (REST_TICKS + 1) * v.tick_seconds / 3600)
+    assert restarted._lead(later, replace(matrix, cells=matrix.cells[:1])) is not None
+
+
+def test_unknown_open_for_best_buyer_does_not_starve_other_lead(tmp_path):
+    actor, _, ledger, v, matrix = setup(tmp_path)
+    matrix = replace(matrix, cells=(*matrix.cells, Cell("t06", "LAT-03", 0, 0, True, 9, 10, 0.4)))
+    ledger.record(f"operator_say:sales_open:{ledger.world}:{v.us}:t06", v.tick, v.t_hours)
+    lead = actor._lead(v, matrix)
+    assert lead is not None and lead.to == "t05"
