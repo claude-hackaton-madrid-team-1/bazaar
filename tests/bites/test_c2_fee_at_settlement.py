@@ -14,13 +14,12 @@ import pytest
 from bazaar_agent.agents.market import venues_from
 from bazaar_agent.agents.taker import Taker, TakerConfig, ask_candidates
 from bazaar_agent.guardrails import Guardrails
+from bazaar_sim import market
 from tests.agent_fakes import RASTRO, TICK, FakePublic, FakeTeam, ask, clock, parts
 from tests.bites.strictness import STRICT
+from tests.simkit import manual_world
 from tests.test_strategy import PARAMS
 from tests.test_strategy import market as strategy_market
-
-market = pytest.importorskip("bazaar_sim.market")  # branches cut before the simulator landed skip
-manual_world = pytest.importorskip("tests.simkit").manual_world
 
 US, THEM = "t01", "t02"
 OLD = {"fee_bps": 0, "fee_per_card": 0}

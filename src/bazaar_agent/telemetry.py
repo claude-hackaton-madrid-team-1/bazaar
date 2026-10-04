@@ -353,10 +353,6 @@ def _in_session(values: Mapping[str, object] | None) -> dict[str, object]:
     return {**({SESSION: session} if session else {}), **(values or {})}
 
 
-def current_session() -> str | None:
-    return _SESSION.get()
-
-
 @contextmanager
 def session_scope(session_id: str | None) -> Iterator[None]:
     """Spans started in the block carry `session.id` (contextvars: worker threads that copy the context too)."""
