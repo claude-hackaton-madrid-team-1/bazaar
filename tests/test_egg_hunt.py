@@ -631,8 +631,9 @@ def test_carriers_never_read_de_el_and_keep_the_phrase_whole() -> None:
     assert eh.vetted("sile, nole, repe, me falta") and not eh.vetted("sile,, nole")
 
 
-def test_first_live_hour_settings_are_in_guardrails() -> None:
+def test_live_hunt_settings_are_in_guardrails() -> None:
     from bazaar_agent.guardrails import load_guardrails
 
     live = load_guardrails().rules
-    assert live.egg_hunt_max_phrases_per_dealer_per_hour == 1 and live.egg_hunt_max_finds_per_dealer == 3
+    assert live.egg_hunt_max_phrases_per_dealer_per_hour == 3 and live.egg_hunt_max_finds_per_dealer == 3
+    assert live.egg_hunt_max_finds == 6
