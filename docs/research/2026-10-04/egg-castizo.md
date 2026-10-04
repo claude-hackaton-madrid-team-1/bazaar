@@ -1,6 +1,6 @@
 # The Castizo egg (Abuela Carmen, tick 2273)
 
-Sun 4 Oct 2026, 12:46–13:05 Madrid. Investigation only: read-only SELECTs on the shared Postgres, one keyless
+Sun 4 Oct 2026, 12:46–13:10 Madrid. Investigation only: read-only SELECTs on the shared Postgres, one keyless
 `GET /api/clock` (10:48:14 UTC, `User-Agent: t01-readonly-probe`). No game write, no Railway change, no
 GUARDRAILS.md change. Hunter: `src/bazaar_agent/agents/egg_hunt.py`; design and history:
 `docs/research/2026-10-04/egg-hunter.md`.
@@ -55,8 +55,7 @@ Thread 3407 (we opened it at t2271 to buy a Neighbourhood pack; table `messages`
 - t2272, **us (17039)**: a priced bid in the usual warm Abuela wording, ending with the hunter's question:
   *"Gracias por su paciencia, de verdad. Una pregunta, si me permite: un chotis en una baldosa, ¿le suena?"*
 - t2273, **Abuela (17047)**: *"Ay, un chotis! You dance it on one tile, cariño, like a real madrileño. My Paco
-  danced it so, barely moving his feet. Seventeen is little, hijo... twenty-six for the Neighbourhood pack, sí? And
-  tonight El Chato opens at half past nine — he likes straight traders like you."*
+  danced it so, barely moving his feet. [...] And tonight El Chato opens at half past nine — he likes straight traders like you."*
 - t2273, feed: `egg.found` (persona abuela, team t01, id 100980) and `badge.awarded` Castizo (id 100981).
 
 **New hint in her reply?** No. "El Chato opens at half past nine, he likes straight traders" appears in every
@@ -88,11 +87,13 @@ whole phrase, since all of them were in the message.
 
 **Why only now (game hour 17)?** The cap is one phrase per dealer per game hour. Abuela's slots went to
 "the golden chulapa" (hour 14, a find), then "la chulapa dorada" (hour 15, wasted, see below). In hour 16 she got
-no phrase. Then "un chotis en una baldosa" went out in hour 17. The duplicate happened because the first build
-(#275) seeded both "la chulapa dorada" (1.0) and "the golden chulapa" (0.9). The English form went out first. The
-review fix (#279) dropped the English seed. The stored row for the English phrase then no longer matched any seed,
-so the Spanish form was still marked untried, and it went out at t1791. Abuela answered "La chulapa dorada... me
-suena, sí" with no egg, as expected for a once-per-team egg.
+no phrase. Then "un chotis en una baldosa" went out in hour 17. The duplicate happened because the hunter
+tracks phrases, not eggs. The first build (#275) seeded both "la chulapa dorada" and "the golden chulapa", and the
+English form went out first. After Sharp ear at t1550, Abuela was blocked by `egg_hunt_max_finds_per_dealer` = 1.
+The review fix (#279, merged at t1623) raised that cap to 3 so the hunter could go after her other eggs. That
+unblocked her, and the best untried Abuela phrase was "la chulapa dorada": a different phrase, but for an egg we
+already held. It went out at t1791. Abuela answered "La chulapa dorada... me suena, sí" with no egg, as expected
+for a once-per-team egg. Recommendation 3 (§6) fixes this root cause.
 
 ## 3. Trickster tricked and the El Chato pack (Q3)
 
