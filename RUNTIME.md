@@ -9,7 +9,7 @@ set by code, every write still passes `guardrails.check()`, and every LLM failur
 refusal, bad output, a used-up subscription window) falls back to the existing path: template words,
 the default model, or a clear "set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN" message from `ask` and
 `steer`. Claude models use ANTHROPIC_API_KEY when it is set, else the Claude subscription
-(CLAUDE_CODE_OAUTH_TOKEN, README "LLM on the Claude subscription").
+(CLAUDE_CODE_OAUTH_TOKEN, docs/operations.md "Models and the desk").
 
 ## Which model
 - `llm_runtime` = auto — `auto` lets Jev choose; an alias or model id pins one. The `--llm-runtime` flag and `BAZAAR_LLM_RUNTIME` win over this line.
