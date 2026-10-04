@@ -11,7 +11,8 @@ Session `other-dealers`, ~10:50–11:15 local. Read-only: Postgres `SELECT`, key
   fills this level"; `L2 0/3 chato`: "no probe inside our caps" (his asks sit above the official value / rarity
   caps).
 - **Nothing can sell to them today.** `dealer_sell_enabled = false` (maker), and even the hand command
-  `bazaar dealer sell` refuses the last copy of ANY page card (`dealer_sell.only_copy`, `cli.py:1057`,
+  `bazaar dealer sell` refuses the last copy of ANY page card (`dealer_sell.only_copy`, called by `copy_to_sell` and
+  `checked()` in the `dealer sell` command of `cli.py`,
   `dealer_sell_desk.py:160/419`), ignoring Sunday's `protect_complete_pages_only = true`. Our only duplicate is a
   common, and Pilar, Chato and Banco buy no common. So flipping `dealer_sell_enabled` alone fills nothing at L2/L3/L5.
 - **Other teams use them**: since 09:00, 33 Chato / 32 Pilar / 11 Banco threads (feed `thread.opened`);
@@ -26,7 +27,10 @@ Session `other-dealers`, ~10:50–11:15 local. Read-only: Postgres `SELECT`, key
   `ladder_probe`, `dealer_open`, `dealer_skip`, `strategy_gate`), `feed_events` (`settlement`, `thread.opened`,
   tick 1445–1828 = 09:00–~10:50 local; Saturday settlements for prices), `me_snapshots` (t01, tick 1828).
   Queries: `other-dealers/queries.sql`.
-- Keyless GETs (1 each, ≥1.1 s apart, ~10:52 local): `/api/dealers`, `/api/levels`, `/api/schedule`. No keyed request.
+- Keyless GETs (1 each, ≥1.1 s apart, ~10:52 local): `/api/dealers`, `/api/levels`, `/api/schedule`.
+- Keyed GETs (logged): ~11:00 local, one DRY RUN of the fixed hand command (`bazaar dealer sell <La Latina rare>
+  --dealer pilar`, no `--live`): `GET /api/me`, `GET` our offers (+ keyless `/api/dealers`). Result: the single copy
+  passes the copy rule and Pilar's menu/unlock check and the ask schedule prints; nothing was sent.
 - Not read: Railway logs (the decisions rows carried the reasons; time-boxed).
 
 ## Findings
@@ -79,6 +83,7 @@ All five stalls close at h18.367 (~14:00 local, `/api/schedule`).
 ## Recommendations (ranked by expected points before ~14:00)
 1. **Hand sells to Pilar, L3 (up to 3 deals ≈ +0.15 ladder ≈ +1.5 to +3 board, Saturday rate +1.1/deal)** — run from
    this branch locally (no deploy; the fix only touches the hand command's copy rule):
+   Step 0: the dry run (no `--live`) must print the ask schedule; verified once on real /me at ~11:00.
    ```
    git switch fix/other-dealers
    uv run bazaar impact sell <REF> <price> --to pilar          # must not be negative
@@ -114,4 +119,6 @@ picaros/banco.
 ## Not verified
 - Ladder score per level weight (L3/L5 vs L1) is inferred from Saturday deltas, not published.
 - Pilar's current limit for our exact cards: only public fills seen.
+- The `--live` path (ledger, guards per tick) of the fixed command was not exercised on the real game (read-only session);
+  unit + CLI tests cover the copy rule, the existing tests the live loop.
 - Railway logs not read.
