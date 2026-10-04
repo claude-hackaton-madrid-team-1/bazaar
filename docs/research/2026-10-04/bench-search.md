@@ -21,6 +21,34 @@ against bids descending, cross while bid >= ask, at the midpoint) on session 9 (
 - The env flip is a maker-only restart in the 10:42-12:30 window (bench-sim's runbook); `BAZAAR_BENCH_POLICY` unset
   or `exact` keeps today's behaviour. Marius decides; nothing was pushed or set.
 
+## Head-to-head with #292's `lookahead` (11:27)
+
+Same harness (#292's `scripts/bench_tournament.py` at `15dc2cfc`), same books and seeds, 600 books a world, the 12
+±50 % worlds, both replays (300 draws). E[points] under the linear rule / under a zero-below-stall rule
+(E0 = P(above) + 0.5·P(tie)):
+
+| world | exact | #292 lookahead | lookahead_safe | lookahead_bold |
+|---|---|---|---|---|
+| cal_normal20 | 0.500 / 0.500 | 0.628 / 0.556 | **0.668 / 0.601** | 0.713 / 0.568 |
+| cal_hard24 | 0.500 / 0.500 | 0.641 / 0.528 | **0.672 / 0.571** | 0.717 / 0.542 |
+| cal_normal20_uniform | 0.500 / 0.500 | 0.682 / 0.555 | **0.682 / 0.567** | 0.717 / 0.532 |
+| old_normal20 | 0.500 / 0.500 | **0.669 / 0.520** | 0.656 / 0.517 | 0.670 / 0.460 |
+| replay b120 (s7) | 0.500 / 0.500 | 0.502 / 0.422 | **0.806 / 0.653** | 0.808 / 0.653 |
+| replay b137 (s8) | 0.500 / 0.500 | **0.899 / 0.827** | 0.783 / 0.610 | 0.783 / 0.610 |
+
+In the ±50 % worlds `lookahead_safe` is ahead of #292 under the zero-below rule in 10 of 12 (behind at relax −50 %:
+0.574 against 0.588; level at lives −50 %: 0.500 against 0.499) and under the linear rule in 12 of 12. P(above) /
+P(below) on cal_normal20: safe 0.35 / 0.15, #292 0.27 / 0.16, bold 0.45 / 0.32. Worst margin: safe −0.34, #292
+−0.22. Compute a tick (80 simulated sessions on a loaded laptop): #292 mean 7 ms, max 0.21 s; safe mean 11 ms,
+max 0.33 s. Both are far inside the ~13 s budget.
+
+**Verdict: no clear winner under the zero-below rule.** `lookahead_safe` wins the calibrated sims by about 0.01-0.05
+points, but the two real replays split hard: b120 is safe +0.23, and b137 (session 8, a normal test like session 9)
+is #292 +0.22, from one large holding gain (#292 margin +0.075 there). The mean of the two replays is level (0.632
+against 0.625). My call is to keep #292 unless the sim worlds are weighted over the single b137 replay. The swap
+is ready: branch `feat/bench-search-292` = `15dc2cfc` + the posterior planner, gates green,
+`BAZAAR_BENCH_POLICY=lookahead_safe`.
+
 ## Why a different objective
 
 The score is the share of the possible gains between true limits; bench points are 0.5 for matching the stall, the
