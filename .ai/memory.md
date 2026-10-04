@@ -1440,3 +1440,17 @@ AT1: legacy restart fixtures used hourlycap0 as 'disable trading', conflicting w
 - Independent cash-counter review reproduced a late send after slow ledger writes (`expired_before_send=True`, `say_calls=1`). Added a final deadline check after reservations, releasing only a proven unsent promise; `test_cash_counter_drops_tick_expiring_during_reservation` covers it.
 - Dealer continuation tests previously set a low value before opening; now they lower it after opening so they still exercise mid-conversation revalidation. The new opening fixture initially lost its feed through `parts()`; binding `MarketFeed` made the regression exercise the intended negotiated fills.
 - Depot caught one more pre-opening low-value fixture in `test_ladder_tolerance`: it expected a now-infeasible dealer opening. Reproduced locally (`1 failed, 6 passed`), then lowered the value after opening to preserve the mid-thread tolerance assertion.
+
+### [2026-10-04] build-error — #244 conflicts with the Workshop hardening on main
+The merge conflicted in GUARDRAILS.md, taker, CLI and guardrails because TL1 replaced process-local craft counts
+with shared ledger rows and strengthened busy checks. Keep main's shared accounting, enabled Workshop, fresh
+holdings, settling and event guards; reserve consumed copies before the POST and release them only on definite
+refusal. Refusals still count in the shared hourly cap, as on main.
+
+### [2026-10-04] build-error — #244 full test gate aborted in native psycopg
+The single full pytest run exited 134 at about 33% with `Fatal Python error: Aborted`; the active thread was
+in psycopg transaction entry from `holdings._read_and_store`, while the main thread initialized a test schema.
+This resembles the earlier heavy-load faulthandler incident; the native cause is unconfirmed. The user required
+one full run, so it was not repeated. The focused Workshop tests passed (43); the simulator smoke passed.
+A remaining local `bazaar-pytest` backend was idle in transaction with no live client-port owner; it was
+terminated only after checking its port with lsof. Full-suite completion and coverage remain unverified.

@@ -2498,7 +2498,7 @@ def taller_cmd(
     except LedgerUnavailable as e:
         _fail(f"the shared ledger is down, nothing sent: {escape(str(e))}")
     except BazaarError as e:
-        _fail(f"refused: {escape(str(e.code))} ({escape(tl.pulled({'card': str(e.message)[:80]}))})")
+        _fail(f"refused: {escape(tl.clean(str(e.code), 40))} ({escape(tl.clean(str(e.message)))})")
     console.print(f"crafted: {escape(tl.pulled(answer))}")
 
 
