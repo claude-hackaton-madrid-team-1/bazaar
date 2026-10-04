@@ -129,3 +129,24 @@ def test_a_failing_lookahead_sends_the_exact_plan(tmp_path, monkeypatch):
     assert broker.sent == [("b7-0", "b7-1", 60)]
     assert [d["reason"] for d in rows(tmp_path) if "reason" in d][0] == EXACT
     assert any("bench lookahead failed (RuntimeError); exact matching this tick" in line for line in lines)
+
+
+def _two_crossing_options():
+    qs = quotes([bench_sell("b1-0", 30), bench_buy("b1-1", 60), bench_buy("b1-2", 50)])
+    return qs, plan_matches(qs, Fee(), 15)
+
+
+def test_over_its_time_budget_it_sends_the_exact_plan():
+    lines: list[str] = []
+    ticks = iter(range(0, 10_000, 5))  # every clock read is 5 s later: over the 1.5 s budget at once
+    planner = BenchLookahead(seed=0, clock=lambda: float(next(ticks)))
+    qs, exact = _two_crossing_options()
+    assert pairs(planner.plan(qs, Fee(), 100, exact, expires=116, log=lines.append)) == pairs(exact)
+    assert any("over its 1.5 s budget after 0 samples; exact" in line for line in lines)
+
+
+def test_slack_leaves_the_exact_plan_for_the_best_other_matching():
+    qs, exact = _two_crossing_options()
+    plan = BenchLookahead(LookaheadConfig(samples=8, slack=1e9), seed=0).plan(qs, Fee(), 100, exact, expires=116)
+    assert pairs(plan) != pairs(exact)
+    assert all(feasible(m.sell, m.buy, Fee()) for m in plan)

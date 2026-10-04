@@ -101,6 +101,8 @@ WORLDS: dict[str, World] = {
     "cal_normal20": World(_cal("cal_normal20", 20, 0.2, 0.25)),
     "cal_hard24": World(_cal("cal_hard24", 24, 0.35, 0.35)),
     "cal_normal20_uniform": World(_cal("cal_normal20_uniform", 20, 0.2, 0.25), cheap=None),
+    # the real books' hint: none of 15 unmatched traders left after one tick (impatient lives 2-3, not 1-2)
+    "cal_normal20_life2": World(replace(_cal("cal_normal20_life2", 20, 0.2, 0.25), impatient_life=(2, 3))),
     "old_normal20": World(replace(bench.NORMAL, traders=20), cheap=None),  # #77's preset, twice the traders
 }
 MAIN = "cal_normal20"
@@ -130,6 +132,11 @@ def robust_worlds() -> dict[str, World]:
 
 
 # ---------------------------------------------------------------- points
+
+
+def zero_below_points(eff: float, stall: float) -> float:
+    """The most pessimistic reading (review MED 2): nothing at all below the stall."""
+    return 1.0 if eff > stall + EPS else 0.0 if eff < stall - EPS else 0.5
 
 
 def real_points(eff: float, stall: float) -> float:
@@ -170,9 +177,11 @@ class LookaheadPolicy:
     """`agents/bench_lookahead.py` as the broker runs it (BAZAAR_BENCH_POLICY=lookahead): the exact plan, replaced by
     another matching of crossing pairs when the rollouts expect more true gains."""
 
-    def __init__(self, per_side: int, samples: int = 128, seed: int = 0, prior: LookaheadPrior | None = None) -> None:
+    def __init__(
+        self, per_side: int, samples: int = 128, seed: int = 0, prior: LookaheadPrior | None = None, slack: float = 0.0
+    ) -> None:
         prior = replace(prior or LookaheadPrior(), per_side=per_side)
-        self.planner = BenchLookahead(LookaheadConfig(samples=samples, prior=prior), seed=seed)
+        self.planner = BenchLookahead(LookaheadConfig(samples=samples, prior=prior, slack=slack), seed=seed)
         self.log: list[str] = []
 
     def __call__(self, book: dict[str, Any]) -> list[Pair]:
@@ -270,6 +279,9 @@ POLICIES: dict[str, Callable[[Sequence[BenchTrader]], Callable[[dict[str, Any]],
     "edgecal5": lambda tr: EdgePolicy(5.0, CAL_PRIOR),
     "maxcount": lambda tr: MaxCount(),
     "lookahead": lambda tr: LookaheadPolicy(len(tr) // 2),
+    "lookahead_slack1": lambda tr: LookaheadPolicy(len(tr) // 2, slack=1.0),
+    "lookahead_slack2": lambda tr: LookaheadPolicy(len(tr) // 2, slack=2.0),
+    "lookahead_slack4": lambda tr: LookaheadPolicy(len(tr) // 2, slack=4.0),
     "hold3": lambda tr: HoldPolicy(3, 1),
     "hold6": lambda tr: HoldPolicy(6, 2),
     "who_oracle": lambda tr: WhoOracle(tr),  # bound
@@ -313,6 +325,7 @@ class Row:
     below: float
     worst: float
     points: float
+    points_zero_below: float
 
 
 def summarise(world: str, results: list[dict[str, tuple[float, float]]], names: Sequence[str]) -> list[Row]:
@@ -332,6 +345,7 @@ def summarise(world: str, results: list[dict[str, tuple[float, float]]], names: 
                 round(sum(x < -EPS for x in d) / len(d), 3),
                 round(min(d), 3),
                 round(statistics.mean(real_points(e, s) for e, s in rs), 3),
+                round(statistics.mean(zero_below_points(e, s) for e, s in rs), 3),
             )
         )
     return rows
@@ -339,12 +353,12 @@ def summarise(world: str, results: list[dict[str, tuple[float, float]]], names: 
 
 def markdown(rows: Sequence[Row]) -> str:
     out = [
-        "| world | policy | books | eff | stall | margin | P(above) | P(below) | worst | E[points] |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| world | policy | books | eff | stall | margin | P(above) | P(below) | worst | E[points] | E[pts] 0 below |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     out += [
         f"| {r.world} | {r.policy} | {r.books} | {r.eff:.4f} | {r.stall:.4f} | {r.margin:+.4f} | {r.above:.3f} | "
-        f"{r.below:.3f} | {r.worst:+.3f} | {r.points:.3f} |"
+        f"{r.below:.3f} | {r.worst:+.3f} | {r.points:.3f} | {r.points_zero_below:.3f} |"
         for r in rows
     ]
     return "\n".join(out)

@@ -252,7 +252,55 @@ the sim (P(above) 0.15), but on both real replays it never deviated from the sta
   it, from the first read, so a maker restart mid-run would shift its clock.
 - **Merge blast radius:** the PR also redeploys bazaar-duels and the taker (hence the window).
 
-## 7. Reproduce
+## 7. After the decision: v2 (branch `feat/bench-lookahead-v2`, local, NOT shipped for session 9)
+
+Session 9 ships `d4c5b328` as reviewed (`_sat-review/review-bench-lookahead.md`, VERDICT SHIP). Follow-ups, each
+default-off or behaviour-preserving, on a separate branch:
+
+- **Review MED 1, time limit.** The shipped planner has no compute cap: ~15 ms a typical tick, 0.4–0.6 s on a
+  contrived worst one locally (12+12 all crossing; rejection sampling exhausted), plausibly 2–3 s on Railway's
+  shared vCPU against a ~13 s tick budget. An overrun does not fall back to exact; late sends turn into `expired` and
+  the maker's own quotes wait. The `samples` comment in `d4c5b328` ("≤ 0.1 s on the worst tick") understates it.
+  v2 adds `LookaheadConfig.budget_s = 1.5`: past it the tick decides on the samples done, or sends the exact plan
+  when fewer than `min_samples = 16` (test `test_over_its_time_budget_it_sends_the_exact_plan`).
+- **Review MED 2, the rule below the stall.** The harness now scores both readings: 0.5·E/Es (Saturday's fit) and
+  zero below the stall (the most pessimistic).
+- **`slack`**: only being above the stall pays, so a tie wastes the session. With `slack = s`, the planner leaves the
+  exact plan for the best other matching when that one is at most `s` expected P worse.
+
+E[points] linear-below / zero-below, 300 seeds per world, 300 posterior draws per replay:
+
+| world | `exact` | `edge_none` | `lookahead` | `lookahead_slack1` | `lookahead_slack2` | `lookahead_slack4` |
+|---|---|---|---|---|---|---|
+| cal_normal20 | 0.500 / 0.500 | 0.570 / 0.532 | 0.642 / 0.577 | 0.656 / 0.587 | 0.668 / 0.578 | 0.691 / 0.577 |
+| cal_hard24 | 0.500 / 0.500 | 0.583 / 0.503 | 0.639 / 0.538 | 0.653 / 0.532 | 0.670 / 0.532 | 0.709 / 0.563 |
+| cal_normal20_uniform | 0.500 / 0.500 | 0.636 / 0.552 | 0.682 / 0.543 | 0.688 / 0.537 | 0.686 / 0.512 | 0.701 / 0.513 |
+| cal_normal20_life2 | 0.500 / 0.500 | 0.567 / 0.515 | 0.653 / 0.597 | 0.666 / 0.605 | 0.686 / 0.607 | 0.707 / 0.605 |
+| old_normal20 | 0.500 / 0.500 | 0.598 / 0.490 | 0.660 / 0.502 | 0.677 / 0.502 | 0.681 / 0.493 | 0.670 / 0.458 |
+| firm-50% | 0.500 / 0.500 | 0.560 / 0.512 | 0.644 / 0.575 | 0.654 / 0.572 | 0.660 / 0.557 | 0.678 / 0.553 |
+| impatient-50% | 0.500 / 0.500 | 0.568 / 0.515 | 0.653 / 0.590 | 0.671 / 0.608 | 0.686 / 0.607 | 0.712 / 0.613 |
+| relax-50% | 0.500 / 0.500 | 0.565 / 0.527 | 0.666 / 0.618 | 0.675 / 0.617 | 0.683 / 0.595 | 0.692 / 0.565 |
+| shade-50% | 0.500 / 0.500 | 0.539 / 0.475 | 0.632 / 0.527 | 0.648 / 0.520 | 0.657 / 0.510 | 0.665 / 0.490 |
+| cheap_share-50% | 0.500 / 0.500 | 0.551 / 0.522 | 0.583 / 0.527 | 0.599 / 0.530 | 0.609 / 0.528 | 0.622 / 0.508 |
+| lives-50% | 0.500 / 0.500 | 0.557 / 0.523 | 0.584 / 0.500 | 0.606 / 0.493 | 0.613 / 0.478 | 0.630 / 0.457 |
+| firm+50% | 0.500 / 0.500 | 0.571 / 0.530 | 0.649 / 0.578 | 0.666 / 0.592 | 0.673 / 0.578 | 0.698 / 0.587 |
+| impatient+50% | 0.500 / 0.500 | 0.562 / 0.533 | 0.633 / 0.545 | 0.641 / 0.540 | 0.655 / 0.545 | 0.662 / 0.523 |
+| relax+50% | 0.500 / 0.500 | 0.559 / 0.523 | 0.639 / 0.575 | 0.652 / 0.578 | 0.668 / 0.578 | 0.670 / 0.547 |
+| shade+50% | 0.500 / 0.500 | 0.548 / 0.492 | 0.619 / 0.543 | 0.635 / 0.537 | 0.641 / 0.527 | 0.671 / 0.552 |
+| cheap_share+50% | 0.500 / 0.500 | 0.592 / 0.550 | 0.656 / 0.560 | 0.668 / 0.562 | 0.680 / 0.553 | 0.695 / 0.548 |
+| lives+50% | 0.500 / 0.500 | 0.559 / 0.487 | 0.630 / 0.548 | 0.637 / 0.540 | 0.640 / 0.530 | 0.656 / 0.533 |
+| replay b120 | 0.500 / 0.500 | 0.500 / 0.500 | 0.502 / 0.422 | 0.502 / 0.422 | 0.509 / 0.422 | 0.762 / 0.557 |
+| replay b137 | 0.500 / 0.500 | 0.500 / 0.500 | 0.899 / 0.827 | 0.909 / 0.847 | 0.913 / 0.853 | 0.913 / 0.853 |
+
+- **`slack = 1`** is at least as good as the shipped `lookahead` in every world under the linear rule (+0.01 to
+  +0.02) and about equal under zero-below (cal_normal20 0.587 vs 0.577; b137 0.847 vs 0.827). The safe upgrade.
+- **`slack = 4`** is the variance-seeking option: best under the linear rule nearly everywhere (cal_normal20 0.691,
+  b120 replay 0.762), worse under zero-below in several worlds (#77's world 0.458, lives−50 % 0.457).
+- A prior with impatient lives 2–3 (the real books' hint) is better only when the truth is 2–3 and worse when it is
+  1–2 (cal_hard24 −0.015 margin); not adopted.
+- Both replays use priors fitted on the same two books (review MED 2): in-sample, so optimistic.
+
+## 8. Reproduce
 
 ```
 uv run python scripts/bench_tournament.py --seeds 300 --robust --replay b120 b137 --draws 300   # replay: DATABASE_URL, read-only

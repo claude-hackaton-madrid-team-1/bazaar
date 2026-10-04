@@ -23,6 +23,7 @@ the exact plan for the tick.
 from __future__ import annotations
 
 import random
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
@@ -53,9 +54,17 @@ class LookaheadPrior:
 
 @dataclass(frozen=True)
 class LookaheadConfig:
-    samples: int = 128  # 128 rollouts: ≤ 0.1 s on the worst tick; fewer decide noisier (16-512 measured)
+    # 128 rollouts: ~15 ms a typical tick, 0.4-0.6 s on a contrived worst one (M5, single thread; review MED 1)
+    samples: int = 128
+    # Wall-clock cap on the rollouts of one tick: past it, decide on the samples done (at least `min_samples`, else
+    # send the exact plan). Railway's shared vCPU may be 3-5x slower than a laptop; the tick budget is ~13 s.
+    budget_s: float = 1.5
+    min_samples: int = 16
     max_options: int = 48
     tries: int = 200  # rejection draws for one trader before falling back to its path
+    # > 0: leave the exact plan for the best other matching even when it is up to this many expected P worse. Only
+    # being above the stall pays (nobody has been), so a tie wastes the session; 0 keeps exact on any doubt.
+    slack: float = 0.0
     prior: LookaheadPrior = field(default_factory=LookaheadPrior)
 
 
@@ -89,8 +98,11 @@ class _Path:
 class BenchLookahead:
     """One per broker: it keeps the quote paths of the current run and forgets them when a new run starts."""
 
-    def __init__(self, config: LookaheadConfig | None = None, seed: int = 0) -> None:
+    def __init__(
+        self, config: LookaheadConfig | None = None, seed: int = 0, clock: Callable[[], float] = time.monotonic
+    ) -> None:
         self.config = config or LookaheadConfig()
+        self.clock = clock
         self.rng = random.Random(seed)
         self.run: str | None = None
         self.start: int | None = None
@@ -245,17 +257,30 @@ class BenchLookahead:
             return list(exact)
         present = [str(q.id) for q in bench]
         totals = [0] * len(options)
-        for _ in range(self.config.samples):
+        deadline = self.clock() + self.config.budget_s
+        done = 0
+        while done < self.config.samples:
+            if self.clock() > deadline:
+                if done < self.config.min_samples:
+                    if log:
+                        log(f"bench lookahead: over its {self.config.budget_s:g} s budget after {done} samples; exact")
+                    return list(exact)
+                break
             traders = self._future(present, t, self.rng)
             for i, option in enumerate(options):
                 totals[i] += self._rollout(traders, t, option, fee)
+            done += 1
         best = max(range(len(options)), key=lambda i: (totals[i], -i))
+        if best == 0 and self.config.slack > 0:
+            other = max(range(1, len(options)), key=lambda i: (totals[i], -i))
+            if totals[other] >= totals[0] - self.config.slack * done:
+                best = other
         if best == 0:
             return list(exact)
         if log:
             log(
                 f"bench lookahead: {len(options[best])} pair(s) instead of exact's {len(exact)}, "
-                f"+{(totals[best] - totals[0]) / self.config.samples:.1f} expected P over {len(options)} options"
+                f"{(totals[best] - totals[0]) / done:+.1f} expected P over {len(options)} options, {done} samples"
             )
         by = {str(q.id): q for q in bench}
         out = []
