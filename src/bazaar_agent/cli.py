@@ -3198,8 +3198,7 @@ def _affinity_book(kw: dict[str, Any], shared: bool) -> Any:
 def _egg_hunter(kw: dict[str, Any], shared: bool) -> Any:
     """The easter-egg hunt (`agents/egg_hunt.py`): its tried set in the shared Postgres (`egg_hunt_tried`, read
     and written on a background thread) when there is one, else a JSONL file next to the decisions. Built always;
-    it does nothing until GUARDRAILS.md `egg_hunt_enabled` and env BAZAAR_EGG_HUNT both turn it on (the env is
-    re-read every tick)."""
+    GUARDRAILS.md `egg_hunt_enabled` turns it on; env BAZAAR_EGG_HUNT only overrides that (0: off, dry: log only)."""
     from bazaar_agent import db
     from bazaar_agent.agents import egg_hunt
 

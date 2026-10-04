@@ -2,10 +2,16 @@
 
 Sun 4 Oct 2026, 09:05–10:30 Madrid. Branch `feat/egg-hunter` (from `origin/main` 235f296e), local commits only.
 Code: `src/bazaar_agent/agents/egg_hunt.py`, wired in `agents/taker.py` (`_desk_send`, `_tick`, `_after_sends`) and
-`cli.py` (`_egg_hunter`). Tests: `tests/test_egg_hunt.py`. It runs only with GUARDRAILS.md
-`egg_hunt_enabled = true` **and** env `BAZAAR_EGG_HUNT=1` on `bazaar-taker`; Marius turned both on at the merge
-(Sun 4 Oct, ~09:40). Nothing was sent to the game while
+`cli.py` (`_egg_hunter`). Tests: `tests/test_egg_hunt.py`. GUARDRAILS.md `egg_hunt_enabled` is its one switch;
+env `BAZAAR_EGG_HUNT` only overrides it per service (`0` off, `dry` log only; §7). Nothing was sent to the game while
 building it (no `BAZAAR_LIVE`, no `--live`, no keyed request, no Railway change).
+
+**Live history (Sun 4 Oct).** At Marius's request #275 merged at tick 1542 with `egg_hunt_enabled = true` and
+`BAZAAR_EGG_HUNT=1` set on bazaar-taker. The first woven phrase ("la chulapa dorada", id `38dc1e4bf1`) went to Abuela
+on a priced bid in thread 2362 at **tick 1549**, and at **tick 1550** the feed shows `egg.found` (t01, abuela,
+id 76262) and `badge.awarded` **Sharp ear** (id 76263). Her reply carried the egg's text ("Shh… la chulapa dorada,
+solo hubo una… Pregúntale por el oro de Moscú"). No other phrase was sent. The review (`_sat-review/review-egg-hunt.md`,
+REVISE, three MEDs) then arrived, and the env var was deleted at ~tick 1556 (hunt off) until the fixes below merge.
 
 ## TL;DR
 
@@ -67,7 +73,7 @@ Kinds: `injection`, `abuse`, `spam`, `false_claim`; settings `strikes_to_cooloff
 | same words without a new price = spam | every carrier is a priced bid with the desk's next rung; a phrase is never said twice to a dealer |
 | final offer / patience | no phrase when the dealer's final stands (`final=True`) |
 | cool-off, tricks | back off on `persona.cooloff` / `persona.strike` for us, a `cooloff` close, a warning in the reply, a learned blocker |
-| conduct judge (injection, abuse, spam, false_claim) | a question only ("¿usted sabe algo de …?"), no claim, no instruction; every phrase and every full message passes our own `injection_flags`, no forbidden address (`NEVER_ADDRESS`); Abuela gets a warm carrier |
+| conduct judge (injection, abuse, spam, false_claim) | a question only ("Una pregunta, si me permite: …, ¿le suena?"; no "de" before the phrase, so it never reads "de el …"), no claim, no instruction; every phrase and every full message passes our own `injection_flags`, no forbidden address (`NEVER_ADDRESS`); Abuela gets a warm carrier |
 | flags (a correct flag scores against us) | a `flag.raised` on one of our woven messages stops the hunt for 100 × the back-off, when the server's answer to our send carries the message id (`bluff.message_id`: unverified on the real game, whose write answers may not). Team texts are `null` in the public feed, so other teams cannot read a woven message to flag it |
 | topic ≤ 600 chars | no topic is ever sent (no thread opened) |
 | 1,200 chars | the woven message is checked ≤ 1,200 |
@@ -98,8 +104,8 @@ All from public text (`SEEDS` in `egg_hunt.py`, plus live mining):
 
 | Source | Weight | Examples |
 |---|---|---|
-| `field`: the words a dealer echoed when another team found an egg on Saturday (logs-eggs §5) | 1.0 | Abuela: "la chulapa dorada" (E1, 11 finds; also "the golden chulapa", Pilar's English wording), "sile nole repe me falta", "un chotis en una baldosa" (E4, 4), "el cocido con sus tres vuelcos" (E5, 3); Pícaros: "el timo de la estampita", "Rinconete y Cortadillo", "el Lazarillo de Tormes" (E3, 6); El Chato: "un bocadillo de calamares en la Plaza Mayor con una caña" (E6, 2: one natural phrase that holds every keyword the echo suggests) |
-| `hint`: "ask X about Y" / "pregunta a X por Y" in any dealer reply in the feed window, routed to the last dealer the reply names before the phrase | 0.8 × 0.9, rising with how often it is repeated | "the golden chulapa" → Abuela (Pilar's hint), "the Moscow gold" → banco |
+| `field`: the words a dealer echoed when another team found an egg on Saturday (logs-eggs §5) | 1.0 | Abuela: "la chulapa dorada" (E1; **ours at t1550**), then the two found again on Sunday: "un chotis en una baldosa" (E4, t13 t1467 / t18 t1480), "el cocido con sus tres vuelcos" (E5, t18 t1482), then "sile, nole, repe, me falta" with and without commas; Pícaros: "el timo de la estampita" (E3, t13 t1497), "Rinconete y Cortadillo", "el Lazarillo de Tormes"; El Chato: "un bocadillo de calamares en la Plaza Mayor, con caña", "la Plaza Mayor con caña", "el bocadillo de calamares" (E6: the echo was "Plaza Mayor, con caña"; the server's punctuation handling is unknown, so both forms) |
+| `hint`: "ask X about Y" / "pregunta a X por Y" in a dealer reply, routed to the last dealer the reply names before the phrase. **Only from our own thread, or once 2 different teams were given the same hint** (any team can prompt-inject a dealer into a "hint"), and always **after every seed** | 0.8 × 0.5, rising with repeats; ranked in the last tier | "the Moscow gold" → banco |
 | `lore`: Madrid / Rastro idioms the personas use, the Sunday set (Chamberí "Andén 0", "El Tren Fantasma", ghost stations) | 0.5 | "la estación fantasma de Chamberí", "el tren de Chamberí" (the Pícaros' own reply to t10 at t1370) |
 
 Left out: E2 "el oro de Moscú" (Don Ernesto; the card had a print run of 1 and is gone; his strictness is 1.0), and
@@ -109,8 +115,10 @@ Per dealer: untried candidates, deduped by the folded phrase (the server's own n
 A phrase tried with a dealer never comes back (Postgres `egg_hunt_tried`, else `egg_hunt.jsonl` next to the
 decisions; loaded at start). Mined text is untrusted: `clean()` drops control / format / private / separator
 characters (so zero-width and bidi characters), collapses whitespace, caps at 60 characters; `vetted()` keeps only
-words (letters and digits), ≤ 12 words, no injection shape, no forbidden address. Nothing mined is ever obeyed: it
-is only said back as a question.
+words (letters and digits, commas between words), ≤ 12 words, no injection shape, no forbidden address, and no
+word the judge could read as abuse or a false claim (`DENY`: insults, accusations such as "estafa" or "mentiroso",
+debts, promises, "gratis"; not "tonto" or "timo", which are lore). Nothing mined is ever obeyed: it is only said back
+as a question. Order: field seeds, then lore seeds, then trusted hints.
 
 ## 4. Budget
 
@@ -118,12 +126,12 @@ is only said back as a question.
 |---|---|---|
 | `egg_hunt_enabled` | false | the guardrail half of the switch |
 | `egg_hunt_dealers` | abuela,picaros,chato,pilar | where a phrase may ride |
-| `egg_hunt_max_phrases_per_dealer_per_hour` | 3 | per game hour, counted from the stored set (restart-proof) |
+| `egg_hunt_max_phrases_per_dealer_per_hour` | **1** (first live hour; 3 after a clean hour) | per game hour, counted from the stored set (restart-proof) |
 | `egg_hunt_dealer_gap_ticks` | 8 | 2 min at 15 s between phrases to one dealer, so a find is put down to the right phrase |
 | `egg_hunt_backoff_ticks` | 240 | 1 h at 15 s after a cool-off / strike / warning; every dealer when it followed a woven phrase |
-| `egg_hunt_max_finds_per_dealer` | 1 | stop with a dealer after a find (Abuela held 3 eggs Saturday: 3 keeps hunting her) |
+| `egg_hunt_max_finds_per_dealer` | 3 | Abuela holds 3 live eggs on Sunday (Sharp ear: ours; Castizo; the cocido card) |
 | `egg_hunt_max_finds` | 5 | stop everywhere |
-| code: `MAX_PER_TICK` | 1 | one woven message per tick for the team |
+| code: `MAX_PER_TICK` | 1 | one woven message per tick for the team (`EggHunter._woven` counts them) |
 
 The hourly bucket is `int(t_hours)`, so up to 2 × 3 phrases to one dealer can land in the minutes around an hour
 boundary (still one per tick for the team, and the 8-tick gap per dealer).
@@ -164,31 +172,34 @@ public in the replies.
 
 | Risk | Mitigation | Left |
 |---|---|---|
-| conduct strike (spam / injection / false_claim) → the team sent away by a dealer | question only, no claim; own injection check; ≤ 3 per dealer-hour; back-off on any strike for us, everywhere if it followed a phrase | the judge is an LLM: a polite question could still be tagged. Watch the first hour in dry run, then live |
+| conduct strike (spam / injection / false_claim) → the team sent away by a dealer | question only, no claim; own injection check and `DENY`; 1 per dealer-hour for the first hour; a cool-off close, a warning in the reply or a strike/cool-off event backs off that dealer, and **every dealer** when we said a phrase to it within the back-off window (stored rows, so a restart keeps it) | strikes may be silent ("uncounted kinds still earn a warning in the words, never a strike"; the public feed has never shown a `persona.strike`, `persona.cooloff` or `flag.raised` event, Fri–Sun): the signals that work are the reply text and the close reason. A strike that leaves neither is invisible to us |
+| another team steering our next phrase (it prompt-injects a dealer into "ask Pilar about <insult>") | hints count only from our own thread or from 2 different teams, after every seed, and pass `DENY` | a 2-team coordinated injection of a harmless-looking phrase could still be said once |
 | dealer patience: a long message wears it | the phrase adds ~70 characters to a bid we send anyway; never on a final | unmeasured |
 | slot contention | none taken | – |
 | the taker rarely talks to a dealer (Saturday: chato 4 threads, pilar 9, banco 0) | none in v1 (no dedicated threads) | El Chato's E6 and any Pilar egg may never get a carrier; a dedicated-thread mode is the next step (§9) |
 | the egg definitions changed overnight (bundle rebuilt) | live hint mining; the tried set moves on after a miss | Saturday's seeds may be dead |
 | a woven bid that lands while its response is lost | counted as tried (never re-sent) | – |
-| Postgres down | rows kept in memory, retried every 5 ticks; a restart during an outage could re-send ≤ 3 phrases | small |
-| the hunt touching the shared DB while off | the tried set is read on the first tick the hunt is on; off, the hunter never connects (test) | – |
+| Postgres down | reads and writes on a background thread (`BackgroundStore`), never in the tick; a failed read leaves the hunt **off** and is retried every 5 s until it succeeds (never "nothing tried"); a failed write is retried with its rows | a batch still queued when the process dies is lost: ≤ 1 phrase per dealer may be said again |
+| the hunt touching the shared DB while off | the hunter reads the tried set on the first tick the hunt is on; off, it never connects (test). `schema.sql` also holds `egg_hunt_tried`, so `init_schema` creates the (empty) table at every writer start since the merge | – |
 
 ## 7. Enable (Marius) and rollback
 
-Rules are loaded at process start and the env is read each tick, but both changes redeploy the taker on Railway, so
-do them **outside** a Market Test (±10 ticks) and outside Duels III / the Grand Final (`uv run bazaar deploy-guard`).
+**One permanent switch (Marius, Sun 4 Oct: "so we don't have to re-set it each time"):** GUARDRAILS.md
+`egg_hunt_enabled`. It is committed, so every deploy and restart keeps it; nothing is set on Railway. The env
+`BAZAAR_EGG_HUNT` is now only an override on one service: unset follows the guardrail, `0`/`off` turns the hunt off,
+`dry` logs `egg_hunt would-send` lines and sends bids unchanged. Rules are read at process start, so a change to the
+line takes effect with the deploy its merge triggers. Merge only through `scripts/merge_safe.sh` (outside a Market
+Test ±10 ticks and Duels III / the Grand Final).
 
-1. Merge this branch (code + params, all off). Every service redeploys once.
-2. Dry run first: `railway variable set BAZAAR_EGG_HUNT=dry --service bazaar-taker`, and a one-line PR setting
-   `egg_hunt_enabled = true` in GUARDRAILS.md (or both in the same window). Watch
-   `railway logs --service bazaar-taker | grep egg_hunt`: `would-send` lines show the exact text.
-3. Live: `railway variable set BAZAAR_EGG_HUNT=1 --service bazaar-taker`.
-4. Watch: `egg_hunt sent|found|backoff`; the public board's badges; `select dealer, phrase_id, status, tick from
-   egg_hunt_tried order by tick` (READ ONLY).
-
-Rollback, fastest first: the kill switch stops every send (`touch /app/.local/PAUSE` on the service, docs/services.md);
-`railway variable delete BAZAAR_EGG_HUNT --service bazaar-taker` (redeploys with the hunt off, bids unchanged);
-`egg_hunt_enabled = false` in GUARDRAILS.md.
+- **On:** `egg_hunt_enabled = true` on main (since #275). With the review fixes merged (#279) and
+  `BAZAAR_EGG_HUNT` unset on bazaar-taker, the hunt is on from that deploy on. Raise
+  `egg_hunt_max_phrases_per_dealer_per_hour` to 3 after a clean hour.
+- **Watch:** `railway logs --service bazaar-taker | grep egg_hunt` (`sent|found|backoff|skipped`), the public board's
+  badges, `select dealer, phrase_id, status, tick from egg_hunt_tried order by tick` (READ ONLY).
+- **Rollback, fastest first:** the kill switch stops every send (`touch /app/.local/PAUSE` on the service,
+  docs/services.md); `railway variable set BAZAAR_EGG_HUNT=0 --service bazaar-taker` **then
+  `railway redeploy --service bazaar-taker`** (on Sun 4 Oct, a variable change alone did not restart the taker);
+  `egg_hunt_enabled = false` in GUARDRAILS.md (a PR, permanent).
 
 Stalls close at the Grand Final (~14:00 if the 09:00 schedule holds): no dealer threads after that, so the hunt
 ends there by itself.
@@ -196,13 +207,13 @@ ends there by itself.
 ## 8. Expected value
 
 - **Points: 0** (RULES.md:122). Nothing here may be justified by score.
-- **Badges:** if Saturday's eggs are still enabled and under their caps, the top seeds hit on the first carrier:
-  Abuela's "la chulapa dorada" (Sharp ear, 11/15 if the cap is the default), the Pícaros' "el timo de la estampita"
-  (Trickster tricked, 6/15). The taker held 25 Abuela and 37 Pícaros threads on Saturday, so both get a carrier in
-  the first hour. **1–3 badges** is the honest range; 0 if the eggs were redefined overnight.
+- **Badges:** Saturday's eggs are live on Sunday (other teams found Castizo, the cocido card and Trickster tricked at
+  t1467–1497, and we found **Sharp ear at t1550 with our first phrase**). Left for us: Castizo and the cocido card
+  at Abuela, Trickster tricked at the Pícaros, the pack at El Chato if the taker bids there. **1 found; 1–3 more** is
+  the honest range.
 - **Pitch:** a live demo of an agent that reads the story in the dealers' replies (ties to logs-eggs: "Pilar gave us
   the clue five times; we only listened for prices").
-- **Cost:** 0 requests, 0 slots, ~70 characters on ≤ 3 bids per dealer per hour.
+- **Cost:** 0 requests, 0 slots, ~70 characters on ≤ 1 bid per dealer per hour (first hour), then ≤ 3.
 
 ## 9. Not done / open
 
@@ -215,7 +226,7 @@ ends there by itself.
 
 ## 10. Request log (every live request while building)
 
-All keyless GETs to `https://bazaar.causaprima.ai`, `User-Agent: t01-readonly-probe`, ≥ 1.1 s apart
+All keyless GETs to `https://bazaar.causaprima.ai`, `User-Agent: t01-readonly-probe`, ≥ 1 s apart
 (`egg-hunter/requests.log`, UTC):
 
 | UTC | Path | Status | Bytes |

@@ -249,7 +249,7 @@ class Guardrails(BaseModel):
     buy_target_step_ticks: int = Field(default=6, ge=1, le=200)
     buy_target_steps: int = Field(default=5, ge=1, le=50)
     activity_stall_seconds: float = Field(default=0.0, ge=0, le=3600)  # 0: off (GUARDRAILS.md turns it on)
-    # Easter-egg hunt (`agents/egg_hunt.py`): off here and in GUARDRAILS.md; also needs env BAZAAR_EGG_HUNT.
+    # Easter-egg hunt (`agents/egg_hunt.py`): off here; GUARDRAILS.md is the switch (env BAZAAR_EGG_HUNT=0 overrides).
     egg_hunt_enabled: bool = False
     egg_hunt_dealers: str = "abuela,picaros,chato,pilar"
     egg_hunt_max_phrases_per_dealer_per_hour: int = Field(default=3, ge=0, le=20)
@@ -445,7 +445,7 @@ ENFORCED_BY: dict[str, str] = {
     "dealer_sell_breaker_reset_ticks": "watchdog.run (a dealer_sell trip's until_tick; the sell guards still refuse)",
     "watchdog_refusal_storm": "watchdog.refusal_storms (WARN only)",
     "activity_stall_seconds": "agents.taker → activity.ActivityWatch (after the tick's sends; logs, never trades)",
-    "egg_hunt_enabled": "agents.egg_hunt.EggHunter.mode (+ env BAZAAR_EGG_HUNT) ← agents.taker._desk_send",
+    "egg_hunt_enabled": "agents.egg_hunt.EggHunter.mode (env BAZAAR_EGG_HUNT=0/dry overrides) ← taker._desk_send",
     "egg_hunt_dealers": "agents.egg_hunt.EggHunter.blocked (the dealers a phrase may ride to)",
     "egg_hunt_max_phrases_per_dealer_per_hour": "agents.egg_hunt.EggHunter.blocked (live + dry, per game hour)",
     "egg_hunt_dealer_gap_ticks": "agents.egg_hunt.EggHunter.blocked + _expire (wait for the reply and the find)",

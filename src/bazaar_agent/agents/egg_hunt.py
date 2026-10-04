@@ -11,8 +11,9 @@ again without a new price are spam") and no accept is ever involved. At most one
 whole team, at most `egg_hunt_max_phrases_per_dealer_per_hour` per dealer per game hour, never a phrase twice to
 the same dealer (the tried set survives restarts in Postgres, else a JSONL file), never on a dealer's final offer.
 
-What stops it: the env switch `BAZAAR_EGG_HUNT` (unset or 0: off; `dry`: logs what it WOULD send and sends the bid
-unchanged; 1: on) AND `egg_hunt_enabled` in GUARDRAILS.md; the kill switch (the taker sends nothing at all then);
+What stops it: `egg_hunt_enabled` in GUARDRAILS.md, the one permanent switch (committed, so every deploy keeps it);
+the env `BAZAAR_EGG_HUNT` only overrides it on one service (unset: follow the guardrail; 0/off: off; `dry`: log what it
+WOULD send and send the bid unchanged); the kill switch (the taker sends nothing at all then);
 a dealer's cool-off, strike or warning, our thread closed for cool-off, a flag on one of our messages, or a learned
 blocker (back off); a find with that dealer (`egg_hunt_max_finds_per_dealer`); our finds reaching
 `egg_hunt_max_finds`. The persona editor's conduct judge tags every team message (`injection`, `abuse`, `spam`,
@@ -67,6 +68,8 @@ DEALER_NAMES: dict[str, tuple[str, ...]] = {  # how dealers name each other in t
 
 Source = Literal["field", "hint", "lore"]
 SOURCE_WEIGHT: dict[str, float] = {"field": 1.0, "hint": 0.8, "lore": 0.5}
+TIER: dict[str, int] = {"field": 0, "lore": 1, "hint": 2}  # a mined hint comes after every seed (review, MED 2)
+HINT_MIN_TEAMS = 2  # a hint from other teams' threads counts once this many different teams were given it
 
 # Priors, all from public text. "field": the words dealers echoed when other teams found an egg on Saturday
 # (docs/research/2026-10-04/logs-eggs.md §5, from the public feed); the exact keyword is inferred, so a seed may
@@ -75,11 +78,11 @@ SOURCE_WEIGHT: dict[str, float] = {"field": 1.0, "hint": 0.8, "lore": 0.5}
 # Saturday's E2 ("el oro de Moscú" at Don Ernesto) is left out: its card had a print run of 1 and is gone.
 SEEDS: dict[str, tuple[tuple[str, Source, float], ...]] = {
     "abuela": (
-        ("la chulapa dorada", "field", 1.0),  # E1 "Sharp ear": 11 teams
-        ("the golden chulapa", "field", 0.9),  # E1 as Pilar's hint words it (English)
-        ("sile nole repe me falta", "field", 0.8),  # E4 "Castizo": 4 teams (the card-swap chant)
-        ("un chotis en una baldosa", "field", 0.7),  # E4 (danced on one tile)
-        ("el cocido con sus tres vuelcos", "field", 0.6),  # E5 her duplicate card: 3 teams (maybe capped)
+        ("la chulapa dorada", "field", 1.0),  # E1 "Sharp ear": 11 teams Sat; ours at t1550 Sun
+        ("un chotis en una baldosa", "field", 0.95),  # E4 "Castizo": found again Sun (t13 t1467, t18 t1480)
+        ("el cocido con sus tres vuelcos", "field", 0.9),  # E5 her duplicate card: found again Sun (t18 t1482)
+        ("sile, nole, repe, me falta", "field", 0.8),  # E4, with the chant's commas (punctuation handling unknown)
+        ("sile nole repe me falta", "field", 0.7),  # E4, the same without commas
         ("la verbena de la Paloma", "field", 0.5),  # E4 lore
         ("la Virgen del Carmen", "lore", 0.5),  # her saint's day (news #6)
         ("la estación fantasma de Chamberí", "lore", 0.4),
@@ -95,7 +98,13 @@ SEEDS: dict[str, tuple[tuple[str, Source, float], ...]] = {
         ("el trile", "lore", 0.3),
     ),
     "chato": (
-        ("un bocadillo de calamares en la Plaza Mayor con una caña", "field", 1.0),  # E6: 2 teams
+        (
+            "un bocadillo de calamares en la Plaza Mayor, con caña",
+            "field",
+            1.0,
+        ),  # E6: 2 teams ("Plaza Mayor, con caña")
+        ("la Plaza Mayor con caña", "field", 0.9),  # E6 without the comma
+        ("el bocadillo de calamares", "field", 0.8),  # E6, the short form
         ("las tapas de la Cava Baja", "lore", 0.4),
         ("el Rastro de Cascorro", "lore", 0.3),
         ("la estación fantasma de Chamberí", "lore", 0.3),
@@ -129,9 +138,11 @@ FOUND_EVENTS = ("egg.found", "badge.awarded", "egg.given")
 
 
 def mode_from_env(env: Mapping[str, str] | None = None) -> Mode:
-    """`BAZAAR_EGG_HUNT`: 1/true/on/live → live, dry → dry, anything else (unset, 0) → off."""
+    """`BAZAAR_EGG_HUNT`, an optional override of GUARDRAILS.md `egg_hunt_enabled` (Marius, Sun 4 Oct: one permanent
+    switch, nothing to re-set on Railway): unset or 1/true/on/live → live (the guardrail decides), dry → dry,
+    anything else (0, off, a typo) → off."""
     raw = (os.environ if env is None else env).get(ENV, "").strip().lower()
-    if raw in ("1", "true", "on", "live", "yes"):
+    if raw in ("", "1", "true", "on", "live", "yes"):
         return "live"
     return "dry" if raw in ("dry", "dry-run", "dryrun") else "off"
 
@@ -163,12 +174,25 @@ def phrase_id(dealer: str, phrase: str) -> str:
     return hashlib.sha1(f"{dealer}:{fold(phrase)}".encode()).hexdigest()[:10]
 
 
+# Words the conduct judge could tag as `abuse` or `false_claim` (an accusation, a debt, a promise): a phrase holding
+# one is never said, whoever suggested it. Folded, whole-word prefixes. Not "tonto" ("rosquillas tontas y listas")
+# nor "timo" ("el timo de la estampita"): both are lore.
+DENY = re.compile(
+    r"\b(idiot|imbecil|estupid|stupid|gilipoll|cabron|puta|puto|mierda|joder|cono|hostia|fuck|shit|bitch|bastard"
+    r"|ladron|thief|estafa|scam|fraud|cheat|tramp|mentir|liar|lie|lying|robo|rob|steal|roba|debes|owe|prometi"
+    r"|promis|gratis|free|regal|deuda|debt|polic|denunc|report|ban|hack)\w*"
+)
+
+
 def vetted(phrase: str) -> bool:
-    """A phrase we may say: 4–60 characters of words (letters and digits: "Andén 0"; no URLs, markup or
-    punctuation), at most 12 words, no injection shape, no forbidden address."""
+    """A phrase we may say: 4–60 characters of words (letters and digits: "Andén 0"; commas between words; no URLs,
+    markup or other punctuation), at most 12 words, no injection shape, no forbidden address, no word the conduct
+    judge could read as abuse or a false claim (`DENY`)."""
     if not PHRASE_MIN_CHARS <= len(phrase) <= PHRASE_MAX_CHARS or len(phrase.split()) > 12:
         return False
-    if not re.fullmatch(r"[^\W_]+(?:[ '’][^\W_]+)*", phrase):
+    if not re.fullmatch(r"[^\W_]+(?:,? [^\W_]+|['’][^\W_]+)*", phrase):
+        return False
+    if DENY.search(fold(phrase)):
         return False
     return not injection_flags(phrase) and not uses_forbidden(phrase, NEVER_ADDRESS)
 
@@ -307,7 +331,9 @@ class PgStore:
         self._down_at: int | None = None
         self._failed = False
 
-    def load(self) -> list[Tried]:
+    def load(self) -> list[Tried] | None:
+        """The stored rows, or None when they could not be read (the hunt then stays off and the read is retried:
+        an empty set would let every phrase already said be said again)."""
         try:
             with self.connect() as conn:
                 conn.execute(f"set statement_timeout = {STATEMENT_TIMEOUT_MS}")
@@ -315,9 +341,9 @@ class PgStore:
                 got = conn.execute(SELECT, (self.world,)).fetchall()
                 if hasattr(conn, "commit"):
                     conn.commit()
-        except Exception as e:  # noqa: BLE001 — no tried set is "nothing tried yet", never a failed start
-            self.log(f"egg_hunt: tried set not loaded ({type(e).__name__}); starting empty")
-            return []
+        except Exception as e:  # noqa: BLE001 — not read: the caller retries, the hunt stays off meanwhile
+            self.log(f"egg_hunt: tried set not read ({type(e).__name__}); the hunt stays off, retrying")
+            return None
         out = []
         for dealer, key, pid, tick, hour, status, thread, found, phrase, event in got:
             row = Tried(dealer, key, pid, int(tick), int(hour), status, int(thread or 0), found, phrase or "")
@@ -355,7 +381,8 @@ class BackgroundStore:
     """The tried set's I/O off the tick (Sunday's ticks are 15 s): one daemon thread reads `inner` once, then writes
     every batch in order, retrying a failed one every `retry_s` seconds with its rows kept. `load` never blocks (None
     until the read is done, and the hunt waits for it: a phrase is never repeated because the set was not read yet);
-    `save` only queues. A batch still queued when the process dies is lost: at worst those phrases are said again."""
+    `save` only queues. A failed read is retried every `retry_s` seconds, and the hunt stays off until it succeeds.
+    A batch still queued when the process dies is lost: at worst those phrases are said again."""
 
     def __init__(
         self,
@@ -395,12 +422,15 @@ class BackgroundStore:
         return False
 
     def _run(self) -> None:
-        try:
-            rows = self.inner.load()
-        except Exception as e:  # noqa: BLE001 — no tried set is "nothing tried yet"
-            self.log(f"egg_hunt: tried set not loaded ({type(e).__name__}); starting empty")
-            rows = []
-        self._rows = list(rows or [])
+        rows: list[Tried] | None = None
+        while rows is None:  # until the read succeeds: the hunt stays off meanwhile (`load` answers None)
+            try:
+                rows = self.inner.load()
+            except Exception as e:  # noqa: BLE001
+                self.log(f"egg_hunt: tried set not read ({type(e).__name__}); the hunt stays off, retrying")
+            if rows is None:
+                self.sleep(self.retry_s)
+        self._rows = list(rows)
         while True:
             batch = self._queue.get()
             tries = 0
@@ -453,8 +483,9 @@ class EggHunter:
         self._unsaved: list[Tried] = []
         self._seen: set[int] = set()
         self._read: set[int] = set()  # dealer message ids already checked for a warning
+        self._hint_teams: dict[tuple[str, str], set[str]] = {}  # mined hint -> teams whose threads gave it
         self._hidden: set[str] | None = None
-        self._woven_tick: int | None = None
+        self._woven: tuple[int | None, int] = (None, 0)  # (tick, woven messages that tick)
         self._said: dict[tuple[str, str], int] = {}  # (dealer, reason) -> game hour a skip was last logged
 
     # ------------------------------------------------------------ switches and budget
@@ -484,9 +515,11 @@ class EggHunter:
         for c in [*self._seeds, *self.mined.values()]:
             if c.dealer != dealer or (dealer, c.key) in self.tried or (dealer, c.key) in self.dry:
                 continue
+            if c.source == "hint" and not self._trusted_hint(dealer, c.key):
+                continue
             old = pool.get(c.key)
             pool[c.key] = c if old is None or c.score > old.score else old
-        return sorted(pool.values(), key=lambda c: (-c.score, c.key))
+        return sorted(pool.values(), key=lambda c: (TIER[c.source], -c.score, c.key))
 
     def blocked(self, rules: Any, dealer: str, tick: int, hour: int) -> str | None:
         """Why no phrase goes to `dealer` this tick (None: one may)."""
@@ -501,7 +534,7 @@ class EggHunter:
             until, why = self.backoff.get(who, (0, ""))
             if tick < until:
                 return f"backoff until tick {until} ({why})"
-        if self._woven_tick == tick:
+        if self._woven[0] == tick and self._woven[1] >= MAX_PER_TICK:
             return "one woven message per tick"
         if (p := self.pending.get(dealer)) is not None and tick - p.tick < rules.egg_hunt_dealer_gap_ticks:
             return f"waiting for the reply to {p.weave.candidate.id}"
@@ -544,7 +577,7 @@ class EggHunter:
                     continue
                 if uses_forbidden(woven, (*NEVER_ADDRESS, *never_address)):
                     continue
-                self._woven_tick = tick
+                self._woven = (tick, self._woven[1] + 1 if self._woven[0] == tick else 1)
                 if mode == "dry":
                     self.dry[(dealer, cand.key)] = hour
                     self.log(f"tick {tick} egg_hunt would-send dealer={dealer} phrase={cand.id} text={woven!r}")
@@ -608,7 +641,7 @@ class EggHunter:
             actor = str(e.get("actor") or "")
             if kind == "thread.message" and actor in DEALER_NAMES:
                 for target, phrase in mine_hints(payload.get("text"), actor):
-                    self._mined(target, phrase)
+                    self._mined(target, phrase, str(payload.get("team") or ""), us)
             elif kind in FOUND_EVENTS and payload.get("team") == us:
                 at = e.get("tick")
                 self._found(str(payload.get("persona") or ""), str(kind), eid, payload, at, tick, hour)
@@ -617,21 +650,26 @@ class EggHunter:
                 end = _until(payload.get("until_tick"), e.get("tick"), tick, rules.egg_hunt_backoff_ticks)
                 if end is None:  # a replayed window after a restart: that cool-off is already over
                     continue
-                self._back_off(dealer, end, str(kind), tick)
-                if dealer in self.pending:  # punished right after a woven message: stop everywhere
-                    self._back_off("*", tick + rules.egg_hunt_backoff_ticks, f"{kind} after a woven message", tick)
+                self._punished(rules, dealer, end, str(kind), tick)
             elif kind == "flag.raised" and payload.get("message", payload.get("message_id")) in self.messages:
                 self._back_off("*", tick + 100 * rules.egg_hunt_backoff_ticks, "a team flagged a woven message", tick)
         if len(self._seen) > SEEN_MAX:
             self._seen = set(sorted(self._seen)[-SEEN_MAX // 2 :])
 
-    def _mined(self, dealer: str, phrase: str) -> None:
+    def _mined(self, dealer: str, phrase: str, team: str, us: str) -> None:
+        """A hint a dealer gave in a reply. Any team can prompt-inject a dealer into "ask Pilar about <anything>",
+        so one only counts from our own thread or once `HINT_MIN_TEAMS` different teams were given it."""
         key = (dealer, fold(phrase))
+        self._hint_teams.setdefault(key, set()).add("@us" if team == us else team)
         old = self.mined.get(key)
-        self.mined[key] = replace(old, seen=old.seen + 1) if old else Candidate(dealer, phrase, "hint", 0.9)
+        self.mined[key] = replace(old, seen=old.seen + 1) if old else Candidate(dealer, phrase, "hint", 0.5)
         if len(self.mined) > MINED_MAX * len(DEALER_NAMES):
             weakest = min(self.mined, key=lambda k: self.mined[k].score)
             self.mined.pop(weakest)
+
+    def _trusted_hint(self, dealer: str, key: str) -> bool:
+        teams = self._hint_teams.get((dealer, key), set())
+        return "@us" in teams or len(teams - {""}) >= HINT_MIN_TEAMS
 
     def _found(
         self, dealer: str, kind: str, eid: int, payload: Mapping[str, Any], at: object, tick: int, hour: int
@@ -664,20 +702,20 @@ class EggHunter:
             if t.get("closed_reason") == "cooloff":
                 end = _until(t.get("until_tick"), None, tick, rules.egg_hunt_backoff_ticks)
                 if end is not None:
-                    self._back_off(dealer, end, "thread closed for cool-off", tick)
-            p = self.pending.get(dealer)
-            if p is None or t.get("id") != p.weave.thread:
+                    self._punished(rules, dealer, end, "thread closed for cool-off", tick)
+            last = self._recent(dealer, tick, rules.egg_hunt_backoff_ticks)
+            if last is None or t.get("id") != last.thread:
                 return
             for m in t.get("messages") or []:
                 if not isinstance(m, Mapping) or m.get("sender") != dealer or m.get("id") in self._read:
                     continue
                 at = m.get("tick")
-                if isinstance(at, int) and at < p.tick:
+                if isinstance(at, int) and at < last.tick:
                     continue
                 if isinstance(m.get("id"), int):
                     self._read.add(m["id"])
                 if WARNING.search(fold(clean(m.get("text"), 1200))):
-                    self._back_off(dealer, tick + rules.egg_hunt_backoff_ticks, "a warning in the reply", tick)
+                    self._punished(rules, dealer, tick + rules.egg_hunt_backoff_ticks, "a warning in the reply", tick)
         except Exception as e:  # noqa: BLE001
             self.log(f"tick {tick} egg_hunt thread read failed ({type(e).__name__})")
 
@@ -701,6 +739,18 @@ class EggHunter:
         for dealer, p in list(self.pending.items()):
             if tick - p.tick >= max(rules.egg_hunt_dealer_gap_ticks, 2):
                 self.pending.pop(dealer)
+
+    def _recent(self, dealer: str, tick: int, window: int) -> Tried | None:
+        """Our newest phrase to `dealer` said within the last `window` ticks (stored, so a restart keeps it)."""
+        rows = [r for r in self.tried.values() if r.dealer == dealer and r.pid != "-" and 0 <= tick - r.tick <= window]
+        return max(rows, key=lambda r: r.tick) if rows else None
+
+    def _punished(self, rules: Any, dealer: str, until: int, why: str, tick: int) -> None:
+        """A cool-off, strike or warning: back off that dealer; and every dealer when we said a phrase to it within
+        the back-off window (the judge's strikes may be silent, and they add up toward a cool-off)."""
+        self._back_off(dealer, until, why, tick)
+        if dealer in self.pending or self._recent(dealer, tick, rules.egg_hunt_backoff_ticks) is not None:
+            self._back_off("*", max(until, tick + rules.egg_hunt_backoff_ticks), f"{why} after a recent phrase", tick)
 
     def _back_off(self, dealer: str, until: int, why: str, tick: int) -> None:
         if not dealer:
@@ -737,12 +787,13 @@ def _event_order(e: Mapping[str, Any]) -> int:
 
 CARRIERS: dict[str, str] = {
     # The organisers' own test message for an egg is "Do you know about <phrase>?" (persona editor). A question,
-    # no claim, no instruction; Abuela gets a warm one (she remembers how she was treated).
-    "abuela": "Gracias por su paciencia, de verdad. Por cierto, ¿usted sabe algo de {phrase}?",
-    "picaros": "Por cierto, ¿conocéis lo de {phrase}?",
-    "chato": "Por cierto, ¿qué me dice de {phrase}?",
-    "pilar": "Por cierto, ¿sabe usted algo de {phrase}?",
-    "banco": "Por cierto, ¿sabe usted algo de {phrase}?",
+    # no claim, no instruction; Abuela gets a warm one (she remembers how she was treated). The phrase stands on its
+    # own (no "de" before it), so "el …" never reads as the "de el" of a template and stays whole.
+    "abuela": "Gracias por su paciencia, de verdad. Una pregunta, si me permite: {phrase}, ¿le suena?",
+    "picaros": "Por cierto: {phrase}, ¿os suena?",
+    "chato": "Por cierto: {phrase}, ¿le suena?",
+    "pilar": "Por cierto, una pregunta: {phrase}, ¿le suena?",
+    "banco": "Por cierto, una pregunta: {phrase}, ¿le suena?",
 }
 
 
