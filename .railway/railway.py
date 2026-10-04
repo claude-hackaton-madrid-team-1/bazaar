@@ -280,7 +280,9 @@ def main(ctx=None):
     # The autonomous agents share ONE accept per tick with bazaar-duels through the Postgres ledger
     # (duels first; the maker never accepts). Both are LIVE since Sat 2026-10-03 01:45 Madrid: BAZAAR_LIVE=1
     # was set by hand on each service, and agent() preserve()s it (delete the variable to go back to dry run).
-    taker = agent("bazaar-taker", "agent taker", taker_data)
+    # BAZAAR_ADDRESSED_OFFERS (set by hand; unset = asks): which offers other teams address to us the taker takes
+    # (asks | all | off, agents/taker.py `TakerConfig.addressed`). Declared preserve() so an apply keeps it.
+    taker = agent("bazaar-taker", "agent taker", taker_data, {"BAZAAR_ADDRESSED_OFFERS": preserve()})
     # BAZAAR_BENCH_POLICY=edge (set by hand; unset or exact: today's matching) has our venue's broker match the
     # Market Test with the bench edge (agents/bench_edge.py), behind BAZAAR_BENCH_GUARD_MARGIN (default 10; none =
     # unguarded). Both declared preserve() so an apply keeps the hand-set values.
