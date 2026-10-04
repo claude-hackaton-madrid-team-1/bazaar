@@ -743,7 +743,7 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 - Step 2: update the workflow and documentation in parallel, then regenerate agent docs.
 - Step 3: run the four checks, verify the workflow configuration and complete the CI1 evidence report.
 - Older sim-smoke acceptance entries above are historical; CI1 removes sim smoke as a merge requirement.
-- Status: implementation and verification in progress; evidence belongs in CI1-spec.md.
+- Status: merged through SR1/PR #272; four-category Depot CI passed before the 4 October rollout. Evidence in CI1-spec.md and SR1-report.md.
 
 ### DOC1 — repository documentation cleanup ([spec](DOC1-spec.md))
 
@@ -751,7 +751,7 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 - Replace the architecture roadmap with an implementation map, checked against current source.
 - Simplify generated metadata, repair references, verify links and desktop/mobile rendering.
 - Parallel slices: README and its generator; architecture and its generator; independent source audit.
-- Status: implementation and local verification complete; evidence in DOC1-spec.md. Awaiting PR merge and post-merge hosted architecture publication.
+- Status: merged through SR1/PR #272; evidence in DOC1-spec.md. The separate Claude artifact remains read-only in the available account and requires its owner to republish.
 
 ### SR1 — Sunday scoring and operator control ([spec](SR1-spec.md))
 
@@ -759,4 +759,11 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 - Integrate runtime/UI contracts. Presentation work was withdrawn by Omar and is excluded from this PR.
 - Run focused checks, integrated gates and independent review; record evidence and push feature branches.
 - Preserve current duel policy, model/auth, shared budgets and coordinator-only safe deployment.
-- Status: six retained implementation criteria verified; full backend suite 5535 passed, 95% coverage. Live PR 58 has green Depot CI. Evidence, limitations and rollout steps are in [SR1-report.md](SR1-report.md); coordinator deployment remains pending.
+- Status: merged and deployed on 4 October; final backend gate 5538 passed, 95% coverage previously measured. Live PR #58 has green Depot CI. All four writers resumed and advanced ticks with shared ledgers. Evidence and remaining verification gaps are in [SR1-report.md](SR1-report.md).
+
+### LF1 — Close live-readiness gaps ([spec](LF1-spec.md))
+
+- Audit live score conversion, runtime errors and production voice in parallel.
+- Fix confirmed dealer budget waste without changing hard limits or duel strategy.
+- Correct stale operational guidance and record actual deployment/validation evidence.
+- Run focused regressions and the final gate, obtain independent review, and use a safe live rollout if code changes are required.

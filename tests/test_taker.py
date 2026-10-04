@@ -421,6 +421,36 @@ def test_open_dealer_thread_bids_count_toward_the_hourly_spend_cap(tmp_path):
     assert team.sent == [] and any("spend 140 + 12 > max_spend_per_game_hour 150" in line for line in lines)
 
 
+def test_dealer_opening_uses_remaining_hour_and_pending_cash_then_reconsiders(tmp_path):
+    from bazaar_agent.learn.evolve import Ladder, LadderPolicy
+    from tests.test_taker_hard_dealers import FakeLearner
+
+    policy = LadderPolicy("abuela", "card:uncommon", Ladder(10, 1, 22), "learned", (24,), 1, 5.0, 90)
+
+    def run_at(name, hour, pending=()):
+        team = FakeTeam(offers=list(pending))
+        t, _, ledger = taker(
+            tmp_path / name,
+            team,
+            FakePublic(),
+            live=True,
+            config=TakerConfig(max_dealer_threads=1),
+            max_spend_per_game_hour=250,
+        )
+        t.outcome_learner = FakeLearner({("abuela", "card:uncommon"): policy})
+        ledger.record("spend", TICK - 1, 1.4, 232, "earlier")
+        team.now = clock().model_copy(update={"t_hours": hour})
+        t.on_tick(team.now)
+        return [s for s in team.sent if s[0] == "open_thread"]
+
+    # A first bid of 10 fits, but a known 24 P fill does not. Use the common instead.
+    assert run_at("limited", 1.5) == [("open_thread", "abuela", {"buy": {"card": "LAV-02"}})]
+    # Another standing promise consumes the rest of this hour; do not open any buy.
+    assert run_at("pending", 1.5, [bid(700, "LAV-09", 20, thread=8000)]) == []
+    # Expired spend is re-evaluated, not permanently cached as an unavailable card.
+    assert run_at("refreshed", 2.5) == [("open_thread", "abuela", {"buy": {"card": "LAV-08"}})]
+
+
 def test_an_accept_lost_to_a_network_error_is_still_booked_as_spend(tmp_path):
     from bazaar_agent.sdk import BazaarError
 

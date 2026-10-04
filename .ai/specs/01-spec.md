@@ -309,7 +309,7 @@ Corrected by the rules audit (Sat 3 Oct, commit 8dbf50b7; full text in `docs/bri
 
 - Holding cards, the album and `collection_value` never score by themselves. A card scores only when it moves: a team trade (price minus our `your_value`, into `neg_points`) or a dealer deal (ladder share of that dealer's own range, buying or selling; the opening price scores 0 and the dealer's final scores the whole range).
 - Per round, market-making is about 22.5 × `bench_points` + 7.5 × organic, and negotiating is about ladder 7.5 + duels 7.5 + team trades 15, each part capped at the top-3 mean. The ladder restarts every round.
-- A round starts on the organisers' `round` action in `/api/schedule` (round 2 at tick 160). The live schedule read 4 Oct says "Round 3 starts" and "Sunday opens" at h16.65, Sun 09:00 CEST. One game hour is one real hour on Sunday; "Scores freeze" is h22.65, 15:00. See `docs/briefing.md` for the quoted entries and the UNVERIFIED pre-opening tests at h14.65/h15.
+- A round starts on the organisers' `round` action. Round 2 started at tick 160; round 3 was observed at tick 1446. The Sunday schedule changed after the pre-opening read. Use live `/api/clock` and `/api/schedule`; the obsolete h16.65 anchor must not drive operations. At `now_hours=14.037`, the next Market Tests are h14.65/h15, Duels III is h15.367 and scores freeze is h19.367. See `docs/briefing.md` for source evidence.
 - Page cards still cost points when sold: breaking a complete page dropped `neg_points` 134.7 → 44.6 (Sat 3 Oct, tick 948; the coordinator's reading is that team-acquired page cards were revalued, not in the audit). Hence the hard rules in `.ai/context.md`.
 
 ### 7.3 Level 2 is the gate to 30 points

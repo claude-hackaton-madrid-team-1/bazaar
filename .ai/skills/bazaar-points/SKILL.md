@@ -8,14 +8,14 @@ description: "Playbook for earning official score in the Bazaar: how each scorin
 Evidence for every number: `docs/points-ledger.md` (read it for the tables). Rules: `vendor/bazaar-kit/RULES.md`.
 Hard rules apply before every action; historical results below do not authorize a trade:
 
-- Never sell or swap a page's last copy. Sell only true duplicates of page cards. The configured
-  `protect_page_exceptions` for LAT-10/LAT-09 conflict with this instruction; do not use them.
+- Never sell or swap a page's last copy. Sell only true duplicates of page cards.
+  `protect_page_exceptions` is `none`; every page set is protected.
 - Never sell below our server `your_value`, and human approval does NOT waive that floor.
   `sell_min_value_ratio` = 1.0. Refuse a 30 P sale of a copy worth 35 P.
 - `max_score_loss_per_move` = 0.001. Require nonnegative prospective `bazaar impact` for every sale or swap;
   do not use approval to bypass a negative estimate or disable this limit.
 - No buy-back. `no_buyback_ticks` = 480 blocks buying any card sold or swapped away in the last 480 ticks.
-- `human_approval_above` = 250. A card buy or sell at or above 250 P requires human approval;
+- `human_approval_above` = 60. A card buy or sell at or above 60 P requires human approval;
   approval never waives the sale floor, last-copy protection or other hard rules.
 - `dealer_sell_enabled` = false means hand commands only after `bazaar impact`.
   Run `uv run bazaar impact sell CARD P --to pilar` for the concrete proposed price before a hand sale to Pilar,
@@ -88,7 +88,7 @@ maker already run rows 2 and 5 on their own.
 |---|---|---|---|---|
 | 1 | **Sell a spare card to Pilar, ask until she finalises** (uncommons 14 to 30, rares 50 to 87, epics 140 to 199; start high, step down 1 to 2 P per distinct bid, take her `final: true` only if the sale floor and nonnegative impact hold) | `uv run bazaar dealer sell CARD --dealer pilar --live` (hand only after `bazaar impact`; `dealer_sell_enabled` is false) | `protect_page_sets` (never the last copy), `sell_min_value_ratio` 1.0, `max_score_loss_per_move` 0.001, `no_buyback_ticks` 480 | 3 finals = +3.3 board; SAL-07 at 29 = -4.27 |
 | 2 | **Dealer ladder buys, step 1 from low**: open at the lowest fill seen, never at her opening ask, climb by distinct bids until her final | taker (`agent taker --live`) or `dealer buy CARD --start P --max P --dealer D` | `max_price_*`, `official_value_margin` 0, `max_spend_per_game_hour` 250, `trickster_*` | Abuela commons 6 to 9 = 60 %; Pícaros rare 55 to 58 = 60 % |
-| 3 | **Buy a missing page card from a team or dealer below our value, including fees. Evaluate epics separately: they do not complete pages.** | `bazaar strategy`, `bazaar opportunities`, `sell bid` | `block_buying_held_cards`, `off_page_min_surplus` 10, `max_price_epic` 240, `human_approval_above` 250 | buys below value +5 to +14 raw each; t10 epics +1.9 board |
+| 3 | **Buy a missing page card from a team or dealer below our value, including fees. Evaluate epics separately: they do not complete pages.** | `bazaar strategy`, `bazaar opportunities`, `sell bid` | `block_buying_held_cards`, `off_page_min_surplus` 10, `max_price_epic` 240, `human_approval_above` 60 | buys below value +5 to +14 raw each; t10 epics +1.9 board |
 | 4 | **Sell a duplicate to the team that needs it** (the page-completing buyer pays 2 to 3x our value) | `bazaar buyers`, `bazaar swaps`, `sell list CARD`, `sell swap` | `max_counterparty_share`, `team_swap_*`, `watchdog_max_swaps_per_team` 3, human approval for rares | +33 to +55 raw per rare; `buyer_rank_enabled` is false |
 | 5 | **Ladder by level, three per round**: Abuela, Chato, Pilar, Pícaros; Banco feasibility is UNVERIFIED, see below | `dealer buy`, `agent taker` | level caps and quotas per dealer (`bazaar dealers`) | 16 of 74 threads settled; 3 deals per level = the component |
 | 6 | **Workshop only for a missing rare** | `bazaar taller` | `taller_enabled`, `max_taller_per_game_hour` 2 | luck; never scores by itself |
@@ -131,8 +131,7 @@ maker already run rows 2 and 5 on their own.
 
 Apply every hard rule above. For a page card, retain one uncommitted copy after the sale or swap; check open offers
 as well as holdings. Refuse sales below the fresh server `your_value` even with human approval, and require a
-nonnegative prospective impact at the proposed price. The LAT-10/LAT-09 configuration is not permission to sell
-or swap a page's last copy.
+nonnegative prospective impact at the proposed price. No page-card exception permits selling or swapping a last copy.
 
 ### Market and Market Test
 
@@ -153,27 +152,23 @@ or an `auto` venue beside it (`max_venues` 2, opened by hand). **Never merge or 
   The operational stall alarm is `activity_stall_seconds` 30, not this score metric.
 - A redeploy re-arms duel latches (`duel_days_auto`): freeze main while a session runs.
 
-## 6. Sunday checklist (15 s ticks, Jev timeout 3 s, doors 09:00 to 15:00)
+## 6. Sunday checklist, 15-second ticks
 
-- [ ] 09:00 `uv run bazaar status`, `rules`, `deploy-guard`; `git pull --ff-only` on any laptop that runs hand commands.
-- [ ] Before 09:00 CEST: spare duplicates sorted, Pilar sells queued, `bazaar buyers` fresh, board venue broker ready.
-  The schedule says "Sunday opens" and "Round 3 starts" at h16.65, 09:00, with Chamberí released.
-  The ladder restarts then: **plan up to 3 legal deals per level**; Banco remains UNVERIFIED pending the checks above.
-  Scan `cards_heartbeat` for the 12 new cards and buy page cards below `your_value`. The 150 P grant follows at h16.7, about 09:03.
-- [ ] The h14.65 **hard Market Test** and h15 Market Test precede opening. Whether they fire at opening or are skipped
-  is UNVERIFIED; check the feed and round before assigning results. Edge policy only if it was proven.
-- [ ] Sunday has one game hour per real hour: Market Tests at h17/h19/h21 are about 09:21/11:21/13:21 CEST.
-  Keep the broker up and use `deploy-guard` before any deploy; each scheduled test lasts 16 ticks, 4 minutes.
-- [ ] Round 3 first 40 minutes (160 ticks) is the ramp: ladder deals count by the share of the day played; do the best three early.
-- [ ] **Duels III at h18.65, about 11:00 CEST** (two issues, 12-tick duels, decay 0.10, at most 4 at once): freeze main from 10:45; `duel run --play`;
-  check the active round in `/api/schedule` and current-round score evidence before deprioritizing duels. Saturday's
-  totals do not establish Sunday's saturation, and whether duel points restart is UNVERIFIED. Unless current-round
-  evidence establishes saturation, preserve duels-first accepts and use remaining ticks for dealer accepts;
-  dealer messages may continue within the per-thread and shared request limits.
-- [ ] Throughout: one move per tick that changes a raw leg (ledger section 6): a legal Pilar sale at her final, a Pícaros
-  buy, a page-completing buy, a duplicate sold to the team that needs it. Skip if no candidate passes every hard rule.
-- [ ] Finale warning is h21.45, about 13:48 CEST. All dealer stalls close and Grand Final duels start at h21.65,
-  about 14:00; finish dealer sales before it. "Scores freeze" and doors close at h22.65, 15:00.
-  Read `/api/clock` and `/api/schedule` before acting; full quoted entries are in `docs/briefing.md`, "Windows this weekend".
-  At closing: pause first, then `bazaar flatten --live --threads`.
-- [ ] Append every error and finding to `.ai/memory.md`; end every task with the Honest Implementation Report.
+The pre-opening h16.65 anchor is obsolete. Round 3, "Sunday · Chamberí", started at tick 1446.
+Use the current clock and schedule, with evidence in `docs/briefing.md`.
+
+- [ ] Read `uv run bazaar status`, `rules` and `deploy-guard` before acting. Keep manual command checkouts current.
+- [ ] Plan up to three legal ladder deals per level for the new round. Recheck remaining shared hourly spend
+  and cash commitments before opening a dealer thread. An expensive opening ask can still concede to an
+  affordable final; known negotiated fills above the remaining budget should not consume a thread.
+- [ ] Keep the broker up for the next Market Tests. The read at `now_hours=14.037` schedules tests at h14.65,
+  h15 and h17. Verify new books, requests, responses and actual settlements. Historical replay rows do not prove this.
+- [ ] Preserve duels-first accepts for Duels III at h15.367: price + days, 12-tick duels, decay 0.10,
+  two rounds and at most four concurrent. Current-round raw duel points were zero at tick 1540;
+  Saturday's totals do not establish Sunday saturation. Do not merge during a protected event window.
+- [ ] Re-read holdings after every deal. Only true duplicates may be sold or swapped, above the fresh sell floor.
+  Require explicit human approval at 60 P or more. Do not lower Jev's gate simply to increase activity.
+- [ ] Finish eligible dealer work before the scheduled h18.367 stall closure and final duel wave.
+  Scores freeze is currently h19.367; the schedule explicitly closes doors at 15:00 CEST.
+  At closing, pause first, then use `bazaar flatten --live --threads` if needed.
+- [ ] Append errors and findings to `.ai/memory.md`; report observed outcomes separately from estimates.

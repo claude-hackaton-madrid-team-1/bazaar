@@ -123,10 +123,9 @@ def plan_dealer_buy(
     room: int | None = None,
 ) -> DealerPlan:
     """The strategy's dealer buy, evolved by its learned policy and, with `dealer_final_lift` on, by the patience
-    play. With the lift off and no policy, the move comes back unchanged (today's behaviour). `room`: the primas
-    the guardrails still let us commit (cash above the floor, the hour's spend left); a lifted final never goes
-    above it, and a lifted plan whose dealer fills above both it and our top is skipped (a thread slot and a
-    quota spent on a final we could not take)."""
+    play. `room` is what the guardrails still let us commit after pending offers: cash above the floor and
+    the hour's spend left. Every ladder respects it, with or without the lift. Known negotiated fills all
+    above that room skip the thread; an opening ask alone is not evidence that a final cannot fit."""
     cls = price_class(mv.ref)
     if mv.ladder is None or cls is None:
         return DealerPlan(mv)
@@ -158,6 +157,19 @@ def plan_dealer_buy(
         # walks (the simulator opened Chato 7 times at 80→80 with no price history).
         why = "cash: what we may still commit is below" if lifted else "no price history for a final above our top:"
         return DealerPlan(None, skip=f"{why} {mv.source} {cls} fills ~{mv.price:g}")
+    if room is not None:
+        fills = policy.fills if policy is not None and policy.fills else curve.informative_fills if curve else ()
+        if room < ladder[0] or (fills and room < min(fills)):
+            return DealerPlan(
+                None, skip=f"cash: remaining budget cannot reach {mv.source} {cls} negotiated fills or first bid"
+            )
+        if ladder[1] > room:
+            ladder = (ladder[0], room, ladder[2])
+            reasons.append(f"remaining cash/hourly budget caps bids at {room}")
+        if final_max is not None:
+            final_max = min(final_max, room)
+            if final_max <= ladder[1]:
+                final_max = None
     if final_max is not None and mv.price > ladder[1]:
         # The patience play only where we need the final: the dealer fills above our top (Chato). Where its fills
         # sit inside our top (Abuela), today's ladder closes in 1-2 ticks; the simulator's patience play there won
