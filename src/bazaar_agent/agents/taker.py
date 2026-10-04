@@ -34,7 +34,7 @@ from typing import Any, Literal
 from bazaar_agent import buy_targets, deploy_guard, move_impact
 from bazaar_agent.activity import ActivityWatch
 from bazaar_agent.affinity import AffinityMap
-from bazaar_agent.agents import publication
+from bazaar_agent.agents import card_hunt, publication
 from bazaar_agent.agents.accept_gate import Gate, GateKind, bid_gate, board_gate, dealer_gate, swap_gate
 from bazaar_agent.agents.bluff import Choice, Counterparty, TacticBook, message_id
 from bazaar_agent.agents.dealer import (
@@ -225,6 +225,10 @@ class TakerConfig:
     # schedule, read by the news sentinel): the duels take the team's accept slot and the bench wants the request
     # budget. A thread already open goes on. No price changes.
     schedule_guard: bool = True
+    # Card hunt (`card_hunt.py`, BAZAAR_CARD_HUNT): dealer buys only for empty ladder slots, the probe and the team
+    # desk on their deterministic gates, asks below value taken over our own lower bid, no bonus at stake on a page
+    # that cannot complete. Off here (code default); the CLI turns it on unless BAZAAR_CARD_HUNT=0.
+    card_hunt: bool = False
 
 
 FLAGS_FILE = "flags.jsonl"  # flags sent (or that may have landed), one per message, across restarts
@@ -255,10 +259,13 @@ def ask_candidates(
     ours: set[int],
     own_bids: dict[str, OpenOffer],
     why: dict[int, str] | None = None,
+    over_own_bid: bool = False,
 ) -> list[AskCandidate]:
     """Standing asks for missing page cards whose total cost (fee included) is below their value to us
     by at least `min_buy_surplus`. One per card (the cheapest), scarce cards first, then by score. `why`, when
-    given, gets the reason each ask that is not a candidate was dropped (the audit of offers addressed to us)."""
+    given, gets the reason each ask that is not a candidate was dropped (the audit of offers addressed to us).
+    `over_own_bid` (card hunt): an ask at or above our own bid for the card is still a candidate when it leaves
+    `min_buy_surplus` (our bid is withdrawn after the accept); off, we wait for our cheaper bid to fill."""
     best: dict[str, AskCandidate] = {}
     said = why if why is not None else {}
     for o in offers:
@@ -280,7 +287,7 @@ def ask_candidates(
         total = o.price + fee
         surplus = case.value - total
         bid = own_bids.get(o.ref)
-        if surplus < params.min_buy_surplus or (bid is not None and total >= bid.price):
+        if surplus < params.min_buy_surplus or (bid is not None and total >= bid.price and not over_own_bid):
             said[o.id] = (
                 f"ask {o.price} + fee {fee} = {total} leaves {surplus:.1f} under its worth {case.value:.1f} "
                 f"(min_buy_surplus {params.min_buy_surplus:g})"
@@ -652,7 +659,9 @@ class Taker:
         self._quiet: dict[int, int] = {}  # open dealer thread of ours with no bid standing -> first tick seen so
         # Swap threads with other teams (N17), off by default; it books spend and listings in the shared ledger.
         # AF1: the desk asks teams their multipliers and stores what they say (and what we infer) off the tick.
-        self.team_desk = TeamDesk(team, rules, self.rec, log, live, ledger=ledger, affinity=affinity)
+        self.team_desk = TeamDesk(
+            team, rules, self.rec, log, live, ledger=ledger, affinity=affinity, hunt=self.config.card_hunt
+        )
         self._desk_ranks_tick: int | None = None
         # Jev's answer per unchanged offer state (GUARDRAILS.md `jev_cache_ticks`, 0 = ask every time)
         self.jev_cache: VerdictCache[JevAdvice] = VerdictCache(rules.jev_cache_ticks)
@@ -1058,7 +1067,9 @@ class Taker:
             if o.ref in run.unread:
                 run.why[o.id] = f"our dealer thread for {o.ref} could not be read this tick"
         offers = [o for o in offers if o.ref not in run.unread]
-        return ask_candidates(market, offers, venues, run.params, {o.id for o in run.mine}, own_bids, run.why)
+        return ask_candidates(
+            market, offers, venues, run.params, {o.id for o in run.mine}, own_bids, run.why, self.config.card_hunt
+        )
 
     def _target_asks(self, run: _TickRun, offers: list[BoardOffer], venues: dict[str, Venue]) -> list[AskCandidate]:
         """The cheapest standing ask per buy target whose cost, fee included, is at or under its ceiling (the
@@ -1149,6 +1160,8 @@ class Taker:
                 ctx,
                 asset_id=copy_id,
                 unavailable=frozenset(listed | sold),
+                page_horizon=card_hunt.PAGE_HORIZON if self.config.card_hunt else None,
+                keep_sets=card_hunt.KEEP_SETS,
             )
             if op is not None and op.ours >= run.params.sell_min_surplus:
                 out.append(bid_proposal(op, copy_id, o))
@@ -1422,6 +1435,8 @@ class Taker:
             ],
             key=lambda mv: -boosted_score(mv, run.boost),  # a fresh release opens first (order only, #185)
         )
+        if self.config.card_hunt:
+            moves = self._ladder_only(run, moves)
         busy = {str(t.get("with")) for t in threads} | set(self.convs)
         moves = self._unblocked(run, moves, busy)
         moves = self._persona_shaped(run, moves, busy)
@@ -1453,6 +1468,20 @@ class Taker:
                 busy.add(op.dealer)
                 busy_items.add(op.item)
                 room -= 1
+
+    def _ladder_only(self, run: _TickRun, moves: list[StrategyMove]) -> list[StrategyMove]:
+        """Card hunt: a dealer buy only where it fills an empty ladder slot this round, never a pack (collecting
+        from dealers never moves `neg_points`). Said once per tick when it drops something."""
+        slots = run.slots or LadderSlots(dealer_levels(run.snap.dealers), ladder_deals(run.snap.events, run.snap.us))
+        kept = [mv for mv in moves if mv.side == "buy" and card_hunt.fills_slot(mv.source, slots)]
+        if len(kept) < len(moves):
+            dropped = Counter(str(mv.source) for mv in moves if not any(mv is k for k in kept))
+            self.log(
+                f"tick {run.snap.clock.tick} taker: card hunt: {len(moves) - len(kept)} dealer move(s) dropped "
+                f"(no empty ladder slot, or a pack): {', '.join(f'{d} {n}' for d, n in sorted(dropped.items()))}; "
+                f"ladder {slots.facts()}"
+            )
+        return kept
 
     def _with_probes(
         self, run: _TickRun, book: Playbook, ctx: Context, threads: list[dict[str, Any]], market: Market
@@ -1490,7 +1519,7 @@ class Taker:
             deals = our_dealer_deals(run.snap.events, run.snap.us)
             return probe_state(planned, ctx.cash, floor, room, ctx.spent_last_hour, deals, slots)
 
-        if not gate.allows(LADDER_PROBE, clock.tick, state, state_key=state_key):
+        if not self.config.card_hunt and not gate.allows(LADDER_PROBE, clock.tick, state, state_key=state_key):
             self._empty_slots(run, slots, (), "the ladder probe gate is not a decided yes (Jev or the LLM decider)")
             return book
         probes = plan_probes(market, opens, self.rules, room, skip, value_of, slots)  # values cached for the tick

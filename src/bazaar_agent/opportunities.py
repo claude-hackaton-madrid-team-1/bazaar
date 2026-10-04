@@ -24,7 +24,7 @@ from bazaar_agent.affinity import AffinityMap
 from bazaar_agent.agents.market import BoardOffer, Venue
 from bazaar_agent.guardrails import Action, Context, Guardrails, check
 from bazaar_agent.rivals import Listed, market_price, own_value, tape_reference
-from bazaar_agent.strategy import Market, StrategyParams, bonus_at_stake, buy_case
+from bazaar_agent.strategy import Market, StrategyParams, bonus_at_stake, buy_case, page_cards
 from bazaar_agent.trade_desk import Trade, holdings, items_used, team_copies
 
 Kind = Literal["buy", "sell"]
@@ -53,6 +53,11 @@ class Opportunity:
         return self.verdict == "allowed"
 
 
+def missing_on_page(m: Market, set_code: str) -> int:
+    """Page cards of `set_code` we hold no copy of."""
+    return sum(1 for c in page_cards(m, set_code) if m.held.get(c.ref, 0) == 0)
+
+
 def score_offer(
     o: BoardOffer,
     m: Market,
@@ -66,13 +71,18 @@ def score_offer(
     copies: int = 0,
     asset_id: int | None = None,
     unavailable: frozenset[int] = frozenset(),
+    page_horizon: int | None = None,
+    keep_sets: frozenset[str] = frozenset(),
 ) -> Opportunity | None:
     """One standing offer scored for us, or None when it is not ours to take: an ask for a card we hold, a
     card off our pages or of a set not released (what the taker never buys), a bid for a card we do not
     hold (or hold no FREE copy of), an unknown card or venue. `copies`: how many of the card its maker is known
     to hold. `asset_id`: the copy we would hand over into a bid (default: the one we lose least by).
     `unavailable`: our copies already promised (in our open offers, sold and not settled yet); a sell is priced
-    from the free copies only, so the last free copy carries the page bonus even when its twin is in an ask."""
+    from the free copies only, so the last free copy carries the page bonus even when its twin is in an ask.
+    `page_horizon` (card hunt): a sale from a page that misses more than this many cards puts no page bonus at
+    stake (the page cannot complete before the freeze): it is priced at the copy's `your_value` alone, unless its
+    set is in `keep_sets` (a page we are still completing)."""
     card = m.cards.get(o.ref)
     if card is None or venue is None:  # an unknown venue has an unknown fee: not priced blind
         return None
@@ -103,7 +113,14 @@ def score_offer(
             return None
         value = min(float(a["your_value"]) for a in mine)
         as_held = m if m.held.get(o.ref, 0) == len(free) else replace(m, held={**m.held, o.ref: len(free)})
-        loss = value + bonus_at_stake(as_held, card, params)
+        stake = bonus_at_stake(as_held, card, params)
+        if (
+            page_horizon is not None
+            and card.set_code not in keep_sets
+            and missing_on_page(as_held, card.set_code) > page_horizon
+        ):
+            stake = 0.0
+        loss = value + stake
         ours = o.price - fee - loss
         theirs = None if their_value is None else their_value - o.price
         tag = "overbid" if market is not None and o.price > market else ""

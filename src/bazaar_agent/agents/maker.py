@@ -125,6 +125,10 @@ class MakerConfig:
     # Bids for cards we want go addressed to the teams holding a spare, stepping up to our ceiling, holder after
     # holder (`agents/outreach_bids.py`). BAZAAR_OUTREACH_BIDS=0 turns it off.
     outreach_bids: bool = True
+    # Card hunt (`card_hunt.py`, BAZAAR_CARD_HUNT): with `dealer_sell_enabled` on, a dealer sell thread opens only
+    # where it fills an empty ladder slot, on the desk's deterministic plan instead of Jev's yes. Off here (code
+    # default); the CLI turns it on unless BAZAAR_CARD_HUNT=0. `dealer_sell_enabled` stays the only switch.
+    card_hunt: bool = False
 
 
 HOLDERS_EVERY = 10  # ticks between two walks of the feed for a buy target's holders (a hint for the record)
@@ -344,7 +348,9 @@ class Maker:
             if strategy_jev
             else None
         )
-        self.sell_desk = SellDesk(team, rules, self.rec, live, log, self._sell_hooks, sell_market, gate)
+        self.sell_desk = SellDesk(
+            team, rules, self.rec, live, log, self._sell_hooks, sell_market, gate, hunt=self.config.card_hunt
+        )
 
     def on_tick(self, clock: Clock) -> None:
         window = window_for(clock, self.now(), self.now)
