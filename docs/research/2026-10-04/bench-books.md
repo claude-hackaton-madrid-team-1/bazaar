@@ -44,7 +44,7 @@ prod. Question: is the recorder missing from the deployed maker, or failing?
 - Caller: the maker's broker only. `BrokerAgent.on_tick` (`src/bazaar_agent/agents/broker.py:348`) records
   `book.bench_offers` after its sends; `VenueKeeper._bench_books` (`src/bazaar_agent/agents/venue_keeper.py:333`)
   gives it a Postgres connection (`db.connect(app="bazaar-bench-books", connect_timeout_s=3)`) for the real game.
-  `bench_probe.py` and no other service write it.
+  Neither `bench_probe.py` nor any other service writes it.
 - Merge: `git log -S bench_books origin/main` → one commit, `39bb2932 feat: record the full Market Test bench book
   each tick` (2026-10-04 00:09 +02:00), first reached main through **PR #261** (`2c8b726d`, 00:17:30 +02:00).
 - Prod (read-only):
@@ -129,7 +129,7 @@ No code fix is needed: nothing is broken. This branch (`fix/bench-books-recorder
 ## Risks
 
 - **First connect inside the bench.** The recorder opens its Postgres connection lazily, on the first non-empty
-  bench book. A connect failure there skips the next 5 batches (`RETRY_EVERY = 5`), up to 5 of 16 ticks; the JSONL
+  bench book. A connect failure there loses that tick's batch and skips the next 5 (`RETRY_EVERY = 5`), up to 6 of 16 ticks; the JSONL
   on the maker volume (`<stats_dir>/bench_books.jsonl`) still gets every tick.
 - **A slow DB drops rows, never ticks.** The queue holds 8 ticks; beyond that rows are dropped (logged once as
   `bench books: queue failed (RuntimeError)`). Fine at 15 s ticks.
@@ -167,5 +167,8 @@ here in a follow-up commit.
 
 - Whether bazaar-live has deployed PR #47's `/venue` page (I checked the SQL and that the views exist in prod, not
   the dashboard service).
-- Whether the bench policy is the one intended for today: the current maker logs `bench exact`, while the Saturday
-  night notes expected `BAZAAR_BENCH_POLICY=probe`. Out of this topic; flagged for Marius.
+- Whether today's bench policy is the intended one (out of this topic; also posted to STATUS before the bench).
+  Literal log lines: the maker deployments started 22:19–22:42 UTC Sat logged `venue keeper: broker bench probe
+  (exact + non-crossing probes)` at start; the ones started 22:56, 23:14, 23:36, 23:48 and the current one (23:59)
+  did not (the line is printed only for a non-exact policy, `venue_keeper.py:160–161`), and at 07:20 UTC the current
+  one logged `broker on for v19 (LIVE), bench exact` and `bench match probe ARMED`.
