@@ -111,6 +111,22 @@ def duels(concurrent: int = 3) -> LoopBudget:
     )
 
 
+def sales_outreach() -> LoopBudget:
+    """Representative empty-desk sale: snapshot + one fresh guarded outreach, not a whole-desk ceiling.
+
+    Active swap conversations/refunds and acceptance are additional existing TeamDesk paths.
+    This makes the incremental HTTP cost visible without falsely certifying the full fleet.
+    """
+    return LoopBudget(
+        "sales outreach",
+        team=9,
+        team_at_boundary=4,
+        public=3,
+        source="sales: clock + me/offers/threads; outreach fresh me/offers/threads + open + say; "
+        "public catalog/venues/feed, no scanner or stream",
+    )
+
+
 def dealer_child() -> LoopBudget:
     return LoopBudget(
         "dealer buy",

@@ -332,6 +332,7 @@ def read_snapshot(
     *,
     parallel: bool = False,
     extra: Mapping[str, Callable[[], Any]] | None = None,
+    include_dealers: bool = True,
 ) -> Snapshot:
     """Team reads (`me`, our offers) with the key; everything public without it. With `holdings`, /me
     comes from the shared Postgres snapshot while it is provably current (`holdings.py`), else live.
@@ -345,7 +346,7 @@ def read_snapshot(
     reads: dict[str, Callable[[], Any]] = {
         "me": me_read,
         "offers": team.my_offers,
-        "personas": public.dealers,
+        "personas": public.dealers if include_dealers else lambda: {},
         "catalog": public.catalog,
         "venues": public.venues,
         "events": feed.events,

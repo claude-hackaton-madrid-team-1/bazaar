@@ -1528,3 +1528,12 @@ MR1 moves asks only on observed crossing demand; absent bids, lifetime activity 
 ### [2026-10-04] finding — PM1 third alliance market verified
 
 Omar added v05; coordinator's fresh SDK venue read verified owner t04, open board, fees0/0. Runtime preference is now t04,t15,t18 (v05/v15/v28); the routing code is unchanged. Added actual15s maker actor regression: three eligible copies yield three public asks, one per alliance venue, every ask above its copy value. Final focused suite `178 passed in 2.18s`. Venue name and explicit live MCP operations belong to coordinator, not this code slice.
+
+### [2026-10-04] gotcha
+Manual alliance announcement through SDK broker.announce was refused with `429 wait` at ticks 2085 and 2096: the keeper occupied the 20-tick announcement slot (public notice 95708 at tick 2095). No alliance notice sent manually; route the campaign through the existing scheduled keeper instead of racing it or pausing trading.
+
+### [2026-10-04] finding
+Sales model smoke test: standard `claude-opus-5-5` returned OK; fast request returned `usage_limit`. Omar explicitly requested standard speed afterward; fast integration removed.
+
+### [2026-10-04] build-error
+Sales review reproduced PAUSE during LLM wording followed by send → cached guard context → recheck pause/deadline immediately before publication and release only proven-unsent reservations. Initial outreach protected-page test used a non-server album shape → corrected fixture and regression.
