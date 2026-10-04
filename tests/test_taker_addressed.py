@@ -79,7 +79,9 @@ def test_a_good_ask_addressed_to_us_is_accepted_with_no_extra_request(tmp_path):
     t, _ = taker(tmp_path, team)
     t.on_tick(clock())
     assert team.sent == [("accept", 31, None)]
-    assert team.reads.count("my_offers") == 1  # the snapshot's read, nothing more
+    public = Team()  # the same ask, public on the board: the addressed one costs no request more
+    taker(tmp_path / "public", public, boards={"rastro": [ask(31, "LAV-02", 10)]})[0].on_tick(clock())
+    assert public.sent == [("accept", 31, None)] and team.reads == public.reads
     (row,) = [r for r in rows(tmp_path) if r.get("kind") == "accept_ask" and r.get("chosen")]
     assert row["inputs"]["addressed_to_us"] is True and row["inputs"]["offer_id"] == 31
     assert addressed_rows(tmp_path) == []  # the accept row is its decision
@@ -161,6 +163,17 @@ def test_bids_addressed_to_us_wait_for_all_and_public_bids_stay_behind_accept_bi
     (row,) = [r for r in rows(tmp_path / "all") if r.get("kind") == "accept_bid" and r.get("chosen")]
     assert row["inputs"]["addressed_to_us"] is True
     assert t.ledger.accept_items(TICK) == ["sell:5"] and t.ledger.spent_since(0) == 0
+
+
+def test_with_accept_bids_on_an_addressed_bid_is_sold_into_like_any_board_bid(tmp_path):
+    # main's default since #272: `--accept-bids` on. A bid addressed to us then takes the sell path as a public bid
+    # does (same guards), in the default `asks` mode too.
+    team = Team(offers=[to_us(bid(77, "LAT-09", 70), maker="t02")])
+    t, _ = taker(tmp_path, team, accept_bids=True)
+    t.on_tick(clock())
+    assert team.sent == [("accept", 77, [5])]
+    (row,) = [r for r in rows(tmp_path) if r.get("kind") == "accept_bid" and r.get("chosen")]
+    assert row["inputs"]["addressed_to_us"] is True and addressed_rows(tmp_path) == []
 
 
 def test_a_thin_addressed_bid_is_rejected_with_its_reason(tmp_path):

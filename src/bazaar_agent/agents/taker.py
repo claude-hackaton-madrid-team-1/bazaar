@@ -2562,6 +2562,8 @@ class Taker:
                 {"offer": op.offer_id, "assets": [p.asset_id]},
                 lambda: self.team.accept(op.offer_id, assets=[p.asset_id]),
             )
+            if body is None and 400 <= (self.rec.last_status or 0) < 500 and self.rec.last_status != 408:
+                publication.release(self.ledger, reservation, clock.tick, clock.t_hours)
             if body is None and cost_nothing(self.rec.last_code, self.rec.last_status):
                 # A 4xx cost nothing (the bid expired or was taken mid-tick: `offer_not_open`): the team's accept is
                 # free again, as after a refused buy (`_accept_one`), for the next candidate or a duel.
@@ -2575,8 +2577,6 @@ class Taker:
                     self._accepts_stop = f"accept refused {code}; its slot could not be given back ({e})"
                 return False
             if body is None and not self.rec.maybe_landed:
-                if 400 <= self.rec.last_status < 500 and self.rec.last_status != 408:
-                    publication.release(self.ledger, reservation, clock.tick, clock.t_hours)
                 return True  # the reserved slot stays spent, as for a buy
         # This tick's later checks: the copy is promised and the maker's share counts the sale.
         run.offers.append(
