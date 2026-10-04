@@ -701,6 +701,34 @@ create table if not exists injection_attempts (id bigserial primary key, world t
 -- bazaar-live's panel reads the newest rows of each severity (show.injection_attempts): 46 ms → 5 ms at 100k rows.
 create index if not exists injection_attempts_recent on injection_attempts (severity, seen_at desc, id desc);
 
+
+-- Operator confirmations are immutable terms with an atomic, single-use dispatch claim.
+create table if not exists operator_proposals (
+    id text primary key,
+    world text not null,
+    created_tick bigint not null,
+    expires_tick bigint not null,
+    state text not null,
+    payload jsonb not null,
+    result jsonb,
+    created_at timestamptz not null default now()
+);
+
+-- Bench snapshots and lifecycle events, including sessions with zero quoted cards.
+create table if not exists bench_evidence (
+    world text not null, venue text not null, tick bigint not null,
+    kind text not null, fingerprint text not null, payload jsonb not null,
+    primary key (world, venue, tick, kind, fingerprint)
+);
+
+
+-- Durable publication promises and per-thread operator message slots share the ledger.
+alter table ledger drop constraint if exists ledger_kind_check;
+alter table ledger add constraint ledger_kind_check check (
+    kind in ('spend','accept','listing','publication_pending','publication_confirm','publication_release')
+    or starts_with(kind, 'operator_say:')
+);
+
 -- The easter-egg hunt's tried set (agents/egg_hunt.py; also created by the taker at its first write): a phrase is
 -- never said twice to one dealer, across restarts. The phrase text is private: logs carry phrase_id only.
 create table if not exists egg_hunt_tried (

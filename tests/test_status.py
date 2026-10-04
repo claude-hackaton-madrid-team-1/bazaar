@@ -272,7 +272,9 @@ def test_the_decisions_table_still_gets_the_full_private_row(served, tmp_path):
     hub, _ = served
     log = taker_rows(tmp_path, hub)
     rows = [json.loads(line) for line in (log.dir / "decisions.jsonl").read_text().splitlines()]
-    assert [r["inputs"] for r in rows] == [OPEN_INPUTS, BID_INPUTS]
+    assert [r["inputs"] for r in rows] == [
+        {**inputs, "evidence_context": log.context} for inputs in (OPEN_INPUTS, BID_INPUTS)
+    ]
     assert rows[0]["reason"] == OPEN_REASON and rows[1]["jev"]["value"] == 0.934
 
 

@@ -33,6 +33,7 @@ from typing import Any
 from bazaar_agent import buy_targets, deploy_guard, move_impact
 from bazaar_agent.activity import ActivityWatch
 from bazaar_agent.affinity import AffinityMap
+from bazaar_agent.agents import publication
 from bazaar_agent.agents.accept_gate import Gate, GateKind, bid_gate, board_gate, dealer_gate, swap_gate
 from bazaar_agent.agents.bluff import Choice, Counterparty, TacticBook, message_id
 from bazaar_agent.agents.dealer import (
@@ -116,7 +117,7 @@ from bazaar_agent.agents.taller import (
     rank_triples,
     unnamed_settling,
 )
-from bazaar_agent.agents.team_desk import NO_JEV_BUDGET, TEAM_SPEND, DeskView, SwapAccept, TeamDesk
+from bazaar_agent.agents.team_desk import NO_JEV_BUDGET, TEAM_SPEND, DeskView, SwapAccept, TeamDesk, cash_offer
 from bazaar_agent.agents.trickster import forgiving_plan, is_forgiving
 from bazaar_agent.agents.trickster import note as forgiving_note
 from bazaar_agent.agents.words import WordsRequest
@@ -144,7 +145,7 @@ from bazaar_agent.learn.live import LiveLearner
 from bazaar_agent.learn.outcomes import OutcomeLearner
 from bazaar_agent.learn.recall import Lessons
 from bazaar_agent.learn.threads import ThreadStore
-from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable
+from bazaar_agent.ledger_pg import LedgerUnavailable, ensure_writable, trade_lock
 from bazaar_agent.news import NewsSentinel
 from bazaar_agent.official_values import OfficialValues, unread_only
 from bazaar_agent.opportunities import Opportunity, score_offer
@@ -185,8 +186,8 @@ class TakerConfig:
     orphan_after_ticks: int = 3
     restart_lookback_ticks: int = 40  # on start: our threads with a move this recent are checked for a deal
     # Also accept standing BIDS for cards we hold when the bid, less the fee, beats what selling our least
-    # valuable copy costs us by `sell_min_surplus` (`opportunities.score_offer`). Off: today's taker.
-    accept_bids: bool = False
+    # valuable copy costs us by `sell_min_surplus` (`opportunities.score_offer`). All sell/accept guards apply.
+    accept_bids: bool = True
     # No new dealer ladder whose bids would still run when a Market Test or a duel session starts (the official
     # schedule, read by the news sentinel): the duels take the team's accept slot and the bench wants the request
     # budget. A thread already open goes on. No price changes.
@@ -268,6 +269,7 @@ class AcceptProposal:
     swap: SwapAccept | None = None  # a team's offer in a swap thread (N17, `team_desk`)
     thread: dict[str, Any] | None = field(default=None, compare=False)  # the dealer thread read this tick
     bid: BoardOffer | None = field(default=None, compare=False)  # sells: the board bid `sell` was priced on
+    cash_thread: int | None = None  # a card-for-cash offer read from a private team thread
 
     @property
     def surplus(self) -> float:
@@ -614,7 +616,7 @@ class Taker:
 
     def on_tick(self, clock: Clock) -> None:
         window = window_for(clock, self.now(), self.now)
-        self.rec.decisions.begin_tick(clock.tick)
+        self.rec.decisions.begin_tick(clock.tick, clock.round)
         try:
             snap = read_snapshot(
                 self.team,
@@ -784,9 +786,15 @@ class Taker:
         self._refresh_desk_ranks(run.snap.clock.tick)
         view = run.team_view = self._team_view(run, threads)
         proposals += [swap_proposal(a) for a in self._team_desk("proposals", lambda: self.team_desk.proposals(view))]
+        for tid, offer in self.team_desk.cash_offers(view):
+            candidates = [board_proposal(c) for c in self._board(run, market, [offer], board_venues)]
+            if self.config.accept_bids:
+                candidates += self._bids(run, market, [offer], board_venues)
+            proposals += [replace(p, cash_thread=tid, inputs={**p.inputs, "thread_id": tid}) for p in candidates]
         self._accept(run, proposals)
         self._converse(run, desk)
         taken = {p.swap.thread_id for p in run.accepted if p.swap is not None}
+        taken |= {p.cash_thread for p in run.accepted if p.cash_thread is not None}
 
         def converse() -> list[SwapAccept]:
             self.team_desk.converse(run.team_view or view, taken)  # the Workshop may have promised copies
@@ -1108,8 +1116,11 @@ class Taker:
 
     def _workshop(self, run: _TickRun, threads: list[dict[str, Any]]) -> None:
         """The Workshop step never costs the taker its tick (a malformed catalog or menu skips it)."""
+        if not self.rules.taller_enabled or self.news is None or self.news.levels.active(TALLER_LEVEL) is not True:
+            return
         try:
-            self._taller(run, threads)
+            with trade_lock(self.ledger):
+                self._taller(run, threads)
         except (BazaarError, LedgerUnavailable):
             raise  # a refused read or a ledger outage stops the taker's writes this tick (on_tick reports it)
         except Exception as e:  # noqa: BLE001 — fail closed for the Workshop only
@@ -1155,6 +1166,7 @@ class Taker:
         except BazaarError as e:
             self.log(f"tick {clock.tick} taker: Workshop skipped, a read failed ({e.code})")
             return
+        offers = publication.with_pending(self.ledger, me, offers, us, clock.tick, clock.t_hours)
         offers = [*offers, *(o for o in run.offers if o.get("id") == -4)]  # a craft of this tick not settled yet
         busy = self._taller_busy(run, me, offers, threads)
         triples = rank_triples(me, run.snap.catalog, run.snap.dealers, busy)
@@ -1199,8 +1211,10 @@ class Taker:
         if status != "approved" or not self.live:
             return
         book_craft(self.ledger, clock.tick, clock.t_hours, t.refs)  # before the send: the shared hourly cap
+        reservation = publication.reserve(self.ledger, clock.tick, clock.t_hours, us, {"assets": list(t.asset_ids)}, {})
         body = self.rec.send(did, clock.tick, "taller", {"assets": t.asset_ids}, lambda: craft(self.team, t.asset_ids))
-        if body is None and not self.rec.maybe_landed:  # refused (locked, not_owner, ...): it cost nothing
+        if body is None and 400 <= self.rec.last_status < 500 and self.rec.last_status != 408:
+            publication.release(self.ledger, reservation, clock.tick, clock.t_hours)
             self._taller_rest_until = clock.tick + 10
             return
         gone = {"id": -4, "status": "open", "maker": us, "give": {"assets": [{"id": s.asset_id, "ref": s.ref}
@@ -1208,7 +1222,10 @@ class Taker:
         run.offers.append(gone)  # later checks this tick (the team desk's posts too) never give a crafted copy
         if run.team_view is not None and run.team_view.offers is not run.offers:
             run.team_view = replace(run.team_view, offers=[*run.team_view.offers, gone])
-        self.log(f"tick {clock.tick} taker: Workshop crafted {', '.join(t.refs)} into {pulled(body)}")
+        if body is None:
+            self.log(f"tick {clock.tick} taker: Workshop outcome unknown; copies remain reserved")
+        else:
+            self.log(f"tick {clock.tick} taker: Workshop crafted {', '.join(t.refs)} into {pulled(body)}")
 
     def _taller_busy(
         self, run: _TickRun, me: dict[str, Any], offers: list[dict[str, Any]], threads: list[dict[str, Any]]
@@ -1802,7 +1819,7 @@ class Taker:
     def _gate(self, run: _TickRun, p: AcceptProposal) -> Gate | None:
         """The accept gate on the exact offer this accept binds (None: `inspect_accepts` is off). A payload the
         gate cannot read refuses the accept (fail closed) and never costs the desk its tick."""
-        if not self.rules.inspect_accepts:
+        if not self.rules.inspect_accepts and p.cash_thread is None:
             return None
         try:
             return self._gate_unchecked(run, p)
@@ -1811,6 +1828,20 @@ class Taker:
             return Gate(kind, p.offer_id, "block", (f"unreadable offer ({type(e).__name__})",))
 
     def _gate_unchecked(self, run: _TickRun, p: AcceptProposal) -> Gate:
+        if p.cash_thread is not None:
+            priced = p.bid if p.bid is not None else (p.candidate.offer if p.candidate else None)
+            payload = self.team.thread(p.cash_thread)
+            if priced is None or payload.get("status") != "open" or payload.get("venue") != priced.venue:
+                return Gate("team", p.offer_id, "block", ("cash thread is no longer open on its priced venue",))
+            raw = next(
+                (o for o in payload.get("standing_offers") or [] if isinstance(o, dict) and o.get("id") == p.offer_id),
+                None,
+            )
+            fresh = cash_offer(raw, run.snap.us, priced.maker, priced.venue, run.snap.clock.tick)
+            if fresh != priced:
+                return Gate("team", p.offer_id, "block", ("cash offer changed or is no longer available to us",))
+            if any(isinstance(o, dict) and o.get("maker") == run.snap.us for o in payload.get("standing_offers") or []):
+                return Gate("team", p.offer_id, "block", ("our own offer may still settle in this thread",))
         if p.swap is not None:
             a = p.swap
             payload = self.team_desk.thread_payload(a.thread_id)
@@ -2180,6 +2211,24 @@ class Taker:
         )
 
     def _accept_one(self, run: _TickRun, p: AcceptProposal, limit: int) -> bool:
+        if not self.live:
+            return self._accept_one_locked(run, p, limit)
+        with trade_lock(self.ledger):
+            clock = run.snap.clock
+            me = self.team.me()
+            offers = publication.with_pending(
+                self.ledger, me, offers_in(self.team.my_offers()), run.snap.us, clock.tick, clock.t_hours
+            )
+            run.snap = replace(run.snap, me=me, offers={"offers": offers})
+            run.offers = offers
+            if run.team_view is not None:
+                run.team_view = replace(run.team_view, me=me, offers=offers)
+            if p.asset_id is not None and p.asset_id in open_commitments(offers, run.snap.us).listed:
+                self._skip(run, p, "copy already promised by another writer", "rejected")
+                return False
+            return self._accept_one_locked(run, p, limit)
+
+    def _accept_one_locked(self, run: _TickRun, p: AcceptProposal, limit: int) -> bool:
         if p.sell is not None:
             return self._accept_bid(run, p, p.sell, limit)
         if p.swap is not None:
@@ -2188,7 +2237,7 @@ class Taker:
             self._skip(run, p, f"{p.source} forgives: {p.price} is its list price or not low in its fills", "rejected")
             return False
         clock = run.snap.clock
-        skip_thread = p.desk.conv.thread_id if p.desk else None
+        skip_thread = p.desk.conv.thread_id if p.desk else p.cash_thread
         skip_offer = p.candidate.replaces_bid.id if p.candidate and p.candidate.replaces_bid else None
         ctx = self._ctx(run, skip_thread=skip_thread, skip_offer=skip_offer)
         maker = p.candidate.offer.maker if p.candidate is not None else None  # a dealer is not a counterparty
@@ -2235,6 +2284,8 @@ class Taker:
             self._skip(run, p, self._accepts_stop, "rejected", jev, gate)
             return False
         kind = "accept_ask" if p.source == "board" else "dealer_accept"
+        if p.cash_thread is not None:
+            kind = "team_cash_accept"
         where = f"on {p.inputs.get('venue')}" if p.source == "board" else f"from {p.source}"
         did = self.rec.decide(
             clock.tick,
@@ -2247,13 +2298,33 @@ class Taker:
             status="approved",
             jev=jev,
             thread_id=skip_thread,
-            move={"accept": p.offer_id, "price": p.price},
+            move=(
+                {"kind": "team_cash_accept"} if p.cash_thread is not None else {"accept": p.offer_id, "price": p.price}
+            ),
         )
         if not self.live:
             run.spent += p.price if p.desk is None else 0  # a live board accept is booked in the ledger
             self._commit(run, p.price, p.ref, skip_thread, maker, ask)
             return True
+        reservation = None
+        if p.candidate is not None and p.candidate.offer.asset_id is not None:
+            reservation = publication.reserve(
+                self.ledger,
+                clock.tick,
+                clock.t_hours,
+                run.snap.us,
+                {"cash": p.price},
+                {"assets": [p.candidate.offer.asset_id]},
+                to=p.candidate.offer.maker,
+            )
         body = self.rec.send(did, clock.tick, "accept", {"offer": p.offer_id}, lambda: self.team.accept(p.offer_id))
+        if (
+            reservation is not None
+            and body is None
+            and 400 <= self.rec.last_status < 500
+            and self.rec.last_status != 408
+        ):
+            publication.release(self.ledger, reservation, clock.tick, clock.t_hours)
         if body is None and cost_nothing(self.rec.last_code, self.rec.last_status):
             # Refused with a 4xx, so it cost nothing (RULES.md): the team's accept is free again, for the next
             # candidate or a duel. A rate limit, a refusal every candidate would meet (cash, cool-off, quota)
@@ -2330,7 +2401,7 @@ class Taker:
             return False
         did = self.rec.decide(
             clock.tick,
-            "accept_bid",
+            "team_cash_accept" if p.cash_thread is not None else "accept_bid",
             f"sell {p.ref} #{p.asset_id} into {op.maker}'s bid {op.offer_id} on {op.venue} for {op.price} "
             f"(fee {op.fee}, surplus {op.ours:.1f}) · guardrails {verdict}",
             inputs=_with_gate(p.inputs, gate),
@@ -2338,9 +2409,23 @@ class Taker:
             guardrail=str(verdict),
             chosen=True,
             status="approved",
-            move={"accept": op.offer_id, "assets": [p.asset_id]},
+            thread_id=p.cash_thread,
+            move=(
+                {"kind": "team_cash_accept"}
+                if p.cash_thread is not None
+                else {"accept": op.offer_id, "assets": [p.asset_id]}
+            ),
         )
         if self.live:
+            reservation = publication.reserve(
+                self.ledger,
+                clock.tick,
+                clock.t_hours,
+                run.snap.us,
+                {"assets": [p.asset_id]},
+                {"cash": op.price},
+                to=op.maker,
+            )
             body = self.rec.send(
                 did,
                 clock.tick,
@@ -2349,6 +2434,8 @@ class Taker:
                 lambda: self.team.accept(op.offer_id, assets=[p.asset_id]),
             )
             if body is None and not self.rec.maybe_landed:
+                if 400 <= self.rec.last_status < 500 and self.rec.last_status != 408:
+                    publication.release(self.ledger, reservation, clock.tick, clock.t_hours)
                 return True  # the reserved slot stays spent, as for a buy
         # This tick's later checks: the copy is promised and the maker's share counts the sale.
         run.offers.append(
@@ -2437,6 +2524,16 @@ class Taker:
             if not self.team_desk.clear_before_accept(view, a, did):  # our own offer there goes first
                 return True  # a cancel was refused: their offer is not taken (the slot stays spent)
             pick = a.pick
+            reservation = publication.reserve(
+                self.ledger,
+                clock.tick,
+                clock.t_hours,
+                run.snap.us,
+                {"assets": [a.trade.asset_id], "cash": pay},
+                {"cards": [a.trade.refs[1]]},
+                a.thread_id,
+                to=a.offer.team,
+            )
             body = self.rec.send(
                 did,
                 clock.tick,
@@ -2445,6 +2542,8 @@ class Taker:
                 lambda: self.team.accept(a.offer.offer_id, assets=pick),
             )
             if body is None and not self.rec.maybe_landed:
+                if 400 <= self.rec.last_status < 500 and self.rec.last_status != 408:
+                    publication.release(self.ledger, reservation, clock.tick, clock.t_hours)
                 return True  # the reserved slot stays spent, as for a buy
             if pay > 0:  # accepted, or maybe landed: booked (fail safe for the caps)
                 self.ledger.record("spend", clock.tick, clock.t_hours, pay, f"{TEAM_SPEND}{a.trade.refs[1]}")

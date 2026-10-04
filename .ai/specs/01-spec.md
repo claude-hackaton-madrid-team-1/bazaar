@@ -86,6 +86,24 @@ The lifecycle of one move (the user's 5.1 → 6):
 6. **Feedback.** Settlements come back through the collector; the learner updates trader profiles
    and learnings; `jev-outcome` records whether each verdict was right.
 
+## 3.1 CI
+
+Depot is the sole PR test CI (`.depot/workflows/tests.yml`). Its four checks are unit tests,
+integration tests against isolated Postgres 17 + pgvector, Black formatting and Ruff linting.
+The pytest `integration` marker splits the two suites. Local typechecking, coverage and generated
+document checks stay in the Definition of Done. Simulator smoke is an optional manual diagnostic.
+The current CI scope is specified in [CI1](CI1-spec.md).
+
+## 3.2 Repository documentation
+
+The README is the setup and navigation entry point; detailed operating instructions live in
+`docs/operations.md` and the linked reference guides. Its generated block contains compact
+project metadata from `pyproject.toml`, not backlog, memory or activity history.
+`docs/architecture.html` describes the implemented system, generated from
+`docs/architecture.status.json` and `scripts/templates/architecture.html.tmpl`.
+Source links substantiate its component inventory; configured services are not an uptime claim.
+Documentation cleanup and verification are tracked in [DOC1](DOC1-spec.md).
+
 ## 4. Components
 
 Python 3.12 package managed with `uv`, at `src/bazaar_agent/`. The vendored kit stays untouched

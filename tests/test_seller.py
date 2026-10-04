@@ -8,6 +8,7 @@ from bazaar_agent.agents import seller
 from bazaar_agent.cli import app
 from bazaar_agent.guardrails import Action, Context, Guardrails, Ledger, check
 from tests.test_render import text
+from tests.test_runtime_tools import cli_env  # noqa: F401
 
 ME = {
     "id": "t01",
@@ -174,3 +175,84 @@ def test_a_copy_without_your_value_is_never_listed():
         seller.sell_listing(me, "LAT-09", 90)
     both = {"assets": [*me["assets"], {"id": 15, "kind": "card", "ref": "LAT-09", "your_value": 35.0}]}
     assert seller.sell_listing(both, "LAT-09", 90).asset_id == 15  # a priced copy is preferred
+
+
+@pytest.mark.parametrize("mode", ["list", "bid", "swap"])
+@pytest.mark.parametrize("status", [400, 408, 503])
+def test_cli_unknown_publication_keeps_cash_or_asset_reserved(
+    cli_env,  # noqa: F811
+    tmp_path,
+    monkeypatch,
+    mode,
+    status,  # noqa: F811
+):  # noqa: F811
+    from bazaar_agent import cli
+    from bazaar_agent.agents import publication
+    from bazaar_agent.sdk import BazaarError
+    from tests.runtime_fakes import with_spare
+
+    with_spare(cli_env)
+    ledger = Ledger(tmp_path / "ledger.jsonl")
+    before = []
+
+    def refused(*args, **kwargs):
+        before.extend(ledger.publication_rows())
+        raise BazaarError("upstream_timeout", "no confirmed outcome", status)
+
+    monkeypatch.setattr(cli_env, "list_offer", refused)
+    args = {
+        "list": ["list", "LAT-03", "--price", "5"],
+        "bid": ["bid", "LAV-08", "--price", "10"],
+        "swap": ["swap", "LAT-03", "--for", "LAV-08", "--to", "t05", "--give-cash", "5"],
+    }[mode]
+    result = CliRunner().invoke(cli.app, ["sell", *args, "--live"])
+    assert result.exit_code == 1, result.output
+    assert any(kind == "publication_pending" for kind, _ in before), result.output
+    pending = publication.with_pending(ledger, cli_env.me(), [], "t01", 100, 1.5)
+    assert bool(pending) is (status != 400)
+    if pending:
+        assert pending[0]["give"].get("cash") == (10 if mode == "bid" else 5 if mode == "swap" else None)
+        if mode != "bid":
+            assert pending[0]["give"]["assets"][0]["id"] == 41
+
+
+def test_cli_never_reuses_an_unknown_asset_promise(cli_env, tmp_path):  # noqa: F811
+    from bazaar_agent import cli
+    from bazaar_agent.agents import publication
+    from tests.runtime_fakes import with_spare
+
+    with_spare(cli_env)
+    publication.reserve(Ledger(tmp_path / "ledger.jsonl"), 100, 1.5, "t01", {"assets": [41]}, {"cash": 5})
+    result = CliRunner().invoke(cli.app, ["sell", "list", "41", "--price", "5", "--live"])
+    assert result.exit_code == 1 and "already in one of our open offers" in result.output.replace("\n", " ")
+    assert cli_env.sent == []
+
+
+def test_cli_rechecks_selected_copy_value_inside_publication_lock(cli_env, monkeypatch):  # noqa: F811
+    from bazaar_agent import cli
+    from tests.runtime_fakes import with_spare
+
+    with_spare(cli_env)
+    stale = cli_env.me()
+    monkeypatch.setattr(cli, "_team_me", lambda: (cli_env, stale))
+    next(a for a in cli_env._me["assets"] if a["id"] == 41)["your_value"] = 118.6
+    result = CliRunner().invoke(cli.app, ["sell", "list", "41", "--price", "29", "--live"])
+    assert result.exit_code == 1 and "118.6" in result.output
+    assert cli_env.sent == []
+
+
+def test_cli_own_venue_and_busy_mutex_refuse_before_publication(cli_env, tmp_path, monkeypatch):  # noqa: F811
+    from bazaar_agent import cli
+    from bazaar_agent.ledger_pg import trade_lock
+    from tests.agent_fakes import RASTRO
+    from tests.runtime_fakes import Public, with_spare
+
+    with_spare(cli_env)
+    command = ["sell", "list", "41", "--price", "5", "--live"]
+    with trade_lock(Ledger(tmp_path / "ledger.jsonl")):
+        busy = CliRunner().invoke(cli.app, command)
+    assert busy.exit_code == 1 and "publication lock" in busy.output
+    monkeypatch.setattr(cli, "public_client", lambda settings: Public(venues=({**RASTRO, "owner": "t01"},)))
+    own = CliRunner().invoke(cli.app, command)
+    assert own.exit_code == 1 and "owned by us" in own.output
+    assert cli_env.sent == []

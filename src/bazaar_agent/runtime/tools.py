@@ -26,6 +26,7 @@ from bazaar_agent import telemetry as tm
 from bazaar_agent.config import ConfigError, Settings
 from bazaar_agent.runtime import actions as ac
 from bazaar_agent.runtime import backend as be
+from bazaar_agent.runtime import operator as op
 from bazaar_agent.runtime.backend import Backend
 
 SERVER = "bazaar"
@@ -42,6 +43,12 @@ KEY_SHAPES = re.compile(
 )
 REDACTED = "[redacted]"
 MIN_SECRET_CHARS = 12
+PUBLIC_OBSERVABILITY_LINKS = frozenset(
+    {
+        "https://railway.com/project/05a9de65-622b-4754-a0f0-be4d7f54ec51",
+        "https://phoenix-production-6aa3.up.railway.app",
+    }
+)
 
 
 class NoArgs(ac.Args):
@@ -134,6 +141,10 @@ def _write(tool: str) -> Callable[[Backend, Any], dict[str, Any]]:
 
 DRY = " DRY RUN unless BAZAAR_LIVE=1 on the server; the guardrails are checked first either way."
 TOOLS: tuple[ToolSpec, ...] = (
+    ToolSpec("operator_snapshot", "Current score, tick, holdings and team quotas.", NoArgs, False,
+             lambda b, a: op.snapshot(b)),
+    ToolSpec("operator_propose", "Preview exact typed terms for a human confirmation. Never sends a game write.",
+             op.Propose, False, lambda b, a: op.propose(b, a)),
     ToolSpec("status", "Our cash, level, score, album pages with missing cards (value to us), duplicates and "
              "cards with your_value (the current Postgres snapshot of GET /api/me, else /me itself; `holdings` "
              "says which, with its tick and age). Read it before any buy or sell.", NoArgs, False,
@@ -220,7 +231,9 @@ def safe_text(text: str, secrets: Iterable[str] = ()) -> str:
     Targeted on purpose: the Jev masking reads game numbers such as `10.0` as private hostnames."""
     for secret in secrets:
         text = text.replace(secret, REDACTED)
-    return KEY_SHAPES.sub(REDACTED, URL.sub("[url]", text))
+    return KEY_SHAPES.sub(
+        REDACTED, URL.sub(lambda match: match[0] if match[0] in PUBLIC_OBSERVABILITY_LINKS else "[url]", text)
+    )
 
 
 def safe_value(value: Any, secrets: Iterable[str] = ()) -> Any:

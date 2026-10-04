@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -977,6 +978,7 @@ def dealer_sell(
     from rich.markup import escape
 
     from bazaar_agent import guardrails as gr
+    from bazaar_agent.agents import publication
     from bazaar_agent.agents.dealer import Hold
     from bazaar_agent.agents.dealer_sell import (
         AskPlan,
@@ -992,7 +994,7 @@ def dealer_sell(
     from bazaar_agent.agents.runtime import Recorder
     from bazaar_agent.agents.seller import committed_context, offers_in, open_commitments
     from bazaar_agent.decisions import DecisionLog, Status
-    from bazaar_agent.ledger_pg import LedgerUnavailable
+    from bazaar_agent.ledger_pg import LedgerUnavailable, trade_lock
     from bazaar_agent.official_values import unread_only
 
     rules = _rules().rules
@@ -1019,13 +1021,29 @@ def dealer_sell(
         )
         return
     ledger = _ledger("dealer-sell", live=True)
+    reservation: str | None = None
+    unavailable_asset = False
 
     def committed(c: Clock, thread_id: int | None = None) -> gr.Context:
         """/me + the shared ledger + every open offer of ours except this thread's own ask."""
+        nonlocal your_value, unavailable_asset
         me_now = client.me()
-        offers = [o for o in offers_in(client.my_offers()) if thread_id is None or o.get("thread") != thread_id]
+        current = next((a for a in me_now.get("assets", []) if a.get("id") == asset_id), None)
+        if current is not None:
+            your_value = float(current["your_value"])
+        offers = publication.with_pending(
+            ledger, me_now, offers_in(client.my_offers()), str(me_now.get("id") or ""), c.tick, c.t_hours
+        )
+        offers = [
+            o
+            for o in offers
+            if (thread_id is None or o.get("thread") != thread_id)
+            and (reservation is None or o.get("token") != reservation)
+        ]
         base = gr.context_from(me_now, c.tick, c.t_hours, ledger, rules)
-        return committed_context(base, open_commitments(offers, str(me_now.get("id") or "")))
+        commitments = open_commitments(offers, str(me_now.get("id") or ""))
+        unavailable_asset = current is None or asset_id in commitments.listed
+        return committed_context(base, commitments)
 
     def action(kind: gr.ActionKind, price: int | None) -> gr.Action:
         # a dealer sell thread; `asset`: the score impact rule prices this copy
@@ -1034,13 +1052,26 @@ def dealer_sell(
     def checked(kind: gr.ActionKind, price: int | None, ctx: gr.Context) -> gr.Verdict:
         """guardrails.check plus the last uncommitted copy of a page card (any page, not only new ones)."""
         verdict = gr.check(action(kind, price), ctx, rules)
+        if unavailable_asset:
+            return gr.Verdict(False, (*verdict.violations, "selected copy is missing or already promised"))
         if only_copy(ref, rarity, (ctx.sellable or {}).get(ref, 0)):
             why = f"{ref}: the last copy not on an open offer of ours (sellable {(ctx.sellable or {}).get(ref, 0)})"
             return gr.Verdict(False, (*verdict.violations, why))
         return verdict
 
     try:
-        pre = checked("sell", floor, committed(Clock.model_validate(client.clock())))
+        with trade_lock(ledger):
+            current_clock = Clock.model_validate(client.clock())
+            pre = checked("sell", floor, committed(current_clock))
+            if pre.allowed:
+                reservation = publication.reserve(
+                    ledger,
+                    current_clock.tick,
+                    current_clock.t_hours,
+                    str(me.get("id") or ""),
+                    {"assets": [asset_id]},
+                    {"cash": floor},
+                )
     except LedgerUnavailable as e:
         _fail(f"refusing to trade: {e}; no write without the shared ledger (fail closed)")
     if not pre.allowed:
@@ -1050,10 +1081,11 @@ def dealer_sell(
     def guard(move: Any, thread_id: int) -> str | None:
         """A ledger failure holds the move (nothing sent, decided again next tick), never a walk."""
         try:
-            ctx = replace(committed(Clock.model_validate(client.clock()), thread_id), accepts_this_tick=0)
+            with trade_lock(ledger):
+                ctx = replace(committed(Clock.model_validate(client.clock()), thread_id), accepts_this_tick=0)
+                verdict = checked("accept_sell" if move.kind == "accept" else "sell", move.price, ctx)
         except LedgerUnavailable as e:
             raise Hold(f"{e}; no write without the shared ledger (fail closed)") from None
-        verdict = checked("accept_sell" if move.kind == "accept" else "sell", move.price, ctx)
         if not verdict.allowed and unread_only(verdict.violations):  # approvals unreadable: hold, never walk
             raise Hold("; ".join(verdict.violations))
         return None if verdict.allowed else "; ".join(verdict.violations)
@@ -1102,6 +1134,12 @@ def dealer_sell(
         )
     finally:
         decisions.close()
+    if reservation is not None and (
+        out.status in {"closed", "walked", "timeout"} or (out.status == "held" and out.thread is None)
+    ):
+        with trade_lock(ledger):
+            c = Clock.model_validate(client.clock())
+            publication.release(ledger, reservation, c.tick, c.t_hours)
     colour = "green" if out.status == "deal" else "red"
     console.print(
         f"[{colour}]{out.status}[/{colour}] thread {out.thread} price {out.price} asks {list(out.bids)} "
@@ -1997,7 +2035,7 @@ def budget(
 
     from bazaar_agent import rate_budget as rb
 
-    plan = rb.saturday_plan(dealer_children=dealer_children) if ceiling else rb.steady_plan()
+    plan = rb.saturday_plan(dealer_children=dealer_children, tick_seconds=tick_seconds) if ceiling else rb.steady_plan()
     if not ceiling and dealer_children:
         plan.append(rb.dealer_child().times(dealer_children))
     plan = rb.with_copies(plan, {"taker": laptops, "maker": laptops})
@@ -2506,7 +2544,9 @@ def _reserve_accept(ledger: Any, rules: Any, item: str, move: Any, c: Clock) -> 
     return True
 
 
-def _sell_context(client: Any, me: dict[str, Any], live: bool) -> tuple[Any, Any, Any, Any]:
+def _sell_context(
+    client: Any, me: dict[str, Any], live: bool, *, ledger: Any = None, clock: Clock | None = None
+) -> tuple[Any, Any, Any, Any]:
     """(rules, ledger, guardrail context, commitments) for a write from the CLI: /me, the shared ledger, our
     open offers and, with `max_counterparty_share` on, our team-to-team volume from the whole feed history
     (`_history`: the shared DB first, as the maker and the taker read it; the live window too when `live`)."""
@@ -2514,13 +2554,15 @@ def _sell_context(client: Any, me: dict[str, Any], live: bool) -> tuple[Any, Any
     from bazaar_agent.ledger_pg import LedgerUnavailable
 
     rules = _rules().rules
-    ledger = _ledger("sell", live=live)
-    now = Clock.model_validate(client.clock())
+    ledger = ledger if ledger is not None else _ledger("sell", live=live)
+    now = clock or Clock.model_validate(client.clock())
     try:
         ctx = gr.context_from(me, now.tick, now.t_hours, ledger, rules, OfficialValues.of(client))
     except LedgerUnavailable as e:
         _fail(f"refusing to trade: {e}; no write without the shared ledger (fail closed)")
-    offers = _my_offers(client)
+    from bazaar_agent.agents import publication
+
+    offers = publication.with_pending(ledger, me, _my_offers(client), str(me.get("id")), now.tick, now.t_hours)
     commitments = _open_commitments(client, me, offers)
     if rules.max_counterparty_share < 1:  # the share counts what we settled with each team and still offer
         from bazaar_agent.agents.seller import trade_book
@@ -2535,21 +2577,90 @@ def _sell_context(client: Any, me: dict[str, Any], live: bool) -> tuple[Any, Any
     return rules, ledger, ctx, commitments
 
 
-def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expires: int) -> None:
-    from bazaar_agent.agents.seller import post
-    from bazaar_agent.ledger_pg import LedgerUnavailable
+def _fresh_sale(listing: Any, me: dict[str, Any]) -> Any:
+    """Keep the selected asset/terms, refresh the values the guards depend on."""
+    from bazaar_agent.agents.seller import OfferError, Swap, sell_listing
+    from bazaar_agent.strategy import build_market, buy_case
 
-    rules, ledger, ctx, commitments = _sell_context(client, me, live)
+    if listing.asset_id is None:
+        return listing
+    target = sell_listing(me, str(listing.asset_id), 1, listing.venue, to=listing.to)
+    if not isinstance(listing, Swap):
+        return replace(listing, rarity=target.rarity, your_value=target.your_value)
+    market = build_market(me, public_client(load_settings()).catalog(), [], [])
+    card = market.cards.get(listing.want_ref)
+    if card is None:
+        raise OfferError(f"unknown card {listing.want_ref!r}")
+    assert target.your_value is not None  # sell_listing fails closed without a value
+    return replace(
+        listing,
+        give_rarity=target.rarity,
+        your_value=target.your_value,
+        want_rarity=card.rarity,
+        worth=buy_case(market, card, _strategy().params).value,
+    )
+
+
+def _post_offer(client: Any, me: dict[str, Any], listing: Any, live: bool, expires: int) -> None:
+    from bazaar_agent.agents import publication
+    from bazaar_agent.agents.market import venues_from
+    from bazaar_agent.agents.seller import OfferError, Swap, post, post_swap
+    from bazaar_agent.ledger_pg import LedgerUnavailable, trade_lock
+
+    ledger = _ledger("sell", live=live)
+    reservation = None
     try:
-        out = post(
-            client, listing, ctx, rules, live=live, expires_in_ticks=expires, ledger=ledger, commitments=commitments
-        )
+        with trade_lock(ledger) if live else contextlib.nullcontext():
+            clock = Clock.model_validate(client.clock())
+            deadline = time.monotonic() + action_budget_s(clock)
+            if live:
+                me = client.me()
+                listing = _fresh_sale(listing, me)
+                venue = next(
+                    (
+                        v
+                        for v in venues_from(public_client(load_settings()).venues(), clock.tick)
+                        if v.id == listing.venue
+                    ),
+                    None,
+                )
+                if venue is None or venue.status != "open" or venue.owner == str(me.get("id")):
+                    _fail("venue is unavailable or owned by us")
+            rules, _, ctx, commitments = _sell_context(client, me, live, ledger=ledger, clock=clock)
+            send = post_swap if isinstance(listing, Swap) else post
+            out = send(client, listing, ctx, rules, live=False, commitments=commitments)
+            if live and out.verdict.allowed:
+                if not clock.is_live or time.monotonic() >= deadline:
+                    _fail("tick action budget ended or game is not live; nothing sent")
+                if ledger.count_in_tick("listing", clock.tick) >= clock.limits.offers_per_team_per_tick:
+                    _fail("listing limit reached this tick; nothing sent")
+                reservation = publication.reserve(
+                    ledger, ctx.tick, ctx.t_hours, str(me.get("id")), listing.give, listing.want, to=listing.to
+                )
+                out = send(
+                    client,
+                    listing,
+                    ctx,
+                    rules,
+                    live=True,
+                    expires_in_ticks=expires,
+                    ledger=ledger,
+                    commitments=commitments,
+                )
+                if not out.sent:
+                    publication.release(ledger, reservation, ctx.tick, ctx.t_hours)
+                elif isinstance((out.offer or {}).get("id"), int):
+                    publication.confirm(ledger, reservation, (out.offer or {})["id"], ctx.tick, ctx.t_hours)
+            price = listing.give_cash or listing.want_cash if isinstance(listing, Swap) else listing.price
+            _hands_off(ledger, ctx, out, price)
     except BazaarError as e:
-        _fail(f"offer refused: {e.code} ({e.message[:80]})")
-        return
-    except LedgerUnavailable as e:  # only after the offer went out: the bid's spend is not counted
-        _fail(f"offer posted, but the shared ledger did not record its spend ({e})")
-    _hands_off(ledger, ctx, out, listing.price)
+        if reservation is not None and 400 <= e.status < 500 and e.status != 408:
+            publication.release(ledger, reservation, ctx.tick, ctx.t_hours)
+        _fail(f"offer refused or outcome unknown: {e.code} ({e.message[:80]})")
+    except OfferError as e:
+        _fail(str(e))
+    except LedgerUnavailable as e:
+        _fail(f"shared ledger unavailable; any dispatched offer remains reserved ({e})")
     _report_post(out)
 
 
@@ -2643,8 +2754,7 @@ def sell_swap(
     The copy leaves at what we receive (the card's worth to us plus their cash), never below its
     your_value; cash we add is checked as a bid (its price cap, the cash floor, the spend cap); both count
     toward the team's share when the counterparty cap is on."""
-    from bazaar_agent.agents.seller import OfferError, Swap, find_copy, post_swap
-    from bazaar_agent.ledger_pg import LedgerUnavailable
+    from bazaar_agent.agents.seller import OfferError, Swap, find_copy
     from bazaar_agent.strategy import build_market, buy_case
 
     client, me = _team_me()
@@ -2677,18 +2787,7 @@ def sell_swap(
         want_cash,
         max(give_cash + want_cash, round(book.get(str(asset.get("ref")), 0.0) + book.get(want, 0.0))),
     )
-    rules, ledger, ctx, commitments = _sell_context(client, me, live)
-    try:
-        out = post_swap(
-            client, swap, ctx, rules, live=live, expires_in_ticks=expires, ledger=ledger, commitments=commitments
-        )
-    except BazaarError as e:
-        _fail(f"offer refused: {e.code} ({e.message[:80]})")
-        return
-    except LedgerUnavailable as e:  # only after the offer went out: the swap's cash leg is not counted
-        _fail(f"offer posted, but the shared ledger did not record its spend ({e})")
-    _hands_off(ledger, ctx, out, swap.give_cash or swap.want_cash)
-    _report_post(out)
+    _post_offer(client, me, swap, live, expires)
 
 
 @sell_app.command("offers")
@@ -2925,7 +3024,7 @@ def _run_agent(
         ledger = open_ledger(settings.data_dir, source=name, live=is_live, database_url=url, game_url=game, log=log)
     except LedgerNotShared as e:
         _fail(f"{name}: refusing to trade: {e}")
-    decisions = DecisionLog(settings.data_dir, connect, log)
+    decisions = DecisionLog(settings.data_dir, connect, log, game_url=settings.bazaar_url)
     scans = ScanStore(settings.data_dir / "supply", connect, log)
     feed = MarketFeed(public.feed_window, FeedStore(settings.feed_dir), connect, log, scans, archive=learn)
     extra: dict[str, Any] = {}
@@ -3121,7 +3220,7 @@ def agent_taker(
     threads: int = typer.Option(3, min=0, max=6, help="Dealer conversations at once (one per dealer)"),
     jev: bool = typer.Option(True, help="Ask Jev offer_is_worth_accepting (advisory) and spend_pack_slot_now"),
     accept_bids: bool = typer.Option(
-        False, "--accept-bids", help="Also sell into standing bids that beat our value by sell_min_surplus"
+        True, "--accept-bids/--no-accept-bids", help="Sell into guarded standing bids above our value"
     ),
     port: int | None = typer.Option(None, help=PORT_HELP),
     host: str | None = typer.Option(None, help=HOST_HELP),
@@ -3441,7 +3540,7 @@ def broker_run(
         mode = "LIVE requested, but allow_venue_open = false: every match is refused (build only)"
     console.print(f"[bold]broker[/bold] · {mode}")
     public = public_client(settings)
-    decisions = DecisionLog(settings.data_dir, _db_connect("bazaar-broker"), log)
+    decisions = DecisionLog(settings.data_dir, _db_connect("bazaar-broker"), log, game_url=settings.bazaar_url)
     agent = BrokerAgent(
         broker,
         team,

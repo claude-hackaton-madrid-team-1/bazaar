@@ -593,6 +593,7 @@ class LedgerStore(Protocol):
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool: ...
     def release_accept(self, tick: int, item: str) -> None: ...
     def hands_off_ids(self) -> set[int]: ...
+    def publication_rows(self) -> list[tuple[str, str]]: ...
 
 
 RELEASE = "release"  # a JSONL row that gives back one reserved accept of its tick (`Ledger.release_accept`)
@@ -603,7 +604,15 @@ class Ledger:
 
     def __init__(self, path: Path) -> None:
         self.path = path
+        self.world = "unknown"
         self.where = f"file {path.name}"
+
+    def publication_rows(self) -> list[tuple[str, str]]:
+        return [
+            (str(e["kind"]), str(e.get("item", "")))
+            for e in self.entries()
+            if str(e.get("kind", "")).startswith("publication_")
+        ]
 
     def entries(self) -> list[dict[str, Any]]:
         if not self.path.is_file():
@@ -740,6 +749,8 @@ ActionKind = Literal[
     "flag",
     "cancel",
     "close_thread",
+    "team_open",
+    "team_say",
     "open_pack",
     "venue_open",
     "venue_close",
@@ -1118,6 +1129,8 @@ def _approval_violations(action: Action, ctx: Context, rules: Guardrails) -> lis
     if side is None or rules.human_approval_above <= 0 or action.price is None or ctx.ranking:
         return []
     price = action.price + (action.gives_value if side == "buy" else 0.0)
+    if action.kind == "accept_sell":
+        price = max(price, action.volume or 0)  # approval sees the quoted price; the floor sees net proceeds
     if price < rules.human_approval_above:
         return []
     from bazaar_agent import approvals

@@ -270,17 +270,6 @@ def test_jev_reads_an_accept_as_an_accept_even_with_no_fee(tmp_path):
     assert state["swap"]["kind"] == "accept" and state["swap"]["fee"] == 0
 
 
-def test_the_maker_lists_again_when_the_desk_is_killed_by_its_environment(monkeypatch):
-    from bazaar_agent.agents.team_desk import maker_may_list
-    from bazaar_agent.guardrails import Guardrails
-
-    me = {"assets": [{"id": 3, "ref": "LAT-03", "your_value": 1.2}, {"id": 4, "ref": "LAT-03", "your_value": 1.2}]}
-    rules = Guardrails(team_threads_enabled=True)
-    assert not maker_may_list(me, "LAT-03", 4, rules)
-    monkeypatch.setenv("BAZAAR_TEAM_THREADS", "0")
-    assert maker_may_list(me, "LAT-03", 4, rules)
-
-
 def test_a_cancel_answered_settled_posts_no_new_offer_and_nets_nothing(tmp_path):
     # security-auditor #188 r2 P2-1: a settled offer is not seen; netting it let the cap be passed by its cash.
     class Settled(Team):

@@ -305,6 +305,9 @@ class BrokerAgent:
         self.probe_claim: Callable[[str, int], bool] | None = None
         self.probed = False  # this process already spent the probe: never asks twice
         self.probe_retry_tick = 0  # a claim not taken (held elsewhere, or unreadable) is asked again from this tick
+        self._bench_present = False
+        self._bench_events: set[int] = set()
+        self._bench_settlements: set[str] = set()
 
     def on_tick(
         self,
@@ -336,8 +339,14 @@ class BrokerAgent:
         if bench := sorted((q for q in found.quotes if q.bench), key=lambda q: str(q.id)):
             # the whole bench book, every tick: arrivals, quote drift and departures are only seen here
             self.log(f"tick {clock.tick} broker: bench book " + " ".join(f"{q.id}:{q.side[0]}{q.price}" for q in bench))
-        if self.config.bench_policy == "probe":
-            self._log_bench_settlements(clock.tick, book, found.quotes)
+        self._log_bench_settlements(clock.tick, book, found.quotes)
+        if book.bench_offers or self._bench_present:
+            self.books.evidence(
+                clock.tick,
+                "book",
+                {"offers": book.bench_offers, "fee_bps": book.fee_bps, "fee_per_card": book.fee_per_card},
+            )
+        self._bench_present = bool(book.bench_offers)
         plan = self._plan(quotes, Fee(book.fee_bps, book.fee_per_card), clock.tick, book)
         stats = TickStats(clock.tick, self.live, skipped=quotes.skipped, ours=quotes.ours)
         run = _Run(clock, window, stats)
@@ -406,6 +415,7 @@ class BrokerAgent:
             "extra": (err.extra if err is not None else None),
             "body": answer,
         }
+        self.books.evidence(tick, "probe_response", {"request": request, **outcome})
         self.rec.decide(
             tick,
             "bench_probe",
@@ -451,6 +461,10 @@ class BrokerAgent:
         self.bench_runs |= {q.item.removeprefix("bench:") + "-" for q in found if q.bench}
         rows = (book.model_extra or {}).get("settlements") or []
         named = [json.dumps(r, sort_keys=True) for r in rows if any(run in json.dumps(r) for run in self.bench_runs)]
+        for row in named:
+            if row not in self._bench_settlements:
+                self.books.evidence(tick, "settlement", {"settlement": json.loads(row)})
+                self._bench_settlements.add(row)
         if named:
             self.log(f"tick {tick} broker: bench settlements {len(named)}: " + " | ".join(named)[:600])
 
@@ -483,13 +497,18 @@ class BrokerAgent:
         return exact + probes
 
     def _observe_feed(self, tick: int, events: list[Event] | None = None) -> None:
-        if events is not None:
-            self.sessions.observe_events(events, tick)
-            return
-        if self.events is None:
-            return
         try:
-            self.sessions.observe_events(self.events(), tick)
+            events = events if events is not None else (self.events() if self.events else [])
+            self.sessions.observe_events(events, tick)
+            for event in events:
+                eid = event.get("id")
+                if (
+                    event.get("type") in ("bench.started", "bench.finished")
+                    and isinstance(eid, int)
+                    and eid not in self._bench_events
+                ):
+                    self.books.evidence(tick, "session", dict(event))
+                    self._bench_events.add(eid)
         except Exception as e:  # the feed is a hint for session bounds; the book still drives matching
             self.log(f"tick {tick} broker: feed unavailable ({type(e).__name__}); sessions from the book")
 
@@ -567,7 +586,23 @@ class BrokerAgent:
             if run.sends and self.config.pace_s > 0:
                 self.sleep(self.config.pace_s)
             run.sends += 1
-            refused = self.rec.send(did, tick, "broker_match", request, lambda: self.broker.match(**request)) is None
+            answer = self.rec.send(did, tick, "broker_match", request, lambda: self.broker.match(**request))
+            refused = answer is None
+            if m.sell.bench:
+                state = "refused" if 400 <= self.rec.last_status < 500 and self.rec.last_status != 408 else "unknown"
+                if not refused:
+                    state = "queued_or_acknowledged"
+                self.books.evidence(
+                    tick,
+                    "match_response",
+                    {
+                        "request": request,
+                        "response": answer,
+                        "http_status": self.rec.last_status,
+                        "code": self.rec.last_code,
+                        "state": state,
+                    },
+                )
             if not refused and not probe:  # a probe's traders come back if it is dropped at settlement
                 self.done |= {str(m.sell.id), str(m.buy.id)}
             if probe and refused:

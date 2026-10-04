@@ -5,9 +5,14 @@ card a craft brings credited in its score impact."""
 from collections import Counter
 from dataclasses import replace
 
+import pytest
+
 from bazaar_agent import move_impact as mi
+from bazaar_agent.agents import publication
 from bazaar_agent.agents import taller as tl
 from bazaar_agent.guardrails import Action, Guardrails, Ledger, check
+from bazaar_agent.ledger_pg import LedgerUnavailable, trade_lock
+from bazaar_agent.sdk import BazaarError
 from tests.test_taller import CATALOG, LEVELS, SPARES, News, Team, crafts, ctx, me, run_taker
 
 TICK = 100
@@ -63,6 +68,78 @@ def test_the_craft_is_planned_on_offers_read_again_right_before_it(tmp_path):
     team, _ = run_taker(tmp_path, news=News(LEVELS), team=MakerAsksMidTick(me=me(*FREE)), taller_enabled=True)
     assert crafts(team) == []  # SAL-01 #4 is in an ask now: #5 is our last free copy, no triple left
     assert team.reads.count("me") >= 2 and team.reads.count("my_offers") >= 2
+
+
+def test_an_unconfirmed_publication_keeps_its_cards_out_of_the_workshop(tmp_path):
+    def promised(t, ledger):
+        with trade_lock(ledger):
+            publication.reserve(ledger, 99, 1.4, "t01", {"assets": [2]}, {"cash": 9})
+
+    team, _ = run_taker(tmp_path, news=News(LEVELS), taller_enabled=True, before=promised)
+    assert crafts(team) == []
+    assert [kind for kind, _ in Ledger(tmp_path / "ledger.jsonl").publication_rows()] == ["publication_pending"]
+
+
+@pytest.mark.parametrize("status", [409, 408, 500, 0, None])
+def test_craft_reservations_release_only_for_definitive_refusals(tmp_path, status):
+    class Refused(Team):
+        def call(self, method, path, body=None):
+            super().call(method, path, body)
+            if status is None:
+                raise TimeoutError("response lost")
+            raise BazaarError("craft_failed", "request failed", status)
+
+    team, _ = run_taker(
+        tmp_path,
+        news=News(LEVELS),
+        team=Refused(me=me(*FREE)),
+        taller_enabled=True,
+        max_taller_per_game_hour=5,
+        ticks=3,
+    )
+    assert len(crafts(team)) == 1
+    ledger = Ledger(tmp_path / "ledger.jsonl")
+    with trade_lock(ledger):
+        pending = publication.with_pending(ledger, team._me, [], "t01", 103, 1.5)
+    if status == 409:
+        assert pending == []
+        assert [kind for kind, _ in ledger.publication_rows()] == ["publication_pending", "publication_release"]
+    else:
+        assert len(pending) == 1
+        assert {a["id"] for a in pending[0]["give"]["assets"]} == {2, 3, 5}
+        assert [kind for kind, _ in ledger.publication_rows()] == ["publication_pending"]
+
+
+def test_workshop_holds_the_publication_lock_from_fresh_read_through_send(tmp_path):
+    locked = []
+    ledger = Ledger(tmp_path / "ledger.jsonl")
+
+    def check_lock(stage):
+        try:
+            with trade_lock(ledger):
+                locked.append((stage, False))
+        except LedgerUnavailable:
+            locked.append((stage, True))
+
+    class Checked(Team):
+        def my_offers(self):
+            result = super().my_offers()
+            if self.reads.count("my_offers") > 1:
+                check_lock("fresh offers")
+            return result
+
+        def call(self, method, path, body=None):
+            check_lock("send")
+            assert [kind for kind, _ in ledger.publication_rows()] == ["publication_pending"]
+            return super().call(method, path, body)
+
+    team, _ = run_taker(tmp_path, news=News(LEVELS), team=Checked(me=me(*FREE)), taller_enabled=True)
+    assert len(crafts(team)) == 1 and locked == [("fresh offers", True), ("send", True)]
+    # A successful response alone does not free the inputs. Observed consumption does.
+    with trade_lock(ledger):
+        assert len(publication.with_pending(ledger, team._me, [], "t01", 101, 1.5)) == 1
+        team._me["assets"] = [a for a in team._me["assets"] if a["id"] not in {2, 3, 5}]
+        assert publication.with_pending(ledger, team._me, [], "t01", 102, 1.5) == []
 
 
 # ---------------------------------------------------------------- one hourly cap for every process

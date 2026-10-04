@@ -30,14 +30,15 @@ from typing import Any
 from bazaar_agent import affinity as af
 from bazaar_agent import impact_board
 from bazaar_agent import team_affinity as ta
-from bazaar_agent.agents.market import Venue
+from bazaar_agent.agents import publication
+from bazaar_agent.agents.market import BoardOffer, Venue, parse_offer
 from bazaar_agent.agents.runtime import JevAdvice, Recorder, no_jev
-from bazaar_agent.agents.seller import Swap, open_commitments
+from bazaar_agent.agents.seller import Swap, committed_context, offers_in, open_commitments
 from bazaar_agent.agents.words import WordsFn, WordsRequest
 from bazaar_agent.decisions import Status
-from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, Verdict, check, refund_row
+from bazaar_agent.guardrails import Action, Context, Guardrails, LedgerStore, Verdict, check, context_from, refund_row
 from bazaar_agent.intel import TEAM_ID, set_of
-from bazaar_agent.ledger_pg import LedgerUnavailable
+from bazaar_agent.ledger_pg import LedgerUnavailable, trade_lock
 from bazaar_agent.sdk import BazaarError
 from bazaar_agent.strategy import Market, StrategyParams, build_market, page_bonus_of, page_cards
 from bazaar_agent.swaps import (
@@ -91,12 +92,49 @@ def team_words(req: WordsRequest) -> str:
     return "Me acerco a ti: esta es una oferta justa para los dos. Si te encaja, acéptala."
 
 
+def cash_offer(raw: Any, us: str, other: str, venue: str, tick: int) -> BoardOffer | None:
+    """One fully specified, open card-for-cash offer addressed to us in a team thread."""
+    if (
+        other == us
+        or not TEAM_ID.fullmatch(other)
+        or not isinstance(raw, dict)
+        or raw.get("maker") != other
+        or raw.get("to") not in (None, us)
+    ):
+        return None
+    if raw.get("status") != "open" or raw.get("venue", venue) != venue:
+        return None
+    if type(raw.get("id")) is not int:
+        return None
+    expiry = raw.get("expires_tick")
+    if expiry is not None and (type(expiry) is not int or expiry <= tick):
+        return None
+    for side in ("give", "want"):
+        value = raw.get(side)
+        if not isinstance(value, dict):
+            return None
+        cash = value.get("cash", 0)
+        if type(cash) is not int or not 0 <= cash <= 10_000_000:
+            return None
+    try:
+        offer = parse_offer(raw, venue)
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return None
+    if offer is None or (offer.side == "ask" and type(offer.asset_id) is not int):
+        return None
+    return offer
+
+
 def free_copies(
     me: dict[str, Any], offers: Sequence[dict[str, Any]], us: str, ref: str, thread: int | None = None
 ) -> list[int]:
     """Our copies of `ref` that no open offer of ours promises (the offer in `thread` itself excepted: that is
     the swap being priced), cheapest to us first."""
-    others = [o for o in offers if thread is None or o.get("thread") != thread or o.get("status") == "accepted"]
+    others = [
+        o
+        for o in offers
+        if thread is None or o.get("thread") != thread or o.get("status") == "accepted" or o.get("publication_pending")
+    ]
     listed = open_commitments(others, us).listed  # this thread's OPEN offer is the one being replaced
     free = [
         a
@@ -106,35 +144,12 @@ def free_copies(
     return [int(a["id"]) for a in sorted(free, key=lambda a: (float(a.get("your_value") or 0), int(a["id"])))]
 
 
-def desk_copy(me: dict[str, Any], ref: str) -> int | None:
-    """The one copy of `ref` the team desk may give, when we hold two or more: the cheapest to us (then the
-    lowest id), from /me alone, so the maker (another process) knows it without a shared read and never lists
-    it (`maker_may_list`). None: a single copy (never given) or none."""
-    copies = [a for a in me.get("assets") or [] if a.get("ref") == ref and isinstance(a.get("id"), int)]
-    if len(copies) < 2:
-        return None
-    return int(min(copies, key=lambda a: (float(a.get("your_value") or 0), int(a["id"])))["id"])
-
-
-def maker_may_list(me: dict[str, Any], ref: str, asset_id: int | None, rules: Guardrails) -> bool:
-    """While team threads are on, the maker leaves the desk its swap copy: with exactly two copies it lists
-    neither (one listed would leave the desk a single free copy, which it never gives), with three or more it
-    never lists the desk's copy (`desk_copy`). Off, or a single copy: the maker lists as before."""
-    if disabled(rules) is not None:  # GUARDRAILS off, or BAZAAR_TEAM_THREADS=0 on this service too
-        return True
-    held = sum(1 for a in me.get("assets") or [] if a.get("ref") == ref)
-    return held != 2 and (asset_id is None or asset_id != desk_copy(me, ref))
-
-
 def spare_copy(
     me: dict[str, Any], offers: Sequence[dict[str, Any]], us: str, ref: str, thread: int | None = None
 ) -> int | None:
-    """The copy we would give: only a DUPLICATE (two free copies at least), so a swap never takes the last copy
-    a page of ours needs (N17 spec, criterion 1), never a copy already in one of our asks, and only the desk's
-    own copy (`desk_copy`), which the maker never lists: the two never promise one asset in the same tick."""
+    """Give the cheapest uncommitted duplicate, retaining one free page copy."""
     free = free_copies(me, offers, us, ref, thread)
-    mine = desk_copy(me, ref)
-    return mine if len(free) >= 2 and mine in free else None
+    return free[0] if len(free) >= 2 else None
 
 
 def spare(me: dict[str, Any], offers: Sequence[dict[str, Any]], us: str, ref: str) -> bool:
@@ -338,6 +353,29 @@ class TeamDesk:
 
     # ------------------------------------------------------------ (1) what they offer us
 
+    def cash_offers(self, v: DeskView) -> list[tuple[int, BoardOffer]]:
+        """Reuse this tick's thread reads; the taker ranks cash offers with its guarded board accepts."""
+        if disabled(self.rules, self.env):
+            return []
+        out = []
+        venues = {x.id: x for x in v.venues if x.status == "open" and x.owner != v.us}
+        for t in self._team_threads(v):
+            tid, other = int(t["id"]), self._other(t, v.us)
+            payload = self._payloads.get(tid)
+            if not payload or tid in self.talks or self.rules.never_trades_with(other):
+                continue
+            venue = str(payload.get("venue") or t.get("venue") or "")
+            if venue not in venues or payload.get("status", "open") != "open":
+                continue
+            standing = payload.get("standing_offers") or []
+            # Our own outstanding swap may settle too: do not take a second commitment in that thread.
+            if any(isinstance(o, dict) and o.get("maker") == v.us for o in standing):
+                continue
+            for raw in standing:
+                if offer := cash_offer(raw, v.us, other, venue, v.tick):
+                    out.append((tid, offer))
+        return out
+
     def proposals(self, v: DeskView) -> list[SwapAccept]:
         self._payloads, self._closed, self._tried = {}, set(), set()
         if disabled(self.rules, self.env):  # no accepts; still read our team threads (at most six, and none when
@@ -528,9 +566,8 @@ class TeamDesk:
             named = offer.give_assets[0] if len(offer.give_assets) == 1 and not offer.give_refs else None
             free = free_copies(v.me, v.offers, v.us, planned.refs[0], tid)
             copy = spare_copy(v.me, v.offers, v.us, planned.refs[0], tid) if named is None else named
-            reserved = copy is not None and not maker_may_list(v.me, planned.refs[0], copy, self.rules)
-            if len(free) < 2 or copy not in free or not reserved:
-                continue  # only a free duplicate the maker never lists leaves: never the last copy or one in an ask
+            if len(free) < 2 or copy not in free:
+                continue  # only an uncommitted duplicate; the executor rechecks under the shared lock
             trade = replace(planned, asset_id=copy)
             if not is_the_planned_swap(offer, trade):
                 continue
@@ -583,7 +620,7 @@ class TeamDesk:
             if tid in taken or tid not in self._payloads or self.rules.never_trades_with(talk.team):
                 continue  # a blocked team's thread gets no move: `_inbound` closes it
             self._next_move(v, talk)
-        self._inbound(v)
+        self._inbound(v, taken)
         self._open(v)
 
     def _settle(self, v: DeskView) -> None:
@@ -654,14 +691,14 @@ class TeamDesk:
         if v.tick - since >= self.rules.team_thread_idle_ticks:
             self._walk(v, talk, f"no deal {self.rules.team_thread_idle_ticks} ticks after our last proposal")
 
-    def _inbound(self, v: DeskView) -> None:
+    def _inbound(self, v: DeskView, taken: set[int] | None = None) -> None:
         """A team thread we do not run: one another team opened, or one of ours after a restart. On the house
         venue we answer it with a planned swap with that team (our standing offer and our proposals so far
         are picked up from the thread); otherwise it is closed `team_thread_idle_ticks` after we first saw it,
         whatever is written in it (another team cannot park on our conversation slots)."""
         for t in self._team_threads(v):
             tid = int(t["id"])
-            if tid in self._closed or tid not in self._payloads:
+            if tid in self._closed or tid not in self._payloads or tid in (taken or set()):
                 continue
             team, payload = self._other(t, v.us), self._payloads[tid]
             if self.rules.never_trades_with(team):  # `team_desk_never_trade`: closed at once (our offers there are
@@ -993,6 +1030,27 @@ class TeamDesk:
         )
 
     def _propose(self, v: DeskView, talk: Talk, advice: JevAdvice | None = None) -> None:
+        if not self.live or self.ledger is None:
+            return self._propose_locked(v, talk, advice)
+        with trade_lock(self.ledger):
+            me = self.team.me()
+            offers = publication.with_pending(
+                self.ledger, me, offers_in(self.team.my_offers()), v.us, v.tick, v.t_hours
+            )
+            old_ctx = v.ctx(None)
+            base = context_from(me, v.tick, v.t_hours, self.ledger, self.rules, old_ctx.values)
+
+            def fresh_ctx(thread: int | None) -> Context:
+                kept = [o for o in offers if o.get("thread") != thread or o.get("publication_pending")]
+                return committed_context(replace(base, trades=old_ctx.trades), open_commitments(kept, v.us))
+
+            fresh = replace(v, me=me, offers=offers, ctx=fresh_ctx)
+            if talk.trade.asset_id not in free_copies(me, offers, v.us, talk.trade.refs[0], talk.thread_id):
+                self.log(f"tick {v.tick} team desk: copy already promised; holding thread {talk.thread_id}")
+                return
+            return self._propose_locked(fresh, talk, advice)
+
+    def _propose_locked(self, v: DeskView, talk: Talk, advice: JevAdvice | None = None) -> None:
         cash = cash_at(talk.trade, talk.step, self.ladder)
         standing = self._seen_open(v, talk)  # this proposal replaces it (netted only when SEEN open)
         verdict = self._guard(v, talk.trade, cash, talk.thread_id, max(0, -talk.cash) if standing else 0)
@@ -1067,6 +1125,13 @@ class TeamDesk:
                 text = f"{text} {question}"
             if (venue := self.rules.team_words_venue_invite.strip()) and venue.lower() != "none":
                 text = f"{text} {venue_invite(venue)}"  # words only, as the question
+            reservation = (
+                publication.reserve(
+                    self.ledger, v.tick, v.t_hours, v.us, terms["give"], terms["want"], talk.thread_id, to=talk.team
+                )
+                if self.ledger is not None
+                else None
+            )
             body = self.rec.send(
                 did,
                 v.tick,
@@ -1076,7 +1141,14 @@ class TeamDesk:
             )
             if body is None and not self.rec.maybe_landed:  # refused: nothing stands, the spend comes back, but
                 # only on a definitive refusal (4xx): a 5xx may have landed, and then the spend stays booked
-                if cash < 0 and 400 <= self.rec.last_status < 500:
+                if (
+                    reservation is not None
+                    and self.ledger is not None
+                    and 400 <= self.rec.last_status < 500
+                    and self.rec.last_status != 408
+                ):
+                    publication.release(self.ledger, reservation, v.tick, v.t_hours)
+                if cash < 0 and 400 <= self.rec.last_status < 500 and self.rec.last_status != 408:
                     refused = {"give": {"cash": -cash}, "want": {"cards": [talk.trade.refs[1]]}, "created_tick": v.tick}
                     self._synthetic -= 1  # a refused send has no offer id: a fresh synthetic one, refunded once
                     self._refund(v, {"id": self._synthetic, **refused})
@@ -1085,6 +1157,8 @@ class TeamDesk:
                 self.asked[talk.team] = self._day(v)
             offer_id = (body or {}).get("offer")  # lost on the way back: the next tick reads it from the thread
             talk.offer_id = offer_id if isinstance(offer_id, int) else None
+            if reservation is not None and self.ledger is not None and type(offer_id) is int:
+                publication.confirm(self.ledger, reservation, offer_id, v.tick, v.t_hours)
         talk.step += 1
         talk.sent_tick, talk.cash = v.tick, cash  # before the ledger write: an outage there loses nothing
         if self.live and self.ledger is not None:
