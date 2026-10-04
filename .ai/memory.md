@@ -1568,3 +1568,6 @@ PACK1 review found two deployed-policy tests still asserting restock enabled →
 
 ### [2026-10-04] finding
 PACK1 user correction: Sales should hunt teams across allied markets, not activate dealer sales. Final policy disables restock only; dealer_sell_enabled remains false and no dealer reclaim is introduced.
+
+### [2026-10-04] finding
+PACK2: max_packs_per_game_hour=0 is a hard stop, unlike max_spend zero-off: guardrails.check unconditionally rejects pack buying when packs_last_hour >= quota. Reused existing quota to obey no-more-packs across autonomous and manual guarded paths; restock remains disabled.
