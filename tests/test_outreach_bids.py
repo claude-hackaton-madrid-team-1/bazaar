@@ -79,3 +79,40 @@ def test_without_a_holder_a_matrix_or_the_switch_the_bid_stays_public(tmp_path):
 def test_a_team_we_never_trade_with_is_skipped(tmp_path):
     maker(tmp_path, Team(), Matrix({"LAV-09": ["t09", "t11"]}), team_desk_never_trade="t09").on_tick(clock())
     assert bids(tmp_path) == [(46, "t11")]
+
+
+class Valued(Team):
+    def __init__(self, values, **kw):
+        super().__init__(**kw)
+        self.values, self.value_reads = values, []
+
+    def value(self, card):
+        self.value_reads.append(card)
+        return {"card": card, "your_value": self.values.get(card, 500.0)}
+
+
+def test_a_missing_page_card_a_team_holds_spare_gets_a_bid_even_when_the_strategy_bids_nothing(tmp_path):
+    # Sun 10:25: the maker had no bid at all (the strategy sent our missing cards to dealers). LAV-02 is missing and
+    # t09 holds a spare: bid from 70 % of min(max_price_common 12, official 20 - min_buy_surplus 2) = 12, up to 12.
+    team = Valued({"LAV-02": 20.0})
+    m = maker(tmp_path, team, Matrix({"LAV-02": ["t09"]}))
+    for k in range(25):
+        team.now = clock(tick=TICK + k)
+        m.on_tick(team.now)
+    lav02 = [
+        (r["inputs"]["price"], r["inputs"].get("to")) for r in rows(tmp_path) if r["inputs"].get("ref") == "LAV-02"
+    ]
+    assert lav02[0] == (9, "t09") and max(p for p, _ in lav02) == 12
+    assert team.value_reads.count("LAV-02") <= 3  # cached for 20 ticks, not read every tick
+
+
+def test_the_ceiling_stays_under_the_official_value_and_the_approval_threshold(tmp_path):
+    team = Valued({"LAV-09": 50.0})  # official 50 - 2 = 48; the approval threshold 40 caps it at 39
+    m = maker(tmp_path, team, Matrix({"LAV-09": ["t09"]}), human_approval_above=40)
+    for k in range(15):
+        team.now = clock(tick=TICK + k)
+        m.on_tick(team.now)
+    lav09 = [
+        r["inputs"]["price"] for r in rows(tmp_path) if r["inputs"].get("ref") == "LAV-09" and r["inputs"].get("to")
+    ]
+    assert lav09 and max(lav09) == 39
