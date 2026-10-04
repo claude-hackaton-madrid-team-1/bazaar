@@ -856,6 +856,7 @@ class Taker:
                 candidates += self._bids(run, market, [offer], board_venues)
             proposals += [replace(p, cash_thread=tid, inputs={**p.inputs, "thread_id": tid}) for p in candidates]
         self._accept(run, proposals)
+        self._converse(run, desk)
         taken = {p.swap.thread_id for p in run.accepted if p.swap is not None}
         taken |= {p.cash_thread for p in run.accepted if p.cash_thread is not None}
 
@@ -865,7 +866,6 @@ class Taker:
 
         self._workshop(run, threads)  # before the team desk posts: a crafted copy is never also promised in a swap
         self._team_desk("converse", converse)
-        self._converse(run, desk)  # team negotiation gets the remaining message budget first
         self._open_pack(run, market)
         if self.hub is not None:
             self.hub.view(threads=[conversation_view(c) for c in self.convs.values()])

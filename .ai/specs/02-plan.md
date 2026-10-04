@@ -804,5 +804,5 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 ## TR1 — Team negotiation surplus first
 
 - Spec: [TR1-spec.md](TR1-spec.md).
-- One all-page swap search; expected gain before album/rival-rank ties. Team messages precede dealer counter-messages, with existing accept, Workshop and deadline safety unchanged.
+- One all-page swap search; expected gain before album/rival-rank ties. Existing dealer/team message ordering and commitment safety remain unchanged.
 - Focused 158 tests passed; independent review/full gate and rollout pending coordinator.

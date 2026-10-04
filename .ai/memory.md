@@ -1480,3 +1480,9 @@ Real snapshots show neg_points 0→3.5 at tick1824, matching settlement1301: RET
 
 ### [2026-10-04] build-error — TR1 planner container type
 Mypy rejected the post-blocklist assignment after simplifying to one plan: its threads are a tuple while the filtered value is a list. Materialize the plan as a list before the existing filter; no strategy change.
+
+### [2026-10-04] build-error — TR1 review caught stale commitments after reordered messages
+Independent review reproduced a dealer bid after a new team cash promise using the tick's old offer list; hourly cap0 does not reserve cash. Before dealer messages, merge durable publication promises into the retained offer view under the shared trade lock, with no extra API calls. Exclude synthetic pending rows from observed-offer evidence so an unknown write cannot reconcile itself. Actor regression reserves30 then refuses dealer20 with only40 cash above the floor.
+
+### [2026-10-04] gotcha — TR1 message-order change withdrawn after review
+The attempted team-before-dealer ordering needs more than merging pending rows: existing local accept commitments can be double-counted, and stale holdings can incorrectly release a new asset+cash promise. Coordinator chose the smaller safe scope: restore original dealer/team ordering and remove its new reconciliation. TR1 ships only one all-page swap plan and expected-gain-first ranking; prior text describing reordered messages is superseded by this entry.
