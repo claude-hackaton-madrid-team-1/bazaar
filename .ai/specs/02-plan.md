@@ -814,3 +814,8 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 - Focused 107 ranking/team tests passed after withdrawing message reordering; independent review/full gate and rollout pending coordinator.
 
 - TR1 pack follow-up: cap30 permits observed final24; pack snapshot reads promised asset IDs without reconciling durable reservations. Pack/supply50 and config12 tests pass.
+
+## MR1 — Move standing asks toward crossing demand
+
+- [Spec and local evidence](MR1-spec.md): route an existing public ask only on strictly better crossing demand, after confirmed cancel and through existing fresh locked publication guards.
+- Actor regression red on main; targeted maker/routing suite and static checks; coordinator owns independent review, integrated gate and guarded rollout.

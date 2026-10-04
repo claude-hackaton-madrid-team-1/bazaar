@@ -1501,3 +1501,11 @@ Review found pack opening passed a stale snapshot to publication reconciliation,
 
 ### [2026-10-04] build-error — TR1 local Postgres setup timeout
 Full gate at00ceb581 ran5715passing tests with95%coverage but one holdings fixture could not connect to localhost5433 before its10s timeout. No product assertion failed. Reran the entire holdings DB module against127.0.0.1: `26 passed in15.03s`; Depot full CI passed at the same code head. No runtime code change for this transient local connection failure.
+
+### [2026-10-04] finding — MR1 standing asks stranded on their original market
+
+`maker.plan_offers` compared price/floor but never venue, while taker correctly excluded the committed copy. A new crossing bid elsewhere could route a NEW ask but could not move the existing unchanged ask. MR1 reuses cancel-confirm/repost only for strictly better observed crossing net demand, keeping price and guards; no activity-only rotation or forced partner market. Actor regression red on main (`1 failed in 0.25s`), focused final checks in MR1 report. Live conversion remains unverified.
+
+### [2026-10-04] build-error — MR1 fixtures
+
+Initial no-demand fixture removed all buyer evidence, triggering the pre-existing no-longer-target cancellation; retain baseline market events to isolate relocation. Cancellation fakes initially used incorrect SDK exception arguments and raw TimeoutError; use BazaarError(code, message, status), matching the wrapped SDK transport boundary. No production exception handling changed.
