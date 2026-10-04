@@ -75,7 +75,7 @@ footer { color: var(--muted); font-size: 13px }
 
 <div class="wrap">
   <header>
-    <div class="eyebrow">Team 1 · Causa Prima hackathon · Madrid · status before Saturday 09:00 (30 s ticks)</div>
+    <div class="eyebrow">$eyebrow</div>
     <h1>Bazaar Architecture</h1>
     <p class="sub">Omar's original design, mapped to what runs today. Every box carries its status: Jev decides inside the guardrails, the LLM proposes and executes, Postgres remembers, and the buy/sell agents act on the game one tick at a time.</p>
     <div class="legend">
@@ -108,8 +108,8 @@ footer { color: var(--muted); font-size: 13px }
   </div>
 
   <section>
-    <h2>Roadmap · Fri 2 → Sun 4 October</h2>
-    <p class="sub" style="margin-bottom:12px">Madrid time. Hatched = doors closed (build time). Solid lines = deadlines: <b>Sat 06:00</b> the live fixes are in (then no merges until ~09:30), <b>Sat 09:00</b> the market opens and every agent is live, Sun 14:00 final. Dashed = Sunday build freeze 06:00. Red = now. Game events follow the organisers' <code>/api/schedule</code> (game hour 4 = Sat 09:00, 18 = Sun 09:00). Hover a bar for its owner and times.</p>
+    <h2>Sunday roadmap · 4 October</h2>
+    <p class="sub" style="margin-bottom:12px">$timeline_note</p>
 $timeline
   </section>
 
@@ -121,7 +121,7 @@ $waiting
       </div>
     </section>
     <section>
-      <h2>Being built now</h2>
+      <h2>Sunday readiness</h2>
       <div class="list">
 $built
       </div>
@@ -158,4 +158,3 @@ $backlog
   tl.querySelectorAll(".tl-now").forEach(function (x) { x.style.left = left; x.hidden = false; });
 })();
 </script>
-

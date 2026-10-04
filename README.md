@@ -1435,6 +1435,7 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 
 ### Latest team memory (from `.ai/memory.md`, newest first)
 
+- [2026-10-04] gotcha — ST1 architecture Sunday refresh
 - [2026-10-04] build-error — PR #269 Sunday runner isolation and integrated review (SS1)
 - [2026-10-04] finding — our agents on a compressed Sunday (620 ticks at 2 s, Jev OFF, local sim, one key): ticks are not the limit
 - [2026-10-04] gotcha — `scripts/tick_profile.py` was stale: `traces.per_tick` gained `agent=`
@@ -1442,7 +1443,6 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 - [2026-10-04] finding — the calibrated Sunday scenario (SIM_SCENARIO=sunday): what it models and how
 - [2026-10-04] finding — the schedule's Sunday is h16.65-h22.65 = exactly 1440 ticks of 15 s; /api/clock says t = 13.37
 - [2026-10-04] finding
-- [2026-10-04] build-error — PR #268 merge gate caught pitch checker lint
 
 <!-- BAZAAR:STATUS:END -->
 

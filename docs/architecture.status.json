@@ -5,31 +5,22 @@
       "status": "done",
       "lines": [
         {
-          "text": "GUARDRAILS.md checked before every write",
-          "mark": "✓",
-          "lead": true
+          "text": "GUARDRAILS.md before every write"
         },
         {
-          "text": "buys capped at official value (#177)",
-          "mark": "✓",
-          "lead": true
+          "text": "1 accept/tick, shared ledger (#162)"
         },
         {
-          "text": "1 accept per tick, shared ledger (#162)",
-          "mark": "✓",
-          "lead": true
+          "text": "uncommon 30 / rare 105 (#265)"
         },
         {
-          "text": "offer inspector before accepts (#146)",
-          "mark": "✓",
-          "lead": true
+          "text": "human_approval_above = 250"
         },
         {
-          "text": "rare cap 95, Jev 0.95 (#186)",
-          "mark": "✓",
-          "lead": true
+          "text": "dealer_sell reset: 40 ticks (#265)"
         }
-      ]
+      ],
+      "mark": "✓"
     },
     "state": {
       "title": "STATE",
@@ -39,19 +30,13 @@
           "text": "CLI monitor (laptop)"
         },
         {
-          "text": "live stream + feed poll"
+          "text": "Live stream + feed poll"
         },
         {
-          "text": "holdings in Postgres: /me per tick",
-          "mark": "✓"
+          "text": "Shared /me snapshot per tick"
         },
         {
-          "text": "1 /me per tick, shared (was 2)",
-          "mark": "✓"
-        },
-        {
-          "text": "album checked first",
-          "note": true
+          "text": "Album checked first"
         }
       ],
       "mark": "✓"
@@ -83,116 +68,92 @@
       "mark": "✓"
     },
     "jev": {
-      "title": "JEV (decision / orchestrator)",
-      "status": "wip",
-      "lines": [
-        {
-          "text": "jev-1.13.0, every decision logged",
-          "mark": "✓"
-        },
-        {
-          "text": "dealer, taker, duels, maker moves",
-          "mark": "✓"
-        },
-        {
-          "text": "ops calls: v2, rare 95, venue",
-          "mark": "✓"
-        },
-        {
-          "text": "team swaps gated by Jev (#188)",
-          "mark": "◑"
-        },
-        {
-          "text": "undecided is never a yes"
-        }
-      ],
-      "mark": "◑"
-    },
-    "runtime": {
-      "title": "runtime (Railway)",
+      "title": "Jev decisions",
       "status": "done",
       "lines": [
         {
-          "text": "taker, maker, duels: LIVE, real game",
-          "mark": "✓"
+          "text": "Every decision logged"
         },
         {
-          "text": "Postgres ledger shared by all",
-          "mark": "✓"
+          "text": "Dealer, taker, duels, maker moves"
         },
         {
-          "text": "phoenix traces (#139) · bazaar-mcp",
-          "mark": "✓"
+          "text": "Decider → Jev on ticks < 30 s (#262)"
         },
         {
-          "text": "news sentinel in the taker (#182)",
-          "mark": "✓"
+          "text": "Team swaps gated by Jev (#188)"
         },
         {
-          "text": "team matrix → negotiators (#225)",
-          "mark": "✓"
-        },
-        {
-          "text": "bazaar-live: agent screen fixed (#19)",
-          "mark": "✓"
-        },
-        {
-          "text": "CI: Blacksmith queued, local gate"
+          "text": "Undecided is never a yes"
         }
       ],
       "mark": "✓"
+    },
+    "runtime": {
+      "title": "runtime (Railway)",
+      "status": "partial",
+      "lines": [
+        {
+          "text": "Taker, maker, duels: live services"
+        },
+        {
+          "text": "Shared Postgres accept ledger"
+        },
+        {
+          "text": "Phoenix traces + bazaar-mcp"
+        },
+        {
+          "text": "Workshop hardened (#259)"
+        },
+        {
+          "text": "Sunday sim scenario (#269)"
+        },
+        {
+          "text": "CI/docs conflicts: Omar (#266/#267)"
+        }
+      ],
+      "mark": "◑"
     },
     "llm_runtime": {
       "title": "LLM → Jev picks",
       "status": "done",
       "lines": [
         {
-          "text": "Claude Agent SDK runtime (#59)",
-          "mark": "✓"
+          "text": "Claude Agent SDK (#59)"
         },
         {
-          "text": "MCP tools + guardrail hook",
-          "mark": "✓"
+          "text": "MCP tools + guardrail hook"
         },
         {
-          "text": "desk + subagents: Jev per request (N15)",
-          "mark": "✓"
+          "text": "Desk roles: Jev per request"
         },
         {
-          "text": "bazaar-mcp: live, bearer, dry run",
-          "note": true
+          "text": "bazaar-mcp: authenticated"
         }
       ],
       "mark": "✓"
     },
     "buy_sell": {
       "title": "BUY / SELL",
-      "status": "done",
+      "status": "partial",
       "lines": [
         {
-          "text": "taker: SAL-09 from Chato, SAL page done",
-          "mark": "✓"
+          "text": "v19 exact broker = stall: 0.5"
         },
         {
-          "text": "maker: asks + LAT-09 68, SAL-10 76",
-          "mark": "✓"
+          "text": "All 6 Saturday Market Tests"
         },
         {
-          "text": "duels v2 live (#170): accept 169 > 130",
-          "mark": "✓"
+          "text": "Bench book capture (#261)"
         },
         {
-          "text": "venue v19 open, broker matches",
-          "mark": "✓"
+          "text": "ONE non-crossing probe armed (#263)"
         },
         {
-          "text": "dealer sell (#179 #183 #190): OFF again"
-        },
-        {
-          "text": "team threads ON + Jev gate (#188)"
+          "text": "Dealer_sell auto-reset (#265)"
         }
       ],
-      "mark": "◐"
+      "mark": "◑"
     },
     "pg_vectors": {
       "title": "Pg vectors",
@@ -217,8 +178,7 @@
       "status": "done",
       "lines": [
         {
-          "text": "holdings N13 approved (#105), 09:30 window",
-          "note": true
+          "text": "Shared holdings snapshot per tick (#105)"
         }
       ],
       "mark": "✓"
@@ -240,167 +200,138 @@
     },
     "db_learnings": {
       "title": "DB · learnings",
-      "status": "part",
+      "status": "done",
       "lines": [
         {
-          "text": "feed reader: blockers, fees, notices",
-          "mark": "✓"
+          "text": "Scoped lessons + hybrid recall"
         },
         {
-          "text": "taker skips blocked dealers",
-          "mark": "✓"
-        },
-        {
-          "text": "LLM pass (opt-in, background, never blocks)",
-          "mark": "✓"
-        },
-        {
-          "text": "maker reads fee notices",
-          "mark": "✓"
-        },
-        {
-          "text": "lessons from every outcome (N3)",
-          "mark": "✓"
-        },
-        {
-          "text": "news + schedule (#182, #187)",
-          "mark": "◑"
-        },
-        {
-          "text": "card releases heartbeat (#185)",
-          "mark": "◑"
+          "text": "Feed notices, curves and outcomes"
         }
       ],
-      "mark": "◐"
+      "mark": "✓"
     },
     "also_stored": {
       "title": "Also stored",
       "status": "done",
       "lines": [
         {
-          "text": "feed · tape · dealer_curves"
+          "text": "Feed · tape · dealer curves"
         },
         {
-          "text": "traders · snapshots · alerts"
+          "text": "Decisions · executions · accept ledger"
         },
         {
-          "text": "decisions · executions"
+          "text": "Bench books (#261)"
         },
         {
-          "text": "ledger (accept slot)"
+          "text": "Injection log (#234)"
         },
         {
-          "text": "supply_assets · supply_cards · supply_sets (N14b)",
-          "mark": "◑",
-          "note": true
-        },
-        {
-          "text": "outcomes + scorecard",
-          "mark": "◑",
-          "note": true
-        },
-        {
-          "text": "team_affinity: said vs inferred (AF1)",
-          "mark": "◑",
-          "note": true
+          "text": "Points ledger (#264)"
         }
       ],
       "mark": "✓"
     },
     "observability": {
       "title": "Observability + evals",
-      "status": "wip",
+      "status": "done",
       "lines": [
         {
-          "text": "Phoenix: session per negotiation",
-          "mark": "✓"
+          "text": "Phoenix: negotiation traces"
         },
         {
-          "text": "agents /health /state /events",
-          "mark": "✓"
+          "text": "Agents /health /state /events"
         },
         {
-          "text": "Bazaar Live: real decisions view",
-          "mark": "✓"
+          "text": "Injection log (#234)"
         },
         {
-          "text": "read-only DB login for the team",
-          "mark": "✓"
+          "text": "Points ledger + skill (#264)"
+        },
+        {
+          "text": "Sunday simulation (#269)"
         }
       ],
-      "mark": "◑"
+      "mark": "✓"
     }
   },
   "waiting_on_you": [
     {
       "status": "wip",
       "label": "Omar",
-      "title": "Blacksmith runners",
-      "body": "Every CI job is queued since 11:44: check the Blacksmith GitHub App and runner group access for the bazaar repo. Merges use the full local gate + pr-reviewer meanwhile."
+      "title": "CI/docs conflicts (#266 / #267)",
+      "body": "Omar's CI/docs PRs need conflict resolution."
     },
     {
       "status": "wip",
       "label": "Omar",
-      "title": "One merger on main",
-      "body": "Merges outside the release train race it and redeploy mid-duel; send PR numbers to the coordinator instead."
+      "title": "Workshop interlock (#244)",
+      "body": "Changes requested; waiting on Omar. Workshop hardening (#259) is merged separately."
+    },
+    {
+      "status": "wip",
+      "label": "Omar / Marius",
+      "title": "Marius PR (#231)",
+      "body": "Waiting on Omar to coordinate with Marius."
     }
   ],
   "being_built": [
     {
-      "status": "wip",
-      "label": "queued",
-      "title": "Sentinel: schedule + rival jumps (#187)",
-      "body": "Approved. Lead-time warnings for Market Tests, duels, Pilar, fevers; a rival_move learning when a team climbs 3+ ranks (t14: market +4.4 from one trade on its free stall)."
+      "status": "partial",
+      "label": "armed",
+      "title": "Market making: first Sunday Market Test (#261 / #263)",
+      "body": "v19's exact broker matched the free stall's 0.5 in all 6 Saturday sessions. Bench book capture (#261) and ONE non-crossing match probe (#263) are armed for the first Sunday Market Test. No Sunday result yet."
     },
     {
-      "status": "wip",
-      "label": "review",
-      "title": "Cards heartbeat (#185)",
-      "body": "/cards releases become ranking hints for 30 ticks; fixing a P1 (a malformed hint file could stop taker ticks)."
+      "status": "done",
+      "label": "merged",
+      "title": "Sunday tick budget and caps (#262 / #265)",
+      "body": "Decider falls back to Jev on ticks < 30 s (#262). Uncommon cap 30 P, rare cap 105 P; the watchdog dealer_sell breaker auto-resets after 40 ticks (#265). human_approval_above is 250 P; other guards still apply."
     },
     {
-      "status": "wip",
-      "label": "review",
-      "title": "Team threads with a Jev gate (#188)",
-      "body": "N17 on: every swap needs a Jev yes (>= 0.75), spare-copy reservation from the maker, cash cap per hour; missing cards first (LAV-09/10, MAL-09/10)."
+      "status": "done",
+      "label": "merged",
+      "title": "Workshop hardening and injection log (#259 / #234)",
+      "body": "Workshop hardening (#259) and the injection log (#234) are merged. The Workshop interlock (#244) still has changes requested."
     },
     {
-      "status": "wip",
-      "label": "worker",
-      "title": "Who to sell to (#193)",
-      "body": "bazaar buyers + team_buyer_rank: best-paying non-podium team per card; maker addresses asks to it."
+      "status": "done",
+      "label": "merged",
+      "title": "Sunday simulation (#269)",
+      "body": "The Sunday sim scenario is merged. Offline results are simulation evidence; live Sunday behavior is still unverified."
     },
     {
-      "status": "wip",
-      "label": "worker",
-      "title": "Persona model",
-      "body": "/api/personas traits + menus drive opening, step, patience, tone and what each dealer buys; priors for L4/L5, learned curves win for Abuela and Chato."
+      "status": "done",
+      "label": "merged",
+      "title": "Points ledger + bazaar-points skill (#264)",
+      "body": "Points ledger and scoring reference skill are merged; keep duel, dealer ladder, team-trade and market-making scores separate."
     },
     {
-      "status": "wip",
-      "label": "Pilar",
-      "title": "Sell to Doña Pilar",
-      "body": "Open to all at h5.51: she buys uncommons, rares and epics (SAL and RET preferred), never commons, and sells only Gold packs. Salamanca fever: +25 % over book for SAL until about 20:04 (/api/schedule)."
+      "status": "done",
+      "label": "merged",
+      "title": "Sunday schedule docs and pitch deck (#270 / #268)",
+      "body": "Schedule docs (#270) use h16.65 = Sunday 09:00 CEST. The pitch deck (#268) is merged, with motion presentation, script and static fallback."
     }
   ],
   "not_started": [
     {
       "status": "todo",
-      "label": "tonight",
-      "title": "Ops hardening for 15 s ticks (#128)",
-      "body": "Maker cancel cap and a tick offset per service: Sunday's model puts us at 5.3-5.7 req/s against 5."
+      "label": "Sunday",
+      "title": "Verify the first Market Test",
+      "body": "Read the captured bench book and the single non-crossing probe result. The h14.65 hard Market Test and h15 Market Test precede opening; fire-at-open versus skipped remains UNVERIFIED. The first test scheduled after opening is h17, about 09:21."
     },
     {
       "status": "todo",
-      "label": "Sunday P0",
-      "title": "Presentation (40 %)",
-      "body": "Three proofs: a real dealer deal, an injection refused, v2 vs v1; real/simulated/pending labels."
+      "label": "Sunday",
+      "title": "Observe Sunday results",
+      "body": "Verify Round 3 and the ladder restart at 09:00, Duels III at about 11:00, dealer stalls closing and Grand Final duels at about 14:00, and scores freezing at 15:00."
     },
     {
-      "status": "part",
-      "label": "gap",
-      "title": "Market points from other teams",
-      "body": "v19 is open at 0 %, but no trade between other teams on it yet; one such trade gave t14 +4.4."
+      "status": "todo",
+      "label": "presentation",
+      "title": "Rehearse the pitch (#268)",
+      "body": "Use the merged deck and script. Keep real, simulated and pending evidence clearly labelled."
     }
   ],
   "links": [
@@ -444,14 +375,10 @@
     }
   ],
   "timeline": {
-    "start": "2026-10-02T17:00",
+    "start": "2026-10-03T23:00",
     "end": "2026-10-04T15:00",
-    "tick_hours": 3,
+    "tick_hours": 2,
     "closed": [
-      [
-        "2026-10-02T23:00",
-        "2026-10-03T09:00"
-      ],
       [
         "2026-10-03T23:00",
         "2026-10-04T09:00"
@@ -459,127 +386,61 @@
     ],
     "markers": [
       {
-        "at": "2026-10-03T06:00",
-        "kind": "deadline",
-        "label": "Sat 06:00 live fixes in",
-        "side": "left"
-      },
-      {
-        "at": "2026-10-03T09:00",
-        "kind": "deadline",
-        "label": "Sat 09:00 market opens"
-      },
-      {
         "at": "2026-10-04T06:00",
         "kind": "freeze",
         "label": "Sun 06:00 build freeze"
       },
       {
-        "at": "2026-10-04T14:00",
+        "at": "2026-10-04T09:00",
         "kind": "deadline",
-        "label": "Sun 14:00 final"
+        "label": "Sun 09:00 open + Round 3"
       }
     ],
     "events": [
       {
-        "at": "2026-10-02T19:00",
-        "label": "Open",
-        "title": "Doors open, Round 1 (Friday · El Rastro), 60 s ticks"
-      },
-      {
-        "at": "2026-10-02T23:00",
-        "label": "Close",
-        "title": "Doors close, Friday counts half"
-      },
-      {
-        "at": "2026-10-03T09:00",
-        "label": "R2",
-        "title": "Round 2 (Saturday · Gran Vía), El Retiro, a pack + 150 primas, 30 s ticks"
-      },
-      {
-        "at": "2026-10-03T10:00",
-        "label": "MT",
-        "title": "Market Test"
-      },
-      {
-        "at": "2026-10-03T11:30",
-        "label": "Duels I",
-        "title": "Duels I: price only, round-robin"
-      },
-      {
-        "at": "2026-10-03T12:00",
-        "label": "MT",
-        "title": "Market Test"
-      },
-      {
-        "at": "2026-10-03T14:00",
-        "label": "MT",
-        "title": "Market Test"
-      },
-      {
-        "at": "2026-10-03T16:00",
-        "label": "MT",
-        "title": "Market Test"
-      },
-      {
-        "at": "2026-10-03T17:55",
-        "label": "MT",
-        "title": "Market Test (round 2)"
-      },
-      {
-        "at": "2026-10-03T19:55",
-        "label": "MT",
-        "title": "Market Test (round 2)"
-      },
-      {
-        "at": "2026-10-03T20:34",
-        "label": "Duels II",
-        "title": "Duels II: price + delivery day, 16 ticks, decay 0.08"
-      },
-      {
-        "at": "2026-10-03T21:55",
-        "label": "MT",
-        "title": "Market Test (round 2)"
-      },
-      {
-        "at": "2026-10-03T23:00",
-        "label": "Close",
-        "title": "Doors close"
-      },
-      {
         "at": "2026-10-04T09:00",
-        "label": "Open",
-        "title": "Sunday doors open, 15 s ticks; still round 2 until round 3 starts"
-      },
-      {
-        "at": "2026-10-04T09:34",
-        "label": "Hard MT",
-        "title": "Hard Market Test (12 traders), then a Market Test at 09:55: both still count for round 2"
-      },
-      {
-        "at": "2026-10-04T11:34",
         "label": "R3",
-        "title": "Round 3 starts (Sunday · Chamberí released, 150 primas that do not score); its weight ramps up over about 160 ticks"
+        "title": "h16.65: Sunday doors open + Round 3; Chamberí released, dealer ladder restarts, 15 s ticks"
       },
       {
-        "at": "2026-10-04T11:55",
+        "at": "2026-10-04T09:03",
+        "label": "+150 P",
+        "title": "h16.7: about 09:03, 150 P for everyone; grants do not score"
+      },
+      {
+        "at": "2026-10-04T09:21",
         "label": "MT",
-        "title": "Market Test (round 3)"
+        "title": "h17: about 09:21, Market Test"
       },
       {
-        "at": "2026-10-04T13:34",
+        "at": "2026-10-04T11:00",
         "label": "Duels III",
-        "title": "Duels III: price + delivery day, 12 ticks, decay 0.10"
+        "title": "h18.65: about 11:00, Duels III: two issues (price + delivery day), 12-tick duels, decay 0.10"
       },
       {
-        "at": "2026-10-04T13:55",
+        "at": "2026-10-04T11:21",
         "label": "MT",
-        "title": "Market Test (round 3)"
+        "title": "h19: about 11:21, Market Test"
+      },
+      {
+        "at": "2026-10-04T13:21",
+        "label": "MT",
+        "title": "h21: about 13:21, Market Test"
+      },
+      {
+        "at": "2026-10-04T13:48",
+        "label": "Warning",
+        "title": "h21.45: about 13:48, finale warning"
+      },
+      {
+        "at": "2026-10-04T14:00",
+        "label": "Grand Final",
+        "title": "h21.65: about 14:00, all dealer stalls close + Grand Final duels"
       },
       {
         "at": "2026-10-04T15:00",
         "label": "Close",
-        "title": "The Bazaar closes. The finale, all four stalls closing, the Grand Final and the score freeze are scheduled after the close: watch for the organisers moving the hours"
+        "title": "h22.65: 15:00, scores freeze and the Bazaar closes"
       }
     ],
     "lanes": [
@@ -587,71 +448,20 @@
         "name": "Platform",
         "bars": [
           {
-            "title": "Railway: Postgres, Phoenix, agents",
-            "start": "2026-10-02T17:00",
-            "end": "2026-10-02T23:30",
+            "title": "Sunday sim scenario (#269)",
+            "start": "2026-10-03T23:00",
+            "end": "2026-10-04T09:00",
             "status": "done",
-            "priority": "P0"
-          },
-          {
-            "title": "Simulator + BAZAAR_SIM (#55)",
-            "start": "2026-10-02T23:00",
-            "end": "2026-10-03T02:20",
-            "status": "done",
-            "priority": "P0"
-          },
-          {
-            "title": "Review gate /pr-review, Claude-only (#76 #83)",
-            "start": "2026-10-03T01:45",
-            "end": "2026-10-03T02:40",
-            "status": "done",
-            "priority": "P0"
-          },
-          {
-            "title": "Sim smoke = merge gate (#75)",
-            "start": "2026-10-03T02:00",
-            "end": "2026-10-03T03:55",
-            "status": "done",
-            "priority": "P0"
-          },
-          {
-            "title": "IaC: BAZAAR_LIVE kept, no off services (#73)",
-            "start": "2026-10-03T01:50",
-            "end": "2026-10-03T04:10",
-            "status": "done",
-            "priority": "P1"
-          },
-          {
-            "title": "Instant pause on Railway (SSH PAUSE) ✓; shared DB switch later",
-            "start": "2026-10-03T04:15",
-            "end": "2026-10-03T13:00",
-            "status": "partial",
             "priority": "P1",
-            "owner": "coordinator"
+            "owner": "team"
           },
           {
-            "title": "Our cards in the DB, real time (N13 #105 approved)",
-            "start": "2026-10-03T03:45",
-            "end": "2026-10-03T10:00",
-            "status": "wip",
-            "priority": "P0",
-            "owner": "worker"
-          },
-          {
-            "title": "Infra clean: bazaar-monitor deleted, IaC 0 drift",
-            "start": "2026-10-03T04:20",
-            "end": "2026-10-03T04:30",
-            "status": "done",
-            "priority": "P2",
-            "owner": "coordinator"
-          },
-          {
-            "title": "Jev picks the desk model per role (N15 #108 approved)",
-            "start": "2026-10-03T03:55",
-            "end": "2026-10-03T10:00",
+            "title": "CI/docs conflicts (#266 / #267)",
+            "start": "2026-10-03T23:00",
+            "end": "2026-10-04T09:00",
             "status": "wip",
             "priority": "P1",
-            "owner": "worker"
+            "owner": "Omar"
           }
         ]
       },
@@ -659,58 +469,36 @@
         "name": "Trading (live)",
         "bars": [
           {
-            "title": "Live fixes #72 (+#61 #68), #62, #60: before 06:00",
-            "start": "2026-10-02T23:10",
-            "end": "2026-10-03T06:00",
-            "status": "wip",
-            "priority": "P0",
-            "owner": "worker (takeover)"
+            "title": "Decider → Jev on ticks < 30 s (#262)",
+            "start": "2026-10-03T23:00",
+            "end": "2026-10-04T09:00",
+            "status": "done",
+            "priority": "P1",
+            "owner": "team"
           },
           {
-            "title": "Taker + maker + duels LIVE",
-            "start": "2026-10-03T09:00",
+            "title": "Sunday Round 3: ladder + team trades",
+            "start": "2026-10-04T09:00",
             "end": "2026-10-04T14:00",
-            "status": "wip",
-            "priority": "P0",
+            "status": "todo",
+            "priority": "P1",
             "owner": "agents"
           },
           {
-            "title": "Dealer ladder: walk, not the opening ask (N14)",
-            "start": "2026-10-03T09:00",
-            "end": "2026-10-03T13:00",
-            "status": "done",
-            "priority": "P1",
-            "owner": "Marius"
-          },
-          {
-            "title": "Duels II/III policy + days (D1)",
-            "start": "2026-10-03T12:00",
-            "end": "2026-10-03T17:30",
+            "title": "Duels III",
+            "start": "2026-10-04T11:00",
+            "end": "2026-10-04T14:00",
             "status": "todo",
-            "priority": "P2"
+            "priority": "P1",
+            "owner": "duels"
           },
           {
-            "title": "One agent instead of three (ask Jev)",
-            "start": "2026-10-03T20:00",
-            "end": "2026-10-04T04:00",
+            "title": "Final duels",
+            "start": "2026-10-04T14:00",
+            "end": "2026-10-04T15:00",
             "status": "todo",
-            "priority": "P2"
-          },
-          {
-            "title": "Bluffing + negotiation psychology in words (N16)",
-            "start": "2026-10-03T04:20",
-            "end": "2026-10-03T17:30",
-            "status": "wip",
             "priority": "P1",
-            "owner": "worker"
-          },
-          {
-            "title": "Team-to-team swap threads (N17; triage #79 #98 #101)",
-            "start": "2026-10-03T04:30",
-            "end": "2026-10-03T17:30",
-            "status": "wip",
-            "priority": "P1",
-            "owner": "worker"
+            "owner": "duels"
           }
         ]
       },
@@ -718,134 +506,28 @@
         "name": "Market making",
         "bars": [
           {
-            "title": "Own venue + broker (#71): ON by team decision, v19 open",
-            "start": "2026-10-03T03:20",
-            "end": "2026-10-03T06:00",
+            "title": "v19 exact broker = stall's 0.5 in all 6 Saturday sessions",
+            "start": "2026-10-03T23:00",
+            "end": "2026-10-04T09:00",
             "status": "done",
             "priority": "P1",
-            "owner": "worker"
+            "owner": "team"
           },
           {
-            "title": "Organic market making (M1)",
-            "start": "2026-10-03T13:00",
-            "end": "2026-10-03T20:00",
-            "status": "todo",
-            "priority": "P2"
-          },
-          {
-            "title": "v19 exact broker = stall's 0.5; edge broker (#218) behind BAZAAR_BENCH_POLICY",
-            "start": "2026-10-03T11:30",
-            "end": "2026-10-04T14:00",
+            "title": "Bench capture (#261) + ONE non-crossing probe (#263): armed",
+            "start": "2026-10-04T09:00",
+            "end": "2026-10-04T09:21",
             "status": "partial",
             "priority": "P1",
             "owner": "maker"
-          }
-        ]
-      },
-      {
-        "name": "Intelligence",
-        "bars": [
-          {
-            "title": "Feed reader v1 (N12 #89 approved, 09:30 window)",
-            "start": "2026-10-03T02:10",
-            "end": "2026-10-03T10:00",
-            "status": "wip",
-            "priority": "P1",
-            "owner": "worker"
           },
           {
-            "title": "Feed reader v2: LLM over free text (#111 in review)",
-            "start": "2026-10-03T03:30",
-            "end": "2026-10-03T13:00",
-            "status": "wip",
-            "priority": "P1",
-            "owner": "worker"
-          },
-          {
-            "title": "Evals inside the agents (#91 approved, 09:30 window)",
-            "start": "2026-10-03T02:30",
-            "end": "2026-10-03T10:00",
-            "status": "wip",
-            "priority": "P2",
-            "owner": "worker"
-          },
-          {
-            "title": "Trade scanner + scarcity (T1, N14)",
-            "start": "2026-10-03T14:00",
-            "end": "2026-10-03T22:00",
-            "status": "todo",
-            "priority": "P2"
-          },
-          {
-            "title": "Learner v1: lessons + hybrid RAG (N3 #96 approved)",
-            "start": "2026-10-03T03:40",
-            "end": "2026-10-03T10:00",
-            "status": "wip",
-            "priority": "P0",
-            "owner": "worker"
-          },
-          {
-            "title": "Auto-evolve: learned dealer curves (N3 #112 in review)",
-            "start": "2026-10-03T04:00",
-            "end": "2026-10-03T20:00",
-            "status": "wip",
-            "priority": "P0",
-            "owner": "worker"
-          }
-        ]
-      },
-      {
-        "name": "Strategy (RAG)",
-        "bars": [
-          {
-            "title": "Hard dealers: learned curves + blockers + walk (N14)",
-            "start": "2026-10-03T12:00",
-            "end": "2026-10-03T18:00",
+            "title": "Sunday Market Tests: ~09:21 / ~11:21 / ~13:21",
+            "start": "2026-10-04T09:21",
+            "end": "2026-10-04T13:25",
             "status": "todo",
             "priority": "P1",
-            "owner": "worker"
-          },
-          {
-            "title": "Packs: EV with supply, 3/hour (N14)",
-            "start": "2026-10-03T13:00",
-            "end": "2026-10-03T17:00",
-            "status": "wip",
-            "priority": "P1"
-          },
-          {
-            "title": "Supply + scarcity: print runs, holders (N14)",
-            "start": "2026-10-03T14:00",
-            "end": "2026-10-03T20:00",
-            "status": "wip",
-            "priority": "P1"
-          },
-          {
-            "title": "Custom markets: venue choice, our fee, rivals (N14)",
-            "start": "2026-10-03T12:00",
-            "end": "2026-10-03T19:00",
-            "status": "todo",
-            "priority": "P1"
-          },
-          {
-            "title": "Duels: rival profiles + delivery days (N14)",
-            "start": "2026-10-03T15:00",
-            "end": "2026-10-03T21:00",
-            "status": "todo",
-            "priority": "P1"
-          },
-          {
-            "title": "New pages + grants: El Retiro, Chamberí (N14)",
-            "start": "2026-10-03T09:00",
-            "end": "2026-10-03T12:00",
-            "status": "wip",
-            "priority": "P2"
-          },
-          {
-            "title": "Speed: Sunday 15 s ticks, all strategies in budget",
-            "start": "2026-10-03T21:00",
-            "end": "2026-10-04T05:00",
-            "status": "todo",
-            "priority": "P1"
+            "owner": "maker"
           }
         ]
       },
@@ -853,20 +535,36 @@
         "name": "Safety",
         "bars": [
           {
-            "title": "Public /state leak follow-up (#121, before 06:00, Jev 0.99)",
-            "start": "2026-10-02T23:45",
-            "end": "2026-10-03T06:00",
-            "status": "wip",
-            "priority": "P0",
-            "owner": "worker"
+            "title": "Uncommon 30 / rare 105 + dealer_sell reset after 40 ticks (#265)",
+            "start": "2026-10-03T23:00",
+            "end": "2026-10-04T09:00",
+            "status": "done",
+            "priority": "P1",
+            "owner": "team"
           },
           {
-            "title": "Counterparty text hardening (S1)",
-            "start": "2026-10-03T10:00",
-            "end": "2026-10-03T16:00",
-            "status": "todo",
+            "title": "Workshop hardening (#259) + injection log (#234)",
+            "start": "2026-10-03T23:00",
+            "end": "2026-10-04T09:00",
+            "status": "done",
             "priority": "P1",
-            "owner": "worker"
+            "owner": "team"
+          },
+          {
+            "title": "Workshop interlock (#244): changes requested",
+            "start": "2026-10-03T23:00",
+            "end": "2026-10-04T09:00",
+            "status": "wip",
+            "priority": "P1",
+            "owner": "Omar"
+          },
+          {
+            "title": "Marius PR (#231): waiting on Omar",
+            "start": "2026-10-03T23:00",
+            "end": "2026-10-04T09:00",
+            "status": "wip",
+            "priority": "P1",
+            "owner": "Omar / Marius"
           }
         ]
       },
@@ -874,54 +572,33 @@
         "name": "Show & pitch",
         "bars": [
           {
-            "title": "Bazaar Live v1 deployed (bazaar-live #1 #2)",
-            "start": "2026-10-03T01:55",
-            "end": "2026-10-03T04:00",
+            "title": "Points ledger + bazaar-points skill (#264)",
+            "start": "2026-10-03T23:00",
+            "end": "2026-10-04T09:00",
             "status": "done",
-            "priority": "P3",
-            "owner": "worker"
+            "priority": "P1",
+            "owner": "team"
           },
           {
-            "title": "Score tracker (K1)",
-            "start": "2026-10-03T14:00",
-            "end": "2026-10-03T20:00",
-            "status": "todo",
-            "priority": "P2"
+            "title": "Sunday schedule docs (#270) + pitch deck (#268)",
+            "start": "2026-10-03T23:00",
+            "end": "2026-10-04T09:00",
+            "status": "done",
+            "priority": "P1",
+            "owner": "team"
           },
           {
-            "title": "Web dashboard #43: own repo",
-            "start": "2026-10-03T09:00",
-            "end": "2026-10-03T18:00",
-            "status": "todo",
-            "priority": "P3",
-            "owner": "Marius"
-          },
-          {
-            "title": "Presentation + decision log (P1)",
-            "start": "2026-10-03T22:00",
+            "title": "Rehearse and label live / simulated / pending evidence",
+            "start": "2026-10-04T09:00",
             "end": "2026-10-04T13:30",
             "status": "todo",
             "priority": "P0",
             "owner": "Omar + team"
-          },
-          {
-            "title": "Bazaar Live v2: fantasy-RPG art, ES/EN voices (P2)",
-            "start": "2026-10-03T04:10",
-            "end": "2026-10-04T06:00",
-            "status": "wip",
-            "priority": "P2",
-            "owner": "worker"
-          },
-          {
-            "title": "Bazaar Live: real dealer + duel transcripts (Postgres read-only)",
-            "start": "2026-10-03T04:15",
-            "end": "2026-10-03T11:30",
-            "status": "wip",
-            "priority": "P2",
-            "owner": "worker"
           }
         ]
       }
     ]
-  }
+  },
+  "eyebrow": "Team 1 · Causa Prima hackathon · Madrid · status before Sunday 09:00 (15 s ticks)",
+  "timeline_note": "Madrid time (CEST). Hatched = doors closed; dashed = build freeze; red = now. Sunday opens at game hour 16.65, 09:00, with Round 3 and 15 s ticks. One game hour = one real hour. Times follow `/api/schedule`; bars show readiness/work windows, not merge timestamps. The h14.65 hard Market Test and h15 Market Test are scheduled BEFORE opening. Whether they fire at opening or are skipped is UNVERIFIED. Hover events for details."
 }

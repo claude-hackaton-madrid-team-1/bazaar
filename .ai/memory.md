@@ -1344,3 +1344,8 @@ Review also caught that `/dev/null` fails the settings loader's regular-file che
 receive the run's actual empty environment file, including the simulator server.
 The runner's advertised `--jev` could not work with stripped credentials and loopback guards; remove that
 unsupported flag and always run these offline profiles with `--no-jev`.
+
+### [2026-10-04] gotcha — ST1 architecture Sunday refresh
+The generated architecture still used Saturday's eyebrow and a wrong Sunday hour anchor in its template.
+Move both texts into the status JSON; the single keyless schedule read confirms h16.65 = Sunday 09:00 CEST.
+Keep h14.65/h15 tests explicitly UNVERIFIED at opening. A Sunday-focused axis avoids overlapping event labels.
