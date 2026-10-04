@@ -12,7 +12,7 @@ from bazaar_agent.ticks import Clock
 from tests.test_llm import FakeJudge, FakeProvider, verdict
 
 runner = CliRunner()
-SECRET = "sk-ant-THIS-MUST-NOT-PRINT"
+SECRET = "sk-fake-THIS-MUST-NOT-PRINT"
 
 
 @pytest.fixture
