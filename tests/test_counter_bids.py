@@ -124,3 +124,29 @@ def test_the_higher_bidder_gets_the_counter_and_off_turns_it_off(tmp_path):
     off = Team(offers=[to_us(bid(1, "LAT-09", 20))])
     maker(tmp_path / "off", off, counter=False)[0].on_tick(clock())
     assert counter_posts(tmp_path / "off") == [] and skips(tmp_path / "off") == {}
+
+
+def test_an_incomplete_pages_only_copy_may_be_countered_and_sold_a_complete_ones_never(tmp_path):
+    # Marius, Sun 4 Oct: sell a non-duplicate when its page is not complete and the offer beats our value.
+    from copy import deepcopy
+
+    from bazaar_agent import guardrails as gr
+    from bazaar_agent.move_impact import our_cards
+    from tests.test_strategy import ME
+
+    me = deepcopy(ME)
+    me["album"]["pages"] = [{"set": "LAV", "have": 2, "of": 6}, {"set": "LAT", "have": 2, "of": 2, "complete": True}]
+    rules = gr.Guardrails(protect_page_sets="LAV,LAT", protect_complete_pages_only=True)
+    complete = our_cards(me).complete
+    assert not rules.protects("LAV-06", "uncommon", 1, complete)  # LAV incomplete: may be sold
+    assert rules.protects("LAT-09", "rare", 1, complete)  # LAT complete: kept
+    assert rules.protects("LAV-06", "uncommon", 1)  # a caller without the album keeps protecting
+    off = rules.model_copy(update={"protect_complete_pages_only": False})
+    assert off.protects("LAV-06", "uncommon", 1, complete)  # this morning's rule: every only copy kept
+
+    team = Team(me=me, offers=[to_us(bid(9, "LAV-06", 30)), to_us(bid(10, "LAT-09", 30), maker="t16")])
+    m, _ = maker(tmp_path, team, protect_page_sets="LAV,LAT", protect_complete_pages_only=True)
+    m.on_tick(clock())
+    posts = [r for r in rows(tmp_path) if r.get("kind") == "post_ask" and r["inputs"].get("to")]
+    assert [(r["inputs"]["ref"], r["inputs"]["to"]) for r in posts] == [("LAV-06", "t15")]
+    assert "protect_page_sets" in skips(tmp_path)[("t16", "LAT-09")]

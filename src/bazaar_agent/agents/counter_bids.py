@@ -26,6 +26,7 @@ from typing import Any
 from bazaar_agent.agents.market import BoardOffer, Venue
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.intel import TEAM_ID
+from bazaar_agent.move_impact import our_cards
 from bazaar_agent.strategy import Market, StrategyParams, bonus_at_stake
 
 ANCHOR = 0.25  # the opening counter: this share above our floor
@@ -108,6 +109,7 @@ def plan_counters(
     countered). `unavailable`: our copies already promised; `public_prices`: copy -> the price we ask (or want to
     ask) anyone for it, a ceiling for its counter."""
     blocked = set(unavailable)
+    complete = our_cards(me).complete  # `protect_complete_pages_only`: an incomplete page's only copy may be countered
     skipped: dict[tuple[str, str], str] = {}
     best: dict[str, Counter] = {}
     for (team, ref), s in sorted(seen.items()):
@@ -134,7 +136,7 @@ def plan_counters(
         if not free:
             skipped[key] = f"no free copy of {ref}"
             continue
-        if rules.protects(ref, card.rarity, len(free)):
+        if rules.protects(ref, card.rarity, len(free), complete):
             skipped[key] = f"{ref} is our only copy of a page card (protect_page_sets): never sold"
             continue
         copy = min(free, key=lambda a: (float(a["your_value"]), -int(a["id"])))
