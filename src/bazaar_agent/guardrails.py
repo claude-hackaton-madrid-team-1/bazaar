@@ -598,6 +598,7 @@ class LedgerStore(Protocol):
     def release_accept(self, tick: int, item: str) -> None: ...
     def hands_off_ids(self) -> set[int]: ...
     def publication_rows(self) -> list[tuple[str, str]]: ...
+    def refund_bid(self, tick: int, t_hours: float, price: int, item: str) -> float | None: ...
 
 
 RELEASE = "release"  # a JSONL row that gives back one reserved accept of its tick (`Ledger.release_accept`)
@@ -617,6 +618,28 @@ class Ledger:
             for e in self.entries()
             if str(e.get("kind", "")).startswith("publication_")
         ]
+
+    def refund_bid(self, tick: int, t_hours: float, price: int, item: str) -> float | None:
+        """Record one bid refund; prior credit blocks it even when its date was wrong."""
+        if price <= 0:
+            raise ValueError("bid refund price must be positive")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.with_suffix(".refund.lock").open("a") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            rows = [
+                (str(e["kind"]), float(e["t_hours"]), int(e["price"]))
+                for e in self.entries()
+                if e["kind"] in {"spend", "listing"}
+                and e["tick"] == tick
+                and e.get("item") == item
+                and abs(int(e.get("price", 0))) == price
+            ]
+            if any(p < 0 for _, _, p in rows):
+                return None
+            exact = matching_bid_spend(rows)
+            at = t_hours if exact is None else exact
+            self.record("spend", tick, at, -price, item)
+            return at
 
     def entries(self) -> list[dict[str, Any]]:
         if not self.path.is_file():
@@ -709,6 +732,15 @@ class Ledger:
 
 
 LedgerRow = tuple[str, int, float, int, str]  # kind, tick, t_hours, price, item: `LedgerStore.record`'s arguments
+
+
+def matching_bid_spend(rows: list[tuple[str, float, int]]) -> float | None:
+    """Only one original listing/spend pair proves the date; duplicates or any refund are ambiguous."""
+    if len(rows) != 2 or {r[0] for r in rows} != {"spend", "listing"}:
+        return None
+    if rows[0][1:] != rows[1][1:] or rows[0][2] <= 0:
+        return None
+    return rows[0][1]
 
 
 def refund_row(

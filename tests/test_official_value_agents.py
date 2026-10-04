@@ -11,7 +11,6 @@ from bazaar_agent.agents.maker import Maker
 from bazaar_agent.agents.taker import Taker, TakerConfig
 from bazaar_agent.sdk import BazaarError
 from tests.agent_fakes import TICK, FakePublic, FakeTeam, ask, bid, clock, parts, rows
-from tests.test_strategy import ME
 
 pytestmark = pytest.mark.official_values
 
@@ -275,10 +274,11 @@ def test_selling_into_a_standing_bid_never_reads_the_official_value(tmp_path):
 def test_a_rung_above_our_cash_room_bids_the_room_and_the_walk_after_it_rests(tmp_path):
     # UB1: a rung refused only for cash bids the most we may still commit (a distinct step up), re-checked in full
     # (official value included); with nothing left above our last bid, the guardrail walk rests on the card.
-    team = ValuedTeam(me={**ME, "cash": 290})  # floor 270: room 20
+    team = ValuedTeam()  # Enough room when opening; another commitment reduces it before the next bid.
     t, _ = taker(tmp_path, team, FakePublic(), live=True, dealers=3, allow_venue_open=False)
     t.on_tick(clock())
     assert [s for s in team.sent if s[0] == "say"] == [("say", 5000, 18)]
+    team._me["cash"] = 290  # floor 270: room 20, now smaller than the planned next rung
     t.convs["abuela"].neg.plan = replace(t.convs["abuela"].neg.plan, step=4)  # the next rung is 22
     her_ask(team, 5000, 800, 30)
     t.on_tick(at(team, TICK + 1))
@@ -298,9 +298,10 @@ def test_a_rung_above_our_cash_room_bids_the_room_and_the_walk_after_it_rests(tm
 def test_a_failed_value_read_on_the_cash_room_bid_holds_and_never_walks(tmp_path):
     # #248 review r2 P1: the rung refused for cash never read the official value, so the substituted bid's re-check
     # is the first read; a failed read must hold the thread (#177 P1-2), never walk and rest.
-    team = ValuedTeam(me={**ME, "cash": 290})
+    team = ValuedTeam()
     t, _ = taker(tmp_path, team, FakePublic(), live=True, dealers=3, allow_venue_open=False)
     t.on_tick(clock())
+    team._me["cash"] = 290  # The continuation must re-check room after opening, even if value lookup fails.
     t.convs["abuela"].neg.plan = replace(t.convs["abuela"].neg.plan, step=4)
     her_ask(team, 5000, 800, 30)
     team.fail = True

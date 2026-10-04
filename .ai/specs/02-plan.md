@@ -764,6 +764,6 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 ### LF1 — Close live-readiness gaps ([spec](LF1-spec.md))
 
 - Audit live score conversion, runtime errors and production voice in parallel.
-- Fix confirmed dealer budget waste without changing hard limits or duel strategy.
+- Fix confirmed dealer budget waste and restart-safe, once-only bid refunds without changing hard limits or duel strategy.
 - Correct stale operational guidance and record actual deployment/validation evidence.
 - Run focused regressions and the final gate, obtain independent review, and use a safe live rollout if code changes are required.
