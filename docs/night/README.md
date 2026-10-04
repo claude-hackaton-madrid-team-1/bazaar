@@ -1,10 +1,13 @@
 # Night shift reports (Fri 2 → Sat 3 Oct 2026)
 
+Night shift docs: [findings and decisions](README.md) · [narrative summary](SUMMARY.md) · [PR and branch index](INDEX.md) · [raw logs](log/)
+
 Marius's night shift opened one draft PR per backlog item. The fixes that help us win were taken over and
 land with their own reports here (B13 #106, B17 #140, B18 #141, B14 #142, B16 #143, B19 #144). The analysis and
 planning PRs were closed or superseded on 2026-10-03 (coordinator triage); their code was **not** merged and
 stays on its branch, and their reports are kept below so the findings and decisions are not lost. #102, #118
-and #135 are still open as drafts: if one of them is ever merged, keep these copies of its docs.
+and #135 stayed open as drafts a little longer and were closed unmerged at 11:48 Madrid the same day, so these
+copies are the ones to keep.
 
 ## Findings and decisions
 

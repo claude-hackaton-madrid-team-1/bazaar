@@ -1,5 +1,7 @@
 # Night shift summary (Fri 2 → Sat 3 Oct 2026)
 
+Night shift docs: [findings and decisions](README.md) · [narrative summary](SUMMARY.md) · [PR and branch index](INDEX.md) · [raw logs](log/)
+
 Times are Madrid (GitHub shows UTC, Madrid = UTC+2). Numbers come from the night's own files (sanitised copies in
 [log/](log/): MORNING, BITES, REVIEWS, STATUS, PLAN, BACKLOG). Every workstream, PR and branch is listed in
 [INDEX.md](INDEX.md). Most simulation results are in-sample (the models were fitted to Friday's data). The real test

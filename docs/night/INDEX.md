@@ -1,15 +1,17 @@
 # Night shift index: every workstream, its PRs and where its work lives
 
+Night shift docs: [findings and decisions](README.md) · [narrative summary](SUMMARY.md) · [PR and branch index](INDEX.md) · [raw logs](log/)
+
 PR states were checked on GitHub on 2026-10-03 at 07:50 Madrid (`gh pr list --state all`). Merge times are in Madrid
 time (GitHub shows UTC; Madrid = UTC+2). "taken over by #N" means ogarciarevett's coordinator closed the night PR and
 reopened its work as #N.
 
 Where the reports live:
 - **main**: `docs/night/` on `main` (arrived with #106 and #150).
-- **#154**: the open docs PR that salvages the reports of closed night PRs. Its `docs/night/README.md` holds the
-  findings and decisions table, so this index does not repeat them.
-- **#78**: W5/W6 plus `docs/night/MORNING.md`. **#135**: the pitch kit (story, Q&A, demo, charts, `docs/decisions.md`).
-  Read them there.
+- **#154**: the docs PR that salvaged the reports of closed night PRs (merged at 09:08 Madrid, after the check
+  above). Its `docs/night/README.md` holds the findings and decisions table, so this index does not repeat them.
+- **#78**: W5/W6 (closed unmerged; a sanitised copy of its MORNING is on `main` at [log/MORNING.md](log/MORNING.md)).
+  **#135**: the pitch kit (story, Q&A, demo, charts, `docs/decisions.md`), closed unmerged: read it there.
 - Otherwise: the PR's branch, at `docs/night/<item>.md`.
 
 ## Workstreams (W) and the two reviewers
