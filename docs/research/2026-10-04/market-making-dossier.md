@@ -271,9 +271,9 @@ draws (the rules say "the same synthetic book").
 3. Whether a held trader can leave before a queued match settles (`settles_at_tick` = T+1; SEARCH caveats).
 4. Whether another team beats the stall in session 9 (then the top-3 mean rises and a small win earns < 1.0).
 5. Whether lookahead's b137 gain is real: seller b137-12's life is censored by our own match (§4.3).
-7. Why `who_oracle` scores below the stall on the b137 replay (§4.4); a harness check before trusting replay levels.
 6. Whether `/me bench_efficiency` is per session or the running round average. If it is Sunday's round average,
    session 8 alone was ≈ 2 × 0.895 − 0.967 = 0.823, not 0.895 (Saturday has the same ambiguity, §2 notes).
+7. Why `who_oracle` scores below the stall on the b137 replay (§4.4); a harness check before trusting replay levels.
 
 ## 8. Pitch: market making
 
