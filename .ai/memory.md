@@ -1559,3 +1559,12 @@ Ruff and Black disagreed on a multiline string concatenation in the new Sales pr
 ### [2026-10-04] build-error — Sunday pack policy left two stale test expectations
 
 PR304 CI deterministically failed two assertions pinning runtime max_price_pack to30 after main's authorized policy changed it to430. Reproduced locally:2failed. Tests now verify the loaded ceiling's exact allowed/denied boundary, pack quota and cash floor, while separately proving conservative constructor defaults remain20/off. Runtime/config unchanged. Focused pack/Pilar suite:26passed0.54s. This was stale expected data, not CI flakiness. Pre-commit caught an overlong updated test docstring; wrapped it before committing.
+
+### [2026-10-04] gotcha
+Manual guarded dealer sales initially refused the shared publication mutex: read-only pg_locks identified bazaar-sales holding the session lock while outreach generated words. Coordinated service-local Taker/Maker/Sales pauses let the coordinator reserve dealer threads 3670 and 3672 without bypassing a lock. Maker/Sales resumed; Taker remains paused pending the pack-restock policy rollout. GET /api/clock timed out at ticks 2354–2356 and recovered on the next tick; this policy change adds no SDK/network fix. A diagnostic import of nonexistent card_hunt.enabled failed; corrected to the actual CLI default-on switch and a remote nonsecret environment check (BAZAAR_CARD_HUNT unset).
+
+### [2026-10-04] build-error
+PACK1 review found two deployed-policy tests still asserting restock enabled → update only those expectations to disabled restock/enabled dealer desk; preserve price-cap, cash-floor and quota checks.
+
+### [2026-10-04] finding
+PACK1 user correction: Sales should hunt teams across allied markets, not activate dealer sales. Final policy disables restock only; dealer_sell_enabled remains false and no dealer reclaim is introduced.

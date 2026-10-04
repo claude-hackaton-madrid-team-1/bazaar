@@ -138,7 +138,7 @@ def test_the_taker_rereads_dealers_and_me_every_tick(tmp_path):
 
 def test_operator_restock_policy_does_not_change_conservative_defaults():
     deployed, defaults = load_guardrails().rules, Guardrails()
-    assert deployed.pack_restock_enabled
+    assert not deployed.pack_restock_enabled and not deployed.dealer_sell_enabled
     assert deployed.max_price_pack > defaults.max_price_pack
     assert defaults.max_price_pack == 20 and not defaults.pack_restock_enabled
 
