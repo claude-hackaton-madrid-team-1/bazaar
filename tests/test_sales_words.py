@@ -46,3 +46,34 @@ def test_usage_limit_uses_template_without_retry(monkeypatch):
     request = WordsRequest("team:t15", 10, budget_s=4)
     assert say(request) == sw.sales_template(request)
     assert len(provider.calls) == 1
+
+
+def test_sales_prompt_uses_truthful_need_check_and_keeps_executor_authority(monkeypatch):
+    provider = Provider("¿Encaja esta carta con lo que buscas? Revisa la oferta adjunta y sus comisiones.")
+    say = setup_words(monkeypatch, provider)
+    request = WordsRequest("team:t15", 57, item="RET-03", budget_s=4)
+    assert say(request) == provider.result
+    prompt = provider.calls[0]
+    assert prompt.model_id == "claude-opus-5-5"
+    assert "57" not in prompt.user and "57" not in prompt.system
+    for instruction in (
+        "coordinated with Maker",
+        "voluntary need-check",
+        "venue and acceptance fees",
+        "fake scarcity",
+        "social proof",
+        "score guarantees",
+        "private valuations",
+        "Only code selects prices, assets and venues",
+        "not proof the recipient lacks it",
+    ):
+        assert instruction in prompt.system
+
+
+def test_truthful_fallback_has_need_check_and_terms_cta_in_both_languages():
+    es = sw.sales_template(WordsRequest("team:t15", 57, item="RET-03"))
+    en = sw.sales_template(WordsRequest("team:t15", 57, item="RET-03", language="en"))
+    assert "¿Encaja esta carta" in es and "mercado y comisiones" in es
+    assert "Could this card" in en and "venue and fees" in en
+    for text in (es, en):
+        assert "57" not in text and "RET-03" not in text

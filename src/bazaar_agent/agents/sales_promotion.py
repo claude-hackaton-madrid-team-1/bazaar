@@ -202,7 +202,8 @@ class SalesPromotion:
         tid = body["id"]
         text = (
             f"He visto la oferta pública #{offer.id}: {offer.ref} por {offer.price} P en {offer.venue}. "
-            "Puede interesarte para tu colección. Revisa su vigencia y tus valores antes de aceptarla; "
+            "¿Encaja con lo que buscas? Revisa esa oferta en ese mercado, su vigencia y las comisiones. "
+            "Acéptala solo si el coste total te conviene según tus valores; "
             "este mensaje no reserva cartas ni acepta ningún trato."
         )
         action = Action("team_say", counterparty=target)

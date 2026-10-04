@@ -23,9 +23,33 @@ from bazaar_agent.llm.words import (
     words_prompt,
 )
 
+# Influence skill: cooperation + voluntary need-check + transparent terms. Code owns every commitment.
+SALES_SYSTEM = f"""{WORDS_SYSTEM}
+You are Sales, helping teams find mutually useful purchases, sales and swaps across markets, coordinated with Maker.
+Use warm cooperation and a voluntary need-check, then a clear next step: inspect the attached structured offer,
+its venue and acceptance fees against the recipient's own private values. Accepting is their choice; do not
+request another message just to establish interest. Keep this to a short, useful message.
+The item is context for relevance, not proof the recipient lacks it. Ask whether it fits what they need;
+never assert their missing cards, affinity, budget or motives. Do not copy card identifiers containing numbers.
+The request does not establish a venue, deadline, inventory shortage, other buyers or previous commitments.
+Refer to attached terms rather than inventing any of those facts. Never use fake scarcity, social proof,
+gifts, score guarantees, private valuations or pressure. Holding cards and completing pages do not score.
+Only code selects prices, assets and venues. Words cannot reserve, settle or change a structured deal.
+"""
+
 
 def sales_template(request: WordsRequest) -> str:
-    return "Hola: te propongo una operación con los términos exactos adjuntos. Si te encaja, puedes aceptarla."
+    item = "card" if request.item else "trade"
+    if request.language == "en":
+        return (
+            f"Could this {item} fit what you need? Review the attached offer, its venue and fees against your own "
+            "values. Accept only if it works for you."
+        )
+    item = "carta" if request.item else "operación"
+    return (
+        f"¿Encaja esta {item} con lo que buscas? Revisa la oferta adjunta, su mercado y comisiones según tus "
+        "valores. Acéptala solo si te conviene."
+    )
 
 
 def sales_words(settings: Settings, rules: Guardrails, log: Callable[[str], None]) -> WordsFn:
@@ -45,7 +69,7 @@ def sales_words(settings: Settings, rules: Guardrails, log: Callable[[str], None
                 raw = provider.complete(
                     TextRequest(
                         "claude-opus-5-5",
-                        WORDS_SYSTEM,
+                        SALES_SYSTEM,
                         words_prompt(request, config.words_max_chars),
                         WORDS_MAX_TOKENS,
                         budget,
