@@ -541,6 +541,8 @@ class _TickRun:
     listed: frozenset[int] = frozenset()  # our open threads as /api/me/threads listed them this tick
     prints: list[Print] | None = None  # the feed history's tape, read once a forgiving dealer's plan needs it
     addressed: dict[int, BoardOffer] = field(default_factory=dict)  # offers another team addressed to us, this tick
+    slots: LadderSlots | None = None  # the ladder's scored slots this round (feed window), read once per tick
+    ladder_open: frozenset[str] = frozenset()  # dealers whose level has an empty slot (`dealer_ladder_value_tolerance`)
     why: dict[int, str] = field(default_factory=dict)  # board offer id -> why it is not an accept candidate
 
 
@@ -808,6 +810,9 @@ class Taker:
             self.bluff.begin_tick(clock.tick, clock.round, snap.us)
             self.bluff.events(snap.events, snap.us, clock.tick)
         market = build_market(snap.me, snap.catalog, snap.events, snap.dealers, snap.scan)
+        run.slots = LadderSlots(dealer_levels(snap.dealers), ladder_deals(snap.events, snap.us))
+        if self.rules.dealer_ladder_value_tolerance > 0:  # 0: no buy may pass the official value (today's cap)
+            run.ladder_open = frozenset(d for d in run.slots.levels if not run.slots.full(d))
         self._news_market = (clock.tick, market)  # the sentinel's team matrix reads its supply map after the sends
         run.boost = self._card_boost(clock.tick)
         book = build_playbook(
@@ -877,7 +882,7 @@ class Taker:
             ctx = committed_context(ctx, self._unsettled)
         book = book_values(run.snap.catalog)
         trades = None if run.settled is None else trade_book(kept, run.snap.us, run.settled, book)
-        return replace(ctx, spent_last_hour=ctx.spent_last_hour + run.spent, trades=trades)
+        return replace(ctx, spent_last_hour=ctx.spent_last_hour + run.spent, trades=trades, ladder_open=run.ladder_open)
 
     def _commit(
         self,
@@ -1425,7 +1430,7 @@ class Taker:
         gate, clock = self.strategy_gate, run.snap.clock
         if gate is None:  # no Jev: no probe, and no slot rows either (the taker as it ran before slots)
             return book
-        slots = LadderSlots(dealer_levels(run.snap.dealers), ladder_deals(run.snap.events, run.snap.us))
+        slots = run.slots or LadderSlots(dealer_levels(run.snap.dealers), ladder_deals(run.snap.events, run.snap.us))
         hour = int(clock.t_hours)
         self._probed = {k for k in self._probed if k[1] == hour}
         busy = {str(t.get("with")) for t in threads} | set(self.convs)
@@ -1721,7 +1726,7 @@ class Taker:
             op = replace(op, plan=replace(op.plan, final_max=dp.final_max, lift_after=LIFTED_FINAL_MIN_BIDS))
         if (forgiving := self._forgiving(run, op.dealer, op.item, op.rarity, op.plan)) != op.plan:  # last: no lift
             op = replace(op, plan=forgiving, reason=f"{op.reason}; {forgiving_note(forgiving)}")
-        verdict = check(Action("buy", op.item, op.rarity, op.plan.start), ctx, self.rules)
+        verdict = check(Action("buy", op.item, op.rarity, op.plan.start, dealer=op.dealer), ctx, self.rules)
         if not verdict.allowed and not verdict.halted and op.item in run.boost and self.cards is not None:
             self.cards.unboost(op.item)  # a refused release never holds this dealer's slot again
         plan = f"{op.plan.start}→{op.plan.max_price} step {op.plan.step}"
@@ -2088,7 +2093,7 @@ class Taker:
         conv, tick, move = dm.conv, run.snap.clock.tick, dm.move
         if move.kind == "bid":
             at_final = dm.final and move.price is not None and move.price == dm.ask  # meeting her final (N14a)
-            action = Action("bid", conv.item, conv.rarity, move.price, final=at_final)
+            action = Action("bid", conv.item, conv.rarity, move.price, final=at_final, dealer=conv.dealer)
         else:  # a walk closes the thread: only the kill switch can refuse it
             action = Action("close_thread", str(conv.thread_id))
         ctx = self._ctx(run, skip_thread=conv.thread_id)
@@ -2363,7 +2368,10 @@ class Taker:
         maker = p.candidate.offer.maker if p.candidate is not None else None  # a dealer is not a counterparty
         ask = p.candidate.offer.price if p.candidate is not None else None  # the maker's share: without the fee
         final = p.final and p.desk is not None  # a dealer's final: its cap is `final_cap_for` (N14a)
-        action = Action("accept_buy", p.ref, p.rarity, p.price, counterparty=maker, volume=ask, final=final)
+        dealer = p.source if p.desk is not None else None  # `dealer_ladder_value_tolerance`: dealer deals only
+        action = Action(
+            "accept_buy", p.ref, p.rarity, p.price, counterparty=maker, volume=ask, final=final, dealer=dealer
+        )
         verdict = check(action, ctx, self.rules)
         if not verdict.allowed:
             self._skip(run, p, str(verdict), "rejected")

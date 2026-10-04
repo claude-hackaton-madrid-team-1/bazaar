@@ -235,6 +235,7 @@ def plan_one(
     rules: Guardrails,
     cash_room: int,
     value_of: ValueOf | None,
+    slots: LadderSlots | None = None,
 ) -> Probe | None:
     """The probe for one dealer: the cheapest missing card it sells, or None. `value_of` None plans without the
     official value (a cheap pre-check: nothing is read, the top optimistic: just under her opening ask);
@@ -253,7 +254,11 @@ def plan_one(
         value = value_of(card.ref)
         if value is None:  # unread: a bid would be refused anyway (fail closed)
             return None
-        top = min(top, math.floor(value - rules.official_value_margin + 1e-9))
+        # The same cap the guardrails apply to its bids: the official value, plus `dealer_ladder_value_tolerance`
+        # while this dealer's level has an empty slot (never for an epic or legendary: off_page_min_surplus).
+        open_level = slots is not None and dealer in slots.levels and not slots.full(dealer)
+        lift = rules.dealer_ladder_value_tolerance if open_level and card.rarity not in ("epic", "legendary") else 0
+        top = min(top, math.floor(value - rules.official_value_margin + lift + 1e-9))
     lowest = min(fills)
     if value_of is None:  # the cheap pre-check: the official value (read later) only ever lowers the top
         top = min(top, opening - 1)
@@ -280,7 +285,7 @@ def plan_probes(
     dealers = sorted({q.dealer for q in m.quotes} - set(skip))
     if slots is not None:
         dealers = sorted((d for d in dealers if not slots.full(d)), key=lambda d: (*slots.rank(d), d))
-    planned = (plan_one(m, d, opens, rules, cash_room, value_of) for d in dealers)
+    planned = (plan_one(m, d, opens, rules, cash_room, value_of, slots) for d in dealers)
     return [p for p in planned if p is not None]
 
 
