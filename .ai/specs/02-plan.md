@@ -854,3 +854,7 @@ See [SALES1](SALES1-spec.md). In progress: team outreach ownership, Opus 5.5, OT
 ## SALES3 — truthful market-focused Sales wording
 - [Spec and evidence](SALES3-spec.md): apply the installed influence skill to Sales prompt/fallback and the actual deterministic public-offer contact; preserve all terms, guards and quote authentication.
 - 60 focused tests pass; independent review and coordinator rollout pending.
+
+## SALES4 — alliance buyer hunting
+- [Spec](SALES4-spec.md): rotate buyer/card outreach, state exact terms, and counter safely on allied markets including v07.
+- Focused tests passed; independent review, CI and runtime verification pending.

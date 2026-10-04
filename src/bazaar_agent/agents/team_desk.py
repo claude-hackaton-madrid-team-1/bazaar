@@ -250,6 +250,7 @@ class DeskView:
     ctx: Callable[[int | None], Context]
     window_open: Callable[[], bool]
     listing_cap: int = 12  # /api/clock limits.offers_per_team_per_tick, shared with the maker (a thread offer counts)
+    tick_seconds: float = 60.0  # current pace: date outreach cooldown in game hours
     max_tick_seconds: float = 60.0  # /api/clock: dates a refund in the hour of its spend (`refund_row`)
     jev: Callable[[dict[str, Any]], JevAdvice] = no_jev  # `team_swap_worth_it`, inside the taker's tick budget
     scan: Sequence[dict[str, Any]] = ()  # the stored card scan: who holds the cards we miss (`bazaar supply scan`)
@@ -317,7 +318,7 @@ class TeamDesk:
         hunt: bool = False,
     ) -> None:
         self.team, self.rules, self.rec, self.log, self.live = team, rules, rec, log, live
-        self.sent_words: Callable[[int, str, str, int, int, str, dict[str, Any]], None] | None = None
+        self.sent_words: Callable[[int, str, str, int, int, str, dict[str, Any], str], None] | None = None
         self.hunt = hunt  # card hunt (`card_hunt.py`): the deterministic gate instead of Jev, more team threads
         self.ledger = ledger  # the shared ledger: spend we add, listings we post (the maker's budget)
         self.ladder, self.words, self.env, self.plan_ttl = ladder or Ladder(), words, env, plan_ttl_ticks
@@ -743,7 +744,7 @@ class TeamDesk:
 
     def _inbound(self, v: DeskView, taken: set[int] | None = None) -> None:
         """A team thread we do not run: one another team opened, or one of ours after a restart. On the house
-        venue we answer a planned swap or a validated cash offer. Actual conversation activity extends
+        venue we answer a planned swap; validated cash counters also use configured alliance venues. Activity extends
         the idle deadline, while the message budget bounds unproductive chatter."""
         for t in self._team_threads(v):
             tid = int(t["id"])
@@ -768,7 +769,7 @@ class TeamDesk:
                 if max(counts.get(v.us, 0), counts.get(team, 0)) >= self.rules.team_thread_max_messages:
                     self._close(v, tid, team, "team_thread_max_messages reached without a deal")
                     continue
-                if house and self._cash_counter(v, tid, team, payload):
+                if self._cash_counter(v, tid, team, payload):
                     continue
                 ours = max((int(m.get("tick") or -1) for m in messages if m.get("sender") == v.us), default=-1)
                 activity = max(self.first_seen.get(tid, v.tick), min(v.tick, self._heard(payload, v.us)), ours)
@@ -788,7 +789,7 @@ class TeamDesk:
                 return None
             price = min(offer.price, cap, math.floor(value - v.params.min_buy_surplus))
             price = min(price, self.rules.spend_room(ctx.cash - self.rules.cash_floor, ctx.spent_last_hour))
-            return bid_listing(offer.ref, offer.rarity, price, HOUSE_VENUE, offer.maker) if price > 0 else None
+            return bid_listing(offer.ref, offer.rarity, price, offer.venue, offer.maker) if price > 0 else None
         copy = spare_copy(v.me, v.offers, v.us, offer.ref)
         asset: dict[str, Any] = next((a for a in v.me.get("assets", []) if a.get("id") == copy), {})
         value = asset.get("your_value")
@@ -799,7 +800,21 @@ class TeamDesk:
             math.ceil(value + v.params.sell_min_surplus),
             math.ceil(value * self.rules.sell_min_value_ratio),
         )
-        return sell_listing(v.me, str(copy), price, HOUSE_VENUE, offer.maker)
+        return sell_listing(v.me, str(copy), price, offer.venue, offer.maker)
+
+    def _cash_venue(self, v: DeskView, where: str, team: str) -> Venue | None:
+        preferred = {owner.strip() for owner in v.params.preferred_sell_venue_owners.split(",")}
+        return next(
+            (
+                venue
+                for venue in v.venues
+                if venue.id == where
+                and venue.status == "open"
+                and venue.owner not in (v.us, team)
+                and (venue.id == HOUSE_VENUE or venue.owner in preferred)
+            ),
+            None,
+        )
 
     def _cash_counter(self, v: DeskView, tid: int, team: str, payload: dict[str, Any]) -> bool:
         """At most one standing cash proposal; unknown sends retain a durable promise.
@@ -808,7 +823,10 @@ class TeamDesk:
         """
         if self.ledger is None or not self.live or not v.window_open() or _ours_open(payload, v.us):
             return False
-        offers = [cash_offer(o, v.us, team, HOUSE_VENUE, v.tick) for o in payload.get("standing_offers") or []]
+        venue = self._cash_venue(v, str(payload.get("venue") or ""), team)
+        if venue is None:
+            return False
+        offers = [cash_offer(o, v.us, team, venue.id, v.tick) for o in payload.get("standing_offers") or []]
         candidate = next((o for o in offers if o is not None and o.id != self._cash_sent.get(tid)), None)
         if candidate is None:
             return False
@@ -826,7 +844,7 @@ class TeamDesk:
             ):
                 return False
             fresh = self.team.thread(tid)
-            if fresh.get("status", "open") != "open" or fresh.get("venue") != HOUSE_VENUE:
+            if fresh.get("status", "open") != "open" or fresh.get("venue") != venue.id:
                 return False
             if _ours_open(fresh, v.us) or any(_ours_taken(o, v.us) for o in fresh.get("standing_offers") or []):
                 return False
@@ -838,7 +856,7 @@ class TeamDesk:
                 return False
             offer = next(
                 (
-                    cash_offer(o, v.us, team, HOUSE_VENUE, v.tick)
+                    cash_offer(o, v.us, team, venue.id, v.tick)
                     for o in fresh.get("standing_offers") or []
                     if o.get("id") == candidate.id
                 ),
@@ -867,7 +885,7 @@ class TeamDesk:
                     "ref": listing.ref,
                     "side": listing.kind,
                     "price": listing.price,
-                    "venue": HOUSE_VENUE,
+                    "venue": venue.id,
                     "counterparty": team,
                 },
                 reason="structured cash counter at our guarded value",
@@ -886,22 +904,29 @@ class TeamDesk:
                 self.ledger.record("spend", v.tick, v.t_hours, listing.price, item)
                 self.ledger.record(f"operator_say:{item}:{listing.price}", v.tick, v.t_hours)
             self._cash_sent[tid] = offer.id
-            if not v.window_open():
+            if not v.window_open() or kill_switch(self.rules):
                 # Proven unsent: unlike an uncertain HTTP result, these promises can be released.
                 publication.release(self.ledger, token, v.tick, v.t_hours)
                 if listing.kind == "bid":
                     self.ledger.refund_bid(v.tick, v.t_hours, listing.price, item)
                 self.rec.decisions.settle(did, "expired")
                 return True
+            text = (
+                f"Contrapropuesta: {listing.ref} por {listing.price} P en {venue.id}. "
+                "Los términos exactos van adjuntos."
+            )
             body = self.rec.send(
                 did,
                 v.tick,
                 "say",
                 {"thread_id": tid, "cash_offer": terms},
-                lambda: self.team.say(
-                    tid, "Esta es mi contrapropuesta en efectivo. Los términos exactos van adjuntos.", offer=terms
-                ),
+                lambda: self.team.say(tid, text, offer=terms),
             )
+            if body is not None and type(body.get("message")) is int and self.sent_words is not None:
+                try:
+                    self.sent_words(tid, team, v.us, v.tick, body["message"], text, terms, venue.id)
+                except Exception as error:
+                    self.log(f"team desk: sent words not buffered ({type(error).__name__})")
             if body is not None and type(body.get("offer")) is int:
                 publication.confirm(self.ledger, token, body["offer"], v.tick, v.t_hours)
             elif (
@@ -1371,7 +1396,7 @@ class TeamDesk:
             message_id = (body or {}).get("message")
             if body is not None and type(message_id) is int and self.sent_words is not None:
                 try:
-                    self.sent_words(talk.thread_id, talk.team, v.us, v.tick, message_id, text, terms)
+                    self.sent_words(talk.thread_id, talk.team, v.us, v.tick, message_id, text, terms, HOUSE_VENUE)
                 except Exception as error:  # buffered observability must never change the completed send
                     self.log(f"team desk: sent words not buffered ({type(error).__name__})")
             if body is None and not self.rec.maybe_landed:  # refused: nothing stands, the spend comes back, but

@@ -1021,6 +1021,7 @@ class Taker:
             window_open=run.window.open,
             budget_s=run.window.left,
             listing_cap=snap.clock.limits.offers_per_team_per_tick,
+            tick_seconds=snap.clock.tick_seconds,
             max_tick_seconds=snap.clock.max_tick_seconds,
             jev=lambda state: self._ask_swap_jev(run, state),
             scan=snap.scan,

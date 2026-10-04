@@ -154,7 +154,8 @@ def test_only_acknowledged_team_words_are_buffered(tmp_path):
     actor.sent_words = lambda *args: acknowledged.append(args)
     actor.converse(view(), set())
     assert len(acknowledged) == 1
-    tid, other, us, tick, mid, text, terms = acknowledged[0]
+    tid, other, us, tick, mid, text, terms, venue = acknowledged[0]
+    assert venue == "rastro"
     assert (tid, other, us, tick, mid) == (42, "t05", "t01", 100, 1)
     assert text and terms["give"]["assets"] == [3]
 

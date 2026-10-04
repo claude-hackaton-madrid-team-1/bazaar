@@ -30,7 +30,7 @@ def configured(tmp_path, team, venues=(RASTRO, *PARTNERS, OURS), events=EVENTS):
 
 def test_config_defaults_disabled_and_deployed_owner_ids_are_validated():
     assert PARAMS.preferred_sell_venue_owners == "none"
-    assert load_strategy().params.preferred_sell_venue_owners == "t04,t15,t18"
+    assert load_strategy().params.preferred_sell_venue_owners == "t04,t10,t15,t18"
     with pytest.raises(ValidationError):
         type(PARAMS)(**{**PARAMS.model_dump(), "preferred_sell_venue_owners": "v15,t18"})
 
