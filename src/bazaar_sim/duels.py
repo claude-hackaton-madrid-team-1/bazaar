@@ -323,7 +323,7 @@ def _zoo_turn(w: World, duel: Duel, style: str, params: dict[str, float]) -> Non
     )
     try:
         act = _checked(LIVE_RIVALS[style](view))
-    except Exception as e:  # noqa: BLE001 - a broken rival holds: the shared clock never stops (#151 review)
+    except Exception as e:  # a broken rival holds: the shared clock never stops (#151 review)
         _warn_once(f"duel rival style {style!r} raised {type(e).__name__}: it holds instead", exc_info=True)
         return
     ours = duel.your_offer

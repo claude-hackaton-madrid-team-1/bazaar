@@ -291,7 +291,7 @@ class RankWatch:
     def observe(self, board: Mapping[str, Any], events: Sequence[Mapping[str, Any]], tick: int) -> list[Learning]:
         try:
             return self._run(board, events, tick)
-        except Exception as e:  # noqa: BLE001 — logging only: the watch never breaks a tick
+        except Exception as e:  # logging only: the watch never breaks a tick
             self._once(f"tick {tick} rank watch: skipped ({type(e).__name__})")
             return []
 

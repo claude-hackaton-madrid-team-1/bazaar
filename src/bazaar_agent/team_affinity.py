@@ -312,7 +312,7 @@ class AffinityBook:
     def _load(self, load_told: Callable[[], Iterable[str]]) -> None:
         try:
             self.told = frozenset(load_told())
-        except Exception as e:  # noqa: BLE001 — without it we may ask a team twice; never a reason to stop
+        except Exception as e:  # without it we may ask a team twice; never a reason to stop
             self.log(f"team affinity: stored answers unreadable ({type(e).__name__}); asking as if none")
         self.told_ready.set()
 
@@ -339,7 +339,7 @@ class AffinityBook:
                 unique = len({r.key for r in batch})
                 if stored is not None and stored < unique:
                     self.log(f"tick {tick} team affinity: {unique - stored} row(s) refused by Postgres, dropped")
-            except Exception as e:  # noqa: BLE001 — storage is for reading later; never a reason to stop trading
+            except Exception as e:  # storage is for reading later; never a reason to stop trading
                 self.log(f"tick {tick} team affinity: {len(batch)} row(s) not stored ({type(e).__name__})")
                 with self._lock:  # tried again at the next flush, unless a newer row for the same key came in
                     for r in batch:

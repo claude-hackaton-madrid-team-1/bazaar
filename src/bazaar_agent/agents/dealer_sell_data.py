@@ -192,7 +192,7 @@ def db_loader(connect: Callable[[], Any], log: Callable[[str], None]) -> Callabl
                 return market_from_db(conn)
             finally:
                 conn.close()
-        except Exception as e:  # noqa: BLE001 - the feed fallback keeps the desk going
+        except Exception as e:  # the feed fallback keeps the desk going
             log(f"dealer_sell: dealer data from Postgres unavailable ({type(e).__name__}); using the API and feed")
             return None
 

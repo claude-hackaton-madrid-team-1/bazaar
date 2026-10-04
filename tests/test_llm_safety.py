@@ -81,7 +81,7 @@ def test_providers_are_built_once_and_no_key_fails_before_jev(tmp_path):
     built = []
     judge = FakeJudge(verdict("sonnet-5-5", 0.9, FLOATS))
     config = RuntimeConfig()
-    s = settings(tmp_path, anthropic_api_key="sk-ant-x")
+    s = settings(tmp_path, anthropic_api_key="sk-fake-x")
     chooser = make_chooser(tmp_path, judge, available=lambda alias: not alias.startswith("gpt"))
     rt = LLMRuntime(config, s, chooser, factory=lambda prov, key: built.append(prov) or FakeProvider())
     rt.warm()

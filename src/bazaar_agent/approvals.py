@@ -164,7 +164,7 @@ def _write_need(inputs: dict[str, Any]) -> None:
         with _default_connect() as conn:
             conn.execute("set statement_timeout = 2000")
             record_need(conn, inputs)
-    except Exception as e:  # noqa: BLE001 — best effort: the WARN line already said it
+    except Exception as e:  # best effort: the WARN line already said it
         log.warning("approvals: could not record the approval request (%s)", type(e).__name__)
 
 

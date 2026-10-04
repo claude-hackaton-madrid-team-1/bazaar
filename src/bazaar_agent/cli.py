@@ -13,7 +13,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime
-from functools import partial
+from functools import cache, partial
 from typing import Annotated, Any
 
 import typer
@@ -366,7 +366,7 @@ def _team_affinity(as_json: bool) -> None:
         with db.connect(app="bazaar-affinity", connect_timeout_s=5) as conn:
             conn.read_only = True
             rows = ta.read(conn)
-    except Exception as e:  # noqa: BLE001 — a read-only report: say why and stop
+    except Exception as e:  # a read-only report: say why and stop
         err_console.print(f"team_affinity unreadable: {db.redact(str(e))}")
         raise typer.Exit(1) from None
     if as_json:
@@ -403,12 +403,8 @@ def trade_plan(
 
     from bazaar_agent import affinity as af
     from bazaar_agent import trade_desk as td
-    from bazaar_agent.agents.market import venues_from
 
-    me = _payload_file(me_file) if me_file else _team_me()[1]
-    public = None if (catalog_file and venues_file) else public_client(load_settings())
-    catalog = _payload_file(catalog_file) if catalog_file else public.catalog()  # type: ignore[union-attr]
-    venues = venues_from(_payload_file(venues_file) if venues_file else public.venues())  # type: ignore[union-attr]
+    me, catalog, venues = _offline_inputs(me_file, catalog_file, venues_file)
     where = next((v for v in venues if v.id == venue), None)
     if where is None:
         _fail(f"venue {venue!r} is not in /api/venues")
@@ -499,52 +495,14 @@ def swaps(
         )
 
 
-@app.command("team-checks")
-def team_checks(as_json: bool = typer.Option(False, "--json", help="Print the answers as JSON")) -> None:
-    """Read-only: the N17 spec's Q1-Q6 answered from the shared DB (the feed, our refused sends, thread offers)
-    and the go/no-go for team_threads_enabled. SELECTs in a read-only transaction; nothing is sent."""
-    from dataclasses import asdict
-
-    from rich.markup import escape
-
-    from bazaar_agent import db
-    from bazaar_agent import n17_checks as nc
-
-    events = _history(None, False)  # the shared DB first, as the agents read it
-    us = _our_team() or ""
-    refusals: list[dict[str, Any]] = []
-    offers: list[dict[str, Any]] = []
-    try:
-        with db.connect(app="bazaar-team-checks") as conn:
-            conn.read_only = True  # SELECTs only: any write raises
-            cur = conn.execute("select sdk_method, error_code, tick from executions where error_code is not null")
-            refusals = [{"sdk_method": m, "error_code": c, "tick": t} for m, c, t in cur.fetchall()]
-            # Our thread offers as #148's thread store keeps them (the `offers` table is not written by the agents).
-            cur = conn.execute(
-                "select (m.offer->>'id')::bigint, m.thread_id, m.offer->>'maker', m.offer->>'status' from messages m"
-                " join threads t on t.id = m.thread_id where t.ours and m.offer is not null"
-            )
-            offers = [{"id": i, "thread_id": t, "maker": m, "status": st} for i, t, m, st in cur.fetchall()]
-    except Exception as e:  # noqa: BLE001 — never the URL: a connect error can echo it (.ai/memory.md)
-        err_console.print(f"[yellow]no database ({type(e).__name__}): the feed alone answers[/yellow]")
-    found = nc.answers(events, us, refusals, offers)
-    verdict, why = nc.go_no_go(found)
-    if as_json:
-        typer.echo(json.dumps({"answers": [asdict(a) for a in found], "go_no_go": verdict, "why": why}, indent=2))
-        return
-    for a in found:
-        console.print(f"{a.q} · {a.verdict} · {a.question} · {escape(a.evidence)}", highlight=False)  # no [..]: markup
-    console.print(f"team_threads_enabled: {verdict} · {why}")
-
-
 def _offline_inputs(me_file: str | None, catalog_file: str | None, venues_file: str | None) -> tuple[Any, Any, Any]:
     """(/api/me, /api/catalog, venues): each from its file when given, else from the API (reads only)."""
     from bazaar_agent.agents.market import venues_from
 
     me = _payload_file(me_file) if me_file else _team_me()[1]
-    public = None if (catalog_file and venues_file) else public_client(load_settings())
-    catalog = _payload_file(catalog_file) if catalog_file else public.catalog()  # type: ignore[union-attr]
-    venues = venues_from(_payload_file(venues_file) if venues_file else public.venues())  # type: ignore[union-attr]
+    public = cache(lambda: public_client(load_settings()))  # built once, and only when a file is missing
+    catalog = _payload_file(catalog_file) if catalog_file else public().catalog()
+    venues = venues_from(_payload_file(venues_file) if venues_file else public().venues())
     return me, catalog, venues
 
 
@@ -598,9 +556,9 @@ def buyers(
     from bazaar_agent import db
 
     me = _payload_file(me_file) if me_file else _team_me()[1]
-    public = None if (catalog_file and board_file) else public_client(load_settings())
-    catalog = _payload_file(catalog_file) if catalog_file else public.catalog()  # type: ignore[union-attr]
-    board = _payload_file(board_file) if board_file else public.leaderboard()  # type: ignore[union-attr]
+    public = cache(lambda: public_client(load_settings()))  # built once, and only when a file is missing
+    catalog = _payload_file(catalog_file) if catalog_file else public().catalog()
+    board = _payload_file(board_file) if board_file else public().leaderboard()
     events = _history(events_file, live)
     stored, note = bd.stored_scan(lambda: db.connect(app="bazaar-buyers", connect_timeout_s=3)) if scan else ([], None)
     if note:
@@ -619,7 +577,7 @@ def buyers(
         try:
             with db.connect_ready("bazaar-buyers") as conn:
                 n = bd.save(conn, ranked, tick)
-        except Exception as e:  # noqa: BLE001 (printed redacted: a connect error can echo the password)
+        except Exception as e:  # printed redacted: a connect error can echo the password
             err_console.print(f"[red]not saved: {escape(bd.safe_error(e))}[/red]")
             raise typer.Exit(1) from None
         err_console.print(f"saved {n} rows for {len(ranked)} cards to Postgres (team_buyer_rank)")
@@ -1205,7 +1163,7 @@ def _forgiving_plan(
 
     try:
         persona = parse_personas(_dealer_personas(settings)).get(dealer)
-    except Exception as e:  # noqa: BLE001 — whatever failed, we cannot tell whether its final binds
+    except Exception as e:  # whatever failed, we cannot tell whether its final binds
         _fail(f"refusing to trade: /api/dealers unreadable ({type(e).__name__}): is {dealer}'s FINAL its limit?")
     if persona is None:
         _fail(f"refusing to trade: {dealer} is not listed in /api/dealers: is its FINAL its limit?")
@@ -1217,7 +1175,7 @@ def _forgiving_plan(
         _fail(f"refusing to trade: our team id is unknown, so our own fills cannot be left out of {dealer}'s range")
     try:
         events = _history(None, live=True)
-    except Exception as e:  # noqa: BLE001 — no fill known: its asks are never taken
+    except Exception as e:  # no fill known: its asks are never taken
         console.print(escape(f"feed unreadable ({type(e).__name__}): no fill known for {dealer}, we only bid"))
         events = []
     shaped = forgiving_plan(plan, persona, item, rarity, tape(events), rules, us)
@@ -1457,7 +1415,7 @@ def duel_run(
         nonlocal days_switch
         try:
             kept = deepcopy(days_switch)
-        except Exception as e:  # noqa: BLE001 - RecursionError on a pathological server value: keep the switch as is
+        except Exception as e:  # RecursionError on a pathological server value: keep the switch as is
             latch_failed(tick, e)
             return
         try:
@@ -1467,7 +1425,7 @@ def duel_run(
                     f"  duel days sign: {days_switch.verdict} (session {days_switch.session}; "
                     f"{escape(days_switch.describe())})"
                 )
-        except Exception as e:  # noqa: BLE001 - bookkeeping: the duels play this tick with the previous verdict
+        except Exception as e:  # bookkeeping: the duels play this tick with the previous verdict
             days_switch.keep_safer(kept)  # per role: a safer verdict found stays, never a half-merged `signed`
             latch_failed(tick, e)
 
@@ -1480,7 +1438,7 @@ def duel_run(
             observe_days(tick, [d for d in client.duels(done=True).get("duels") or [] if isinstance(d, dict)])
         except BazaarError as e:
             console.print(f"  /api/duels?done=true refused {e.code}: the days sign waits")
-        except Exception as e:  # noqa: BLE001 - bookkeeping after the tick's sends: it never breaks the loop
+        except Exception as e:  # bookkeeping after the tick's sends: it never breaks the loop
             console.print(f"  /api/duels?done=true failed ({type(e).__name__}): the days sign waits")
 
     def save_finished(tick: int) -> bool:
@@ -1492,7 +1450,7 @@ def duel_run(
         except BazaarError as e:
             console.print(f"tick {tick}: /api/duels?done=true refused {e.code}")
             return True
-        except Exception as e:  # noqa: BLE001 - bookkeeping after the tick's sends: it never breaks the loop
+        except Exception as e:  # bookkeeping after the tick's sends: it never breaks the loop
             console.print(f"tick {tick}: /api/duels?done=true failed ({type(e).__name__})")
             return False
         append_jsonl(log_path, {"tick": tick, "response": data, "done": True})
@@ -1567,7 +1525,7 @@ def duel_run(
                 offer = d.get("rival_offer")
                 key = f"{did}:{offer.get('id') or offer.get('tick')}" if isinstance(offer, dict) else did
                 injections.tag("duel", key, rival_text(d), c.tick, lambda m: console.print(f"  {escape(m)}"))
-            except Exception as e:  # noqa: BLE001 - calibration only
+            except Exception as e:  # calibration only
                 console.print(f"  duel {did}: injection tagging failed ({type(e).__name__}); the move goes on")
             pick = picks.get(did)
             if did in forced:  # v1: today's accept is the only legal move, played before Jev was asked

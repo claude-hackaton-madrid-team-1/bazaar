@@ -454,7 +454,7 @@ class TeamDesk:
             return
         try:
             self._read_their_words(v, tid, team, payload)
-        except Exception as e:  # noqa: BLE001 — a report for later; the message is marked read, never retried
+        except Exception as e:  # a report for later; the message is marked read, never retried
             self.log(f"tick {v.tick} team desk: words of {team} in thread {tid} not read ({type(e).__name__})")
 
     def _read_their_words(self, v: DeskView, tid: int, team: str, payload: dict[str, Any]) -> None:
@@ -489,7 +489,7 @@ class TeamDesk:
                 tick = v.tick
                 amap = af.affinity_map(v.events, af.catalog_sets(v.catalog), multiset, v.catalog, exclude=[v.us])
             self.affinity.add(ta.inferred_rows(amap, tick, multiset))
-        except Exception as e:  # noqa: BLE001 — a report for later; never a reason to stop the tick
+        except Exception as e:  # a report for later; never a reason to stop the tick
             self.log(f"tick {v.tick} team desk: no inferred multipliers ({type(e).__name__})")
 
     def _day(self, v: DeskView) -> str:
@@ -649,7 +649,7 @@ class TeamDesk:
         try:  # never replaces an exception of the tick in flight (a ledger outage stays one)
             self._remember_inferred(v)
             self.affinity.flush(v.tick)
-        except Exception as e:  # noqa: BLE001 — storage is for reading later
+        except Exception as e:  # storage is for reading later
             self.log(f"tick {v.tick} team desk: affinity rows not handed over ({type(e).__name__})")
 
     def _converse(self, v: DeskView, taken: set[int]) -> None:
@@ -1106,7 +1106,7 @@ class TeamDesk:
             return True, None, "card hunt: deterministic gate (guardrails + fairness judge), no Jev"
         try:
             advice = v.jev(self.swap_state(v, trade, cash, fee, thread, step, kind))
-        except Exception as e:  # noqa: BLE001 — a Jev failure refuses the swap, never the tick
+        except Exception as e:  # a Jev failure refuses the swap, never the tick
             return False, None, f"jev failed ({type(e).__name__}): not sent"
         bar = self.rules.team_swap_jev_min_confidence
         if advice.verdict == "yes" and advice.value >= bar:
@@ -1221,7 +1221,7 @@ class TeamDesk:
                 asset=trade.asset_id,
                 value=sale.your_value,
             )
-        except Exception:  # noqa: BLE001 — the estimate only informs Jev; the guard still checks the send
+        except Exception:  # the estimate only informs Jev; the guard still checks the send
             return None
 
     def _jev_refused(
@@ -1576,7 +1576,7 @@ class TeamDesk:
             worth = {w.ref: w.worth for w in wanted_cards(m, v.params, self.rules, dealer_prices(v.events))}
         except (BazaarError, LedgerUnavailable):
             raise  # a refused read or a ledger outage is the taker's to report (it holds the tick)
-        except Exception as e:  # noqa: BLE001 — a plan that cannot be built means no swaps, never a dead tick
+        except Exception as e:  # a plan that cannot be built means no swaps, never a dead tick
             self.log(f"tick {v.tick} team desk: no plan this tick ({type(e).__name__}: {e})")
             self._plan = _Plan(v.tick, ())
             return ()

@@ -188,7 +188,7 @@ async def _clock_loop(sim: Sim) -> None:
         try:
             if world.advance_if_due():
                 await asyncio.to_thread(sim.persist)
-        except Exception:  # noqa: BLE001 - one bad tick must never stop the simulator's clock (#178 review)
+        except Exception:  # one bad tick must never stop the simulator's clock (#178 review)
             log.exception("sim clock: a tick or its save failed; the clock keeps going")
 
 

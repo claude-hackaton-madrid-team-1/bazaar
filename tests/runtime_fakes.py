@@ -11,7 +11,7 @@ from bazaar_agent.guardrails import Guardrails, Ledger
 from bazaar_agent.runtime.backend import Backend
 from tests.agent_fakes import FakePublic, FakeTeam, clock
 
-TOKEN = "sk-ant-oat01-RUNTIME-TOKEN-MUST-NEVER-PRINT"
+TOKEN = "sk-fake-oat01-RUNTIME-TOKEN-MUST-NEVER-PRINT"
 TEAM_KEY = "tk-team1-runtime-secret-0099"
 DUEL = {
     "duel": 7,

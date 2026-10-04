@@ -25,7 +25,7 @@ NOTICE_MAX_CHARS = 240  # the feed clips a notice here (venue.ANNOUNCE_MAX_CHARS
 WANTED_MAX = 4  # cards named in one notice
 WANTED_POOL = 8  # the ranked cards the notices rotate through
 CARD_REF = re.compile(r"[A-Z]{2,4}-[0-9]{2}")  # LAV-03, RET-10: anything else is never echoed
-EXAMPLE_PRICE = 20  # "dearer" is judged on one sale at this price, as the generic notice's example
+EXAMPLE_PRICE = 20  # both notices judge "dearer" on one sale at this price: 5 % of it is whole, no rounding hides
 
 
 def fee_text(fee_bps: int, fee_per_card: int) -> str:

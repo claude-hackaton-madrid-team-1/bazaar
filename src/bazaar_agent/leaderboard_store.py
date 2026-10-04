@@ -57,7 +57,7 @@ class LeaderboardStore:
         try:
             conn = self._connect()
             conn.autocommit = True
-        except Exception as e:  # noqa: BLE001 — memory goes on without Postgres
+        except Exception as e:  # memory goes on without Postgres
             self._fail("connect", e)
             return None
         self._conn = conn
@@ -75,7 +75,7 @@ class LeaderboardStore:
                 conn.execute(f"set local statement_timeout = {STATEMENT_TIMEOUT_MS}")
                 with conn.cursor() as cur:
                     cur.executemany(UPSERT, [_row(self.world, s) for s in rows])
-        except Exception as e:  # noqa: BLE001 — never into the tick loop
+        except Exception as e:  # never into the tick loop
             self._fail("write", e)
             return 0
         if self._failed:
@@ -92,7 +92,7 @@ class LeaderboardStore:
             with conn.transaction():
                 conn.execute(f"set local statement_timeout = {STATEMENT_TIMEOUT_MS}")
                 rows = conn.execute(LOAD, {"world": self.world, "back": back_ticks}).fetchall()
-        except Exception as e:  # noqa: BLE001 — start with an empty history
+        except Exception as e:  # start with an empty history
             self._fail("read", e)
             return []
         return [_standing(r) for r in rows]

@@ -472,11 +472,6 @@ def v2_policy(params: V2Params = DEFAULTS) -> Policy:
     return lambda duels, tick, first_seen: plan_moves(duels, tick, first_seen, params)
 
 
-def silent_policy() -> Policy:
-    """A reference, not a candidate: never speak, accept the best standing offer in time."""
-    return v2_policy(V2Params(max_own_offers=1, open_wait_ticks=10_000))
-
-
 # ---------------------------------------------------------------- tournament
 
 

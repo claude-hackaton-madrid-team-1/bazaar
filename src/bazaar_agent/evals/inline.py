@@ -78,7 +78,7 @@ class TickEvals:
         self._running.set()
         try:
             self._start(self._pass)
-        except Exception as e:  # noqa: BLE001 - a thread that cannot start costs this pass, never the tick
+        except Exception as e:  # a thread that cannot start costs this pass, never the tick
             self._running.clear()
             self._log(f"evals ({self.agent}): could not start a pass ({type(e).__name__})")
             return False
@@ -92,7 +92,7 @@ class TickEvals:
     def _pass(self) -> None:
         try:
             self._score(self.targets)
-        except Exception as e:  # noqa: BLE001 - evals are a side record: they never stop an agent
+        except Exception as e:  # evals are a side record: they never stop an agent
             self._log(f"evals ({self.agent}): pass failed ({type(e).__name__}); next one in {self.every_ticks} ticks")
         finally:
             self._running.clear()

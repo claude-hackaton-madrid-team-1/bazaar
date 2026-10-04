@@ -562,11 +562,6 @@ def _rival_turn(d: _Duel, rival: Rival, tick: int, rng: random.Random) -> None:
         d.say(RIVAL_ALIAS, act.price, days, tick)
 
 
-def _team_turn(d: _Duel, policy: Policy, tick: int, can_accept: bool = True) -> bool:
-    """Our move in one duel. True when it was an accept that went through (it spends the team's accept)."""
-    return _apply(d, policy(payload(d), tick, d.sc.started_tick), tick, can_accept)
-
-
 def _apply(d: _Duel, move: Move | None, tick: int, can_accept: bool = True) -> bool:
     sc = d.sc
     kind = getattr(move, "kind", "hold")

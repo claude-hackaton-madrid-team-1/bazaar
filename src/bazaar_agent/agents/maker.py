@@ -441,7 +441,7 @@ class Maker:
             self.jev.begin_tick(mine)
             targets = [self.jev.remembered(t, params, self.rules) for t in targets]
         targets = self._relisted(snap, targets, mine)
-        held = Counter(str(a.get("ref")) for a in snap.me.get("assets") or [] if a.get("kind") == "card")
+        held = _held(snap.me)
         targets = self._with_buy_targets(snap, targets, held)
         if self.config.counter_bids:
             targets = self._with_counters(snap, targets, params)
@@ -568,7 +568,7 @@ class Maker:
             self._turns = {}
             return targets
         public = {t.ref: t for t in targets if t.side == "bid" and t.to is None and not t.counter}
-        held = Counter(str(a.get("ref")) for a in snap.me.get("assets") or [] if a.get("kind") == "card")
+        held = _held(snap.me)
 
         def holders(ref: str) -> list[str]:
             return [str(row.get("team")) for row in m.card(ref).get("spare") or [] if row.get("team")]
@@ -657,7 +657,7 @@ class Maker:
             return cached[1]
         try:
             supply = supply_map(snap.catalog, snap.me, snap.events, snap.scan).cards.get(card)
-        except Exception as e:  # noqa: BLE001 — a hint for the record: never costs the bid
+        except Exception as e:  # a hint for the record: never costs the bid
             return f"unknown ({type(e).__name__})"
         found = ", ".join(f"{team}×{n}" for team, n in supply.holders) if supply and supply.holders else "unknown"
         self._holder_notes[card] = (tick, found)

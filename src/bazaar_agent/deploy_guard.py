@@ -219,7 +219,7 @@ def run(client: Any, rules: Guardrails, *, now: float | None = None) -> GuardVer
     for path in READS:
         try:
             payloads[path] = calls[path]()
-        except Exception as e:  # noqa: BLE001 - any failure is "could not read": the gate stays shut
+        except Exception as e:  # any failure is "could not read": the gate stays shut
             errors[path] = _reason(e)
     return verdict(
         payloads.get("/api/duels"),
@@ -263,7 +263,7 @@ def deploy_guard_cmd(json_out: bool = typer.Option(False, "--json", help="Print 
     err = Console(stderr=True)
     try:
         client, rules = _client(), _load_rules()
-    except Exception as e:  # noqa: BLE001 - a missing key or a bad GUARDRAILS.md: the gate stays shut
+    except Exception as e:  # a missing key or a bad GUARDRAILS.md: the gate stays shut
         err.print(f"[red]DO NOT MERGE: could not start the guard ({escape(type(e).__name__)})[/red]")
         raise typer.Exit(1) from None
     v = run(client, rules)

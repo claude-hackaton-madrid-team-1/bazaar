@@ -184,8 +184,8 @@ def test_cli_unknown_publication_keeps_cash_or_asset_reserved(
     tmp_path,
     monkeypatch,
     mode,
-    status,  # noqa: F811
-):  # noqa: F811
+    status,
+):
     from bazaar_agent import cli
     from bazaar_agent.agents import publication
     from bazaar_agent.sdk import BazaarError

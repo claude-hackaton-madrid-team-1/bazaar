@@ -290,7 +290,7 @@ class NewsSentinel:
         rival of ours); `market`: the tick's `strategy.Market` (its supply map feeds the team matrix)."""
         try:
             return self._run(tick, events, catalog, clock, us)
-        except Exception as e:  # noqa: BLE001 — logging only: the sentinel never breaks a tick
+        except Exception as e:  # logging only: the sentinel never breaks a tick
             self._once(f"tick {tick} news: skipped ({type(e).__name__})")
             return []
         finally:
@@ -309,7 +309,7 @@ class NewsSentinel:
                      *rumour_rows(self.seen.values(), float(t_hours))]  # fmt: skip
             context = context_of(tick, float(t_hours), market, teams)
             self.playbook.update(tick, float(t_hours), float(seconds), self.upcoming, context, extra)
-        except Exception as e:  # noqa: BLE001 — advice only: a bug here never costs the tick
+        except Exception as e:  # advice only: a bug here never costs the tick
             self._once(f"tick {tick} playbook: skipped ({type(e).__name__})")
 
     def _run(
@@ -362,7 +362,7 @@ class NewsSentinel:
                 getattr(market, "held", {}), getattr(market, "released", ()), getattr(market, "chasers", {}),
                 self.ranks.trail, events,
             )  # fmt: skip
-        except Exception as e:  # noqa: BLE001 — the matrix is advice: a bug in it never costs the tick
+        except Exception as e:  # the matrix is advice: a bug in it never costs the tick
             self._once(f"tick {tick} team matrix: skipped ({type(e).__name__})")
             return
         if self.matrix_store is not None:
@@ -386,7 +386,7 @@ class NewsSentinel:
         what = self._due.pop(0)
         try:
             answer = self.public.call("GET", f"/api/{what}")
-        except Exception as e:  # noqa: BLE001 — a refused or failed read: the feed still brings news.posted
+        except Exception as e:  # a refused or failed read: the feed still brings news.posted
             code = getattr(e, "code", None)  # BazaarError: the server's reason (rate_limited, http_502, ...)
             why = f"{type(e).__name__}: {code}" if isinstance(code, str) and code else type(e).__name__
             self._once(f"tick {tick} news: /api/{what} read failed ({why})")

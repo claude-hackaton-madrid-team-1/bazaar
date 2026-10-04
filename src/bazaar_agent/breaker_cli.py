@@ -36,7 +36,7 @@ def _tick(tick: int | None) -> int:
 
     try:
         return int(public_client(load_settings()).clock()["tick"])
-    except Exception as e:  # noqa: BLE001 — the CLI says why and stops
+    except Exception as e:  # the CLI says why and stops
         err_console.print(f"could not read the clock ({type(e).__name__}): pass --tick")
         raise typer.Exit(2) from e
 
@@ -44,7 +44,7 @@ def _tick(tick: int | None) -> int:
 def _open(connect: Connect) -> psycopg.Connection:
     try:
         return connect()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         err_console.print(f"Postgres unreachable ({type(e).__name__}): see `uv run bazaar db check`")
         raise typer.Exit(2) from e
 

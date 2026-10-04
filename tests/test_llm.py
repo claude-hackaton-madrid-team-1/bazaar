@@ -111,7 +111,7 @@ def chooser(tmp_path, judge, pin=None, config=None, key="ts-test"):
 def runtime(tmp_path, provider, *, judge=None, config=None, pin=None, **keys):
     cfg = config or RuntimeConfig()
     judge = judge or FakeJudge(verdict("haiku-4-5", 0.5, {}))
-    s = settings(tmp_path, anthropic_api_key="sk-ant-test", openai_api_key="sk-oa-test", **keys)
+    s = settings(tmp_path, anthropic_api_key="sk-fake-test", openai_api_key="sk-oa-test", **keys)
     return LLMRuntime(cfg, s, chooser(tmp_path, judge, pin, cfg), factory=lambda prov, key: provider)
 
 
@@ -378,9 +378,9 @@ def test_openai_uses_the_responses_api_and_detects_refusals_and_incomplete_answe
 def test_routing_needs_the_provider_key_and_names_the_variable_never_a_value(tmp_path):
     seen = []
     factory = lambda provider, key: seen.append((provider, key)) or FakeProvider()  # noqa: E731
-    s = settings(tmp_path, anthropic_api_key="sk-ant-secret")
+    s = settings(tmp_path, anthropic_api_key="sk-fake-secret")
     provider_for(resolve("opus-5-5"), s, factory)
-    assert seen == [("anthropic", "sk-ant-secret")]
+    assert seen == [("anthropic", "sk-fake-secret")]
     with pytest.raises(LLMError, match="set OPENAI_API_KEY") as missing:
         provider_for(resolve("gpt-6-1-sol"), s, factory)
     assert missing.value.reason == "key_missing" and "secret" not in str(missing.value)

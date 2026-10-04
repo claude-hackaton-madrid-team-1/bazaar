@@ -621,7 +621,7 @@ def run(
             if state.should_warn(s, tick):
                 log(f"tick {tick} WARN watchdog: {s.line()}")
         return findings
-    except Exception as e:  # noqa: BLE001 — the watchdog must never break a tick
+    except Exception as e:  # the watchdog must never break a tick
         log(f"tick {tick} watchdog: check failed ({type(e).__name__}); nothing tripped")
         with contextlib.suppress(Exception):
             conn.rollback()
@@ -665,7 +665,7 @@ class Watchdog:
                 conn.commit()
                 self._conn = conn
             run(self._conn, tick, rules, self.log, self.state)
-        except Exception as e:  # noqa: BLE001 — a connect failure: logged, retried next tick
+        except Exception as e:  # a connect failure: logged, retried next tick
             self.log(f"tick {tick} watchdog: Postgres unavailable ({type(e).__name__}); nothing checked")
             broken, self._conn = self._conn, None
             if broken is not None:

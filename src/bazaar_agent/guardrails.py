@@ -1249,7 +1249,7 @@ def simulator_target() -> bool:
 
         try:
             _TARGET["sim"] = load_settings().simulator
-        except Exception:  # noqa: BLE001 — an unreadable config is never taken for the simulator
+        except Exception:  # an unreadable config is never taken for the simulator
             _TARGET["sim"] = False
     return _TARGET["sim"]
 

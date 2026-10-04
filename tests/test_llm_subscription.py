@@ -32,8 +32,8 @@ from bazaar_agent.llm.runtime import LLMRuntime, build_runtime
 from bazaar_agent.runtime import claude as cl
 from tests.test_llm import FakeJudge, FakeProvider, chooser, verdict
 
-TOKEN = "sk-ant-oat01-THIS-TOKEN-MUST-NEVER-PRINT"
-API_KEY = "sk-ant-api03-api-key-value"
+TOKEN = "sk-fake-oat01-THIS-TOKEN-MUST-NEVER-PRINT"
+API_KEY = "sk-fake-api03-api-key-value"
 RULES = Guardrails()
 HAIKU = resolve("haiku-4-5").model_id
 SONNET = resolve("sonnet-5-5").model_id

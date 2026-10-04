@@ -18,7 +18,7 @@ from statistics import mean
 
 from bazaar_agent.evals.dealers import price_class
 from bazaar_agent.intel import DealerThread
-from bazaar_agent.learn.evolve import DEFAULT_PATIENCE, Ladder
+from bazaar_agent.learn.evolve import Ladder
 
 
 @dataclass(frozen=True)
@@ -143,10 +143,6 @@ def today_ladder(fills: tuple[int, ...], cap: int | None, max_ticks: int) -> Lad
     start = min(fills[0], top)
     step = max(1, -(-(top - start) // max(1, max_ticks - 1)))
     return Ladder(start, step, top)
-
-
-def patience_of(curve_patience: float | None) -> float:
-    return curve_patience or DEFAULT_PATIENCE
 
 
 def replay_all(
