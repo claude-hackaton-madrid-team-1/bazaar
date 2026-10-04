@@ -830,3 +830,8 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 
 - [Spec and local evidence](MR1-spec.md): route an existing public ask only on strictly better crossing demand, after confirmed cancel and through existing fresh locked publication guards.
 - Actor regression red on main; targeted maker/routing suite and static checks; coordinator owns independent review, integrated gate and guarded rollout.
+
+## PM1 — Sustained preferred-market supply
+
+- [Spec](PM1-spec.md): validated Team15/Team18 public-ask fallback, crossing demand first, deterministic distribution and sticky one-time migration from nonpreferred markets.
+- 177 focused tests pass; independent reviews and coordinator's integrated gate/guarded deployment required.

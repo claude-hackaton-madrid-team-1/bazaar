@@ -1520,3 +1520,7 @@ The learnings timestamp is created_tick, not tick; qualifying public.learnings a
 ### [2026-10-04] build-error — MR1 fixtures
 
 Initial no-demand fixture removed all buyer evidence, triggering the pre-existing no-longer-target cancellation; retain baseline market events to isolate relocation. Cancellation fakes initially used incorrect SDK exception arguments and raw TimeoutError; use BazaarError(code, message, status), matching the wrapped SDK transport boundary. No production exception handling changed.
+
+### [2026-10-04] finding — PM1 requested partner markets need an explicit fallback
+
+MR1 moves asks only on observed crossing demand; absent bids, lifetime activity still selects Rastro after partner listings expire. Omar explicitly requested sustained Team15/Team18 market presence. PM1 adds validated STRATEGY owner preference `t15,t18`: eligible zero-fee public fallback, stable asset-ID distribution, confirmed-cancel migration from nonpreferred markets. Crossing net demand remains first; already-preferred asks stay put. No new API reads or live fills claimed. `177 passed in 1.79s`; mypy3files and Black/Ruff clean. Initial Ruff import-order error corrected by sorting the existing guardrails import.

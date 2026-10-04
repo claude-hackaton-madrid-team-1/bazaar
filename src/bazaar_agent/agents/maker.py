@@ -97,6 +97,7 @@ from bazaar_agent.guardrails import (
     effective_cash_floor,
     kill_switch,
     refund_row,
+    team_ids,
 )
 from bazaar_agent.holdings import Holdings
 from bazaar_agent.intel import book_values, card_rarities, listed_makers, settled_volume, tape
@@ -306,6 +307,7 @@ class Maker:
         self.team, self.public, self.rules, self.params = team, public, rules, params
         self.ledger, self.feed, self.live, self.log, self.now = ledger, feed, live, log, now
         self.config = config or MakerConfig()
+        self._preferred_sell_owners: tuple[str, ...] = ()
         self.jev = jev  # Jev picks prices and reprice-or-hold among legal candidates; None = today's prices
         self.holdings = holdings  # /me from the shared Postgres snapshot while provably current, else live
         self.notices = notices  # announced venue fees and closings from the feed (N12); None = /api/venues only
@@ -400,6 +402,7 @@ class Maker:
         by_hand = [o for o in mine if o.id in hands_off]
         mine = [o for o in mine if o.id not in hands_off]
         params = self.params(clock.tick)
+        self._preferred_sell_owners = team_ids(params.preferred_sell_venue_owners)
         if self.notices is not None:
             self.notices.update(snap.events, snap.us)
         book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, params, self.rules, snap.scan)
@@ -892,9 +895,9 @@ class Maker:
     def _with_relocations(
         self, run: _MakerRun, actions: list[MakerAction], targets: list[Target], mine: list[OpenOffer]
     ) -> list[MakerAction]:
-        """Move an unchanged public ask only toward strictly better crossing demand.
+        """Move public asks toward better crossing demand or a configured zero-fee partner.
 
-        ponytail: reuse cancel-confirm/repost; no polling or venue rotation without a bid.
+        ponytail: reuse cancel-confirm/repost; preference alone never rotates between partners.
         """
         busy = {a.offer.id for a in actions if a.offer is not None}
         addressed = {o.get("id") for o in run.offers if o.get("to")}
@@ -915,8 +918,21 @@ class Maker:
                 continue
             target = replace(target, price=offer.price, final=True)
             venue = self._venue(run.snap, target, venues, better_than=offer.venue)
+            why = "crossing net demand"
+            if venue is None and self._preferred_sell_owners:
+                chosen = self._venue(run.snap, target, venues)
+                current = next((v for v in venues if v.id == offer.venue), None)
+                if (
+                    chosen is not None
+                    and chosen.id != offer.venue
+                    and chosen.owner in self._preferred_sell_owners
+                    and chosen.fee(offer.price) == 0
+                    and current is not None
+                    and current.owner not in self._preferred_sell_owners
+                ):
+                    venue, why = chosen, "configured zero-fee market preference"
             if venue is not None:
-                why = f"crossing net demand: move {offer.venue} → {venue.id} at unchanged {offer.price}"
+                why = f"{why}: move {offer.venue} → {venue.id} at unchanged {offer.price}"
                 relocations.append(MakerAction("reprice", why, target, offer))
         return [a for a in actions if a.kind != "post"] + relocations + [a for a in actions if a.kind == "post"]
 
@@ -959,7 +975,15 @@ class Maker:
                 for v in eligible
                 if demand.get(v.id, 0) >= target.price and demand.get(v.id, 0) > demand.get(better_than, 0)
             ]
-        return best_venue(eligible, snap.us, target.price, to=target.to, demand=demand)
+        return best_venue(
+            eligible,
+            snap.us,
+            target.price,
+            to=target.to,
+            demand=demand,
+            preferred_owners=self._preferred_sell_owners if target.side == "ask" else (),
+            spread_key=target.asset_id or sum(map(ord, target.ref)),
+        )
 
     def _listing(self, run: _MakerRun, t: Target, venue: str) -> Listing:
         if t.side == "ask" and t.asset_id is not None:
