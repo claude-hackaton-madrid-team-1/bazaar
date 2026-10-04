@@ -67,7 +67,7 @@ Kinds: `injection`, `abuse`, `spam`, `false_claim`; settings `strikes_to_cooloff
 | final offer / patience | no phrase when the dealer's final stands (`final=True`) |
 | cool-off, tricks | back off on `persona.cooloff` / `persona.strike` for us, a `cooloff` close, a warning in the reply, a learned blocker |
 | conduct judge (injection, abuse, spam, false_claim) | a question only ("¿usted sabe algo de …?"), no claim, no instruction; every phrase and every full message passes our own `injection_flags`, no forbidden address (`NEVER_ADDRESS`); Abuela gets a warm carrier |
-| flags (a correct flag scores against us) | a `flag.raised` on one of our woven messages stops the hunt for 100 × the back-off |
+| flags (a correct flag scores against us) | a `flag.raised` on one of our woven messages stops the hunt for 100 × the back-off, when the server's answer to our send carries the message id (`bluff.message_id`: unverified on the real game, whose write answers may not). Team texts are `null` in the public feed, so other teams cannot read a woven message to flag it |
 | topic ≤ 600 chars | no topic is ever sent (no thread opened) |
 | 1,200 chars | the woven message is checked ≤ 1,200 |
 | never accept | the hunter has no accept path; the taker test asserts the request list is identical with and without it |
@@ -98,7 +98,7 @@ All from public text (`SEEDS` in `egg_hunt.py`, plus live mining):
 | Source | Weight | Examples |
 |---|---|---|
 | `field`: the words a dealer echoed when another team found an egg on Saturday (logs-eggs §5) | 1.0 | Abuela: "la chulapa dorada" (E1, 11 finds; also "the golden chulapa", Pilar's English wording), "sile nole repe me falta", "un chotis en una baldosa" (E4, 4), "el cocido con sus tres vuelcos" (E5, 3); Pícaros: "el timo de la estampita", "Rinconete y Cortadillo", "el Lazarillo de Tormes" (E3, 6); El Chato: "un bocadillo de calamares en la Plaza Mayor con una caña" (E6, 2: one natural phrase that holds every keyword the echo suggests) |
-| `hint`: "ask X about Y" / "pregunta a X por Y" in any dealer reply in the feed window, routed to the dealer the reply names | 0.8 × 0.9, rising with how often it is repeated | "the golden chulapa" → Abuela (Pilar's hint), "the Moscow gold" → banco |
+| `hint`: "ask X about Y" / "pregunta a X por Y" in any dealer reply in the feed window, routed to the last dealer the reply names before the phrase | 0.8 × 0.9, rising with how often it is repeated | "the golden chulapa" → Abuela (Pilar's hint), "the Moscow gold" → banco |
 | `lore`: Madrid / Rastro idioms the personas use, the Sunday set (Chamberí "Andén 0", "El Tren Fantasma", ghost stations) | 0.5 | "la estación fantasma de Chamberí", "el tren de Chamberí" (the Pícaros' own reply to t10 at t1370) |
 
 Left out: E2 "el oro de Moscú" (Don Ernesto; the card had a print run of 1 and is gone; his strictness is 1.0), and
@@ -123,6 +123,9 @@ is only said back as a question.
 | `egg_hunt_max_finds_per_dealer` | 1 | stop with a dealer after a find (Abuela held 3 eggs Saturday: 3 keeps hunting her) |
 | `egg_hunt_max_finds` | 5 | stop everywhere |
 | code: `MAX_PER_TICK` | 1 | one woven message per tick for the team |
+
+The hourly bucket is `int(t_hours)`, so up to 2 × 3 phrases to one dealer can land in the minutes around an hour
+boundary (still one per tick for the team, and the 8-tick gap per dealer).
 
 Key budget: **+0 requests** (ride mode). Duels, taker and maker keep the whole key. Thread slots: **+0**.
 

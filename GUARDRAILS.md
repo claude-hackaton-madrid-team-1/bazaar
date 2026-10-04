@@ -174,7 +174,7 @@ Scoring note (Omar, Sat 3 Oct): duels have their own scoring model (pie share ×
 - `egg_hunt_dealers` = abuela,picaros,chato,pilar — the dealers a phrase may ride to. Not banco: Don Ernesto's strictness is 1.0 and his only known egg (the Chulapa Dorada, print run 1) is gone.
 - `egg_hunt_max_phrases_per_dealer_per_hour` = 3 — woven bids per dealer per game hour (one game hour = one real hour on Sunday), counted from the stored tried set, so a restart does not reset it. The whole team weaves at most one message per tick.
 - `egg_hunt_dealer_gap_ticks` = 8 — ticks between two phrases to the same dealer (2 min at 15 s): its reply and an `egg.found` arrive first, so a find is put down to the right phrase.
-- `egg_hunt_backoff_ticks` = 240 — one hour at 15 s ticks without phrases to a dealer after its cool-off, strike, a warning in its reply, or our thread closed for cool-off; to every dealer when that came right after a woven phrase. A flag on a woven message stops the hunt for 100× this.
+- `egg_hunt_backoff_ticks` = 240 — one hour at 15 s ticks without phrases to a dealer after its cool-off, strike, a warning in its reply, or our thread closed for cool-off; to every dealer when that came right after a woven phrase. A flag on a woven message stops the hunt for 100× this, when the server's answer to our send carries the message id (unverified on the real game).
 - `egg_hunt_max_finds_per_dealer` = 1 — stop with a dealer once we found an egg there (Abuela held 3 eggs on Saturday: raise to 3 to keep hunting her).
 - `egg_hunt_max_finds` = 5 — stop everywhere at this many finds of ours.
 

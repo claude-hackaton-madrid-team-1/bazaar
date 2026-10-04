@@ -205,11 +205,12 @@ def seed_candidates(seeds: Mapping[str, Sequence[tuple[str, Source, float]]] = S
 
 
 def named_dealer(text: str, speaker: str) -> str | None:
-    """The dealer a hint points at: the first other dealer it names (folded), else None."""
+    """The dealer a hint points at: the last other dealer named in `text` (the reply up to the hint's phrase, so
+    "Doña Pilar comes Saturdays… ask Don Ernesto about the Moscow gold" is Don Ernesto's), else None."""
     plain = f" {fold(text)} "
-    hits = [(plain.find(f" {n} "), d) for d, names in DEALER_NAMES.items() if d != speaker for n in names]
+    hits = [(plain.rfind(f" {n} "), d) for d, names in DEALER_NAMES.items() if d != speaker for n in names]
     hits = [(i, d) for i, d in hits if i >= 0]
-    return min(hits)[1] if hits else None
+    return max(hits)[1] if hits else None
 
 
 def mine_hints(text: object, speaker: str) -> list[tuple[str, str]]:
@@ -220,7 +221,7 @@ def mine_hints(text: object, speaker: str) -> list[tuple[str, str]]:
     out = []
     for m in HINT.finditer(body):
         phrase = re.sub(r"\s+(?:he|she|they|y|and|que|who)\b.*$", "", clean(m.group("phrase")), flags=re.I).strip()
-        target = named_dealer(body, speaker)
+        target = named_dealer(body[: m.start("phrase")], speaker)
         if target and vetted(phrase):
             out.append((target, phrase))
     return out
