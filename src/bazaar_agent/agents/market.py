@@ -12,7 +12,7 @@ on a board is skipped, never guessed at. Words persuade, structure binds.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -230,13 +230,25 @@ def addressed_to_us(response: dict[str, Any], us: str) -> list[dict[str, Any]]:
     return out
 
 
-def best_venue(venues: Iterable[Venue], us: str, price: int) -> Venue | None:
-    """Where an offer is likeliest to fill: the venue's trades so far (activity), discounted by the fee
-    share its taker pays. El Rastro wins until a team venue trades as much at a lower fee."""
+def best_venue(
+    venues: Iterable[Venue], us: str, price: int, *, to: str | None = None, demand: Mapping[str, int] | None = None
+) -> Venue | None:
+    """Route public asks toward observed card-specific net bids, else activity and fees.
+
+    An addressed offer already has a counterparty: minimise their acceptance fee, and
+    never choose their own venue (they cannot accept there). Demand is a hint, not a fill.
+    """
 
     def score(v: Venue) -> float:
         fee_share = min(1.0, v.fee(price) / max(1, price))
         return (v.trades + 1) * (1.0 - fee_share)
 
-    candidates = [v for v in tradable_venues(venues, us) if v.mechanism in ("board", "auto", "")]
+    candidates = [
+        v for v in tradable_venues(venues, us) if v.mechanism in ("board", "auto", "") and (to is None or v.owner != to)
+    ]
+    if to is not None:
+        return max(candidates, key=lambda v: (-v.fee(price), score(v), v.house, v.id), default=None)
+    liquid = [v for v in candidates if demand and demand.get(v.id, 0) >= price]
+    if liquid and demand is not None:
+        return max(liquid, key=lambda v: (demand[v.id], -v.fee(price), score(v), v.id))
     return max(candidates, key=lambda v: (score(v), v.house, v.id), default=None)

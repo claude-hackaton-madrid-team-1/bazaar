@@ -1,5 +1,6 @@
 """Private cash offers use the same guarded executor as public asks and bids."""
 
+import json
 from copy import deepcopy
 
 import pytest
@@ -115,6 +116,15 @@ def test_actor_posts_cash_counter_with_official_ceiling_and_no_fee_to_publisher(
     d.converse(v, set())
     assert len([s for s in team.sent if s[0] == "say"]) == 1
     assert d.ledger.count_in_tick("listing", v.tick) == 1
+    rows = [json.loads(line) for line in (tmp_path / "agents" / "decisions.jsonl").read_text().splitlines()]
+    context = next(row["inputs"] for row in rows if row.get("kind") == "team_cash_offer")
+    assert {key: context[key] for key in ("ref", "side", "price", "venue", "counterparty")} == {
+        "ref": "LAV-02",
+        "side": "bid",
+        "price": terms["give"]["cash"],
+        "venue": "rastro",
+        "counterparty": "t05",
+    }
 
 
 def test_actor_counters_low_cash_bid_with_only_a_free_duplicate(tmp_path):
@@ -206,7 +216,6 @@ def test_cash_counter_respects_shared_capacity(tmp_path, block):
 
 
 def test_cash_refund_after_restart_is_once_only_and_not_swap_budget(tmp_path):
-    from copy import deepcopy
     from dataclasses import replace
 
     from bazaar_agent.agents.team_desk import TeamDesk

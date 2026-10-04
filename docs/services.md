@@ -8,7 +8,7 @@ Phoenix requires its own login.
 
 | Service | URL | What it is |
 |---|---|---|
-| **Taker** | https://bazaar-taker-production.up.railway.app · `wss://bazaar-taker-production.up.railway.app/events` | Autonomous buyer (`bazaar agent taker`): accepts cheap venue asks, negotiates with dealers |
+| **Taker** | https://bazaar-taker-production.up.railway.app · `wss://bazaar-taker-production.up.railway.app/events` | Autonomous taker (`bazaar agent taker`): buys below value, sells into profitable bids across venues and negotiates with dealers |
 | **Maker** | https://bazaar-maker-production.up.railway.app · `wss://bazaar-maker-production.up.railway.app/events` | Autonomous market maker (`bazaar agent maker`): posts, reprices and cancels asks and bids; runs our venue broker and an optional dealer sell desk |
 | **Phoenix** | https://phoenix-production-6aa3.up.railway.app | Traces UI for every negotiation, duel, monitor tick and CLI line (project `bazaar`) |
 | **bazaar-mcp** | https://bazaar-mcp-production.up.railway.app/mcp (`GET /health` public) | Team 1's runtime tools as a remote MCP server (Streamable HTTP) for teammates' Claude Code: **bearer token required**, writes default to dry run |
@@ -22,6 +22,10 @@ is a dry run and publishes only tick events. Deployment configuration is in
 The maker's dealer sell desk can accept offers when `dealer_sell_enabled` is on; the checked-in
 [guardrails](../GUARDRAILS.md) currently disable it. Those accepts use the same shared quota as duels
 and the taker (`agents/dealer_sell_desk.py`).
+
+Market routing compares usable venues without treating a venue owner as the buyer. The taker checks live books and fees before accepting. The maker prefers observed card-specific demand for public asks, then its activity/fee fallback. Addressed offers minimise the recipient's fee and exclude both parties' own venues. Feed hints choose a posting venue; they never authorise a trade.
+
+Bazaar Live's private decision view carries trade identifiers separately from settlement evidence. A posted offer can have an intended recipient or be public; only an observed settlement establishes its actual buyer and seller. Cash counteroffers record their card, side, price, venue and intended counterparty for that view.
 
 To stop new writes, pause each service separately; pausing does not withdraw existing offers.
 See [pause writes](operations.md#pause-writes) and [Railway operations](operations.md#production-on-railway).

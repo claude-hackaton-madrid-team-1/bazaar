@@ -44,7 +44,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Literal
 
-from bazaar_agent import buy_targets
+from bazaar_agent import buy_targets, rivals
 from bazaar_agent import buyers as buyer_rank
 from bazaar_agent.agents import counter_bids, outreach_bids, publication
 from bazaar_agent.agents.dealer_sell_data import SellMarket
@@ -58,7 +58,7 @@ from bazaar_agent.agents.maker_jev import (
     price_candidates,
     reprice_state,
 )
-from bazaar_agent.agents.market import OpenOffer, Side, addressed_to_us, best_venue, our_open_offers, parse_offer
+from bazaar_agent.agents.market import OpenOffer, Side, Venue, addressed_to_us, best_venue, our_open_offers, parse_offer
 from bazaar_agent.agents.relist import MEMORY_TICKS, AskTrail, Relist, market_median, relist_price
 from bazaar_agent.agents.runtime import (
     JevAdvice,
@@ -324,6 +324,9 @@ class Maker:
         self._holder_notes: dict[str, tuple[int, str]] = {}  # card -> (tick, the teams the feed places it with)
         self._seen: dict[tuple[str, str], counter_bids.Seen] = {}  # (team, card) -> its bids to us (`counter_bids`)
         self._counter_said: dict[tuple[str, str], str] = {}  # (team, card) -> why it is not countered (said once)
+        self._liquidity_tick: int | None = None
+        # Feed hints reused across this tick's targets; never authorise accepts.
+        self._liquidity: list[rivals.Listed] = []
         self._turns: dict[str, outreach_bids.Turn] = {}  # card -> the holder our addressed bid goes to, and since when
         self._ceilings: dict[str, tuple[int, float | None]] = {}  # card -> (tick read, official value) for outreach
         # Selling spares to dealers (`dealer_sell_enabled`, off by default): one sell thread at a time.
@@ -674,7 +677,7 @@ class Maker:
                 sell_floor(float(your_value), self.rules) if isinstance(your_value, int | float) else 0,
                 self.rules.exception_min(t.ref),  # protect_page_exceptions: never relisted below its MIN
             )
-            venue = best_venue(snap.venues, snap.us, t.price)
+            venue = self._venue(snap, t)
             median = market_median(prints, venue.id, t.ref, t.rarity, rarities, clock.tick, snap.us) if venue else None
             r = relist_price(
                 t.price,
@@ -880,6 +883,39 @@ class Maker:
         run.open_total -= 1
         return True
 
+    def _venue(self, snap: Snapshot, target: Target, venues: list[Venue] | None = None) -> Venue | None:
+        """Use already-loaded feed bids as routing hints; no extra per-market requests.
+
+        The taker still reads and revalidates the actual book before accepting. A stale
+        hint can only choose where our independently guarded ask is posted.
+        """
+        eligible = snap.venues if venues is None else venues
+        demand: dict[str, int] = {}
+        if target.side == "ask" and target.to is None:
+            if self._liquidity_tick != snap.clock.tick:
+                self._liquidity_tick = snap.clock.tick
+                try:
+                    self._liquidity = rivals.listings(snap.events)
+                except (TypeError, ValueError, KeyError, AttributeError, OverflowError):
+                    self._liquidity = []  # unreadable hints fall back to activity; no trading authority lost
+            by_id = {v.id: v for v in eligible}
+            unavailable = {o.get("id") for o in offers_in(snap.offers) if o.get("status") not in (None, "open")}
+            for bid in self._liquidity:
+                venue = by_id.get(bid.venue)
+                if (
+                    venue is not None
+                    and bid.side == "bid"
+                    and bid.ref == target.ref
+                    and bid.maker not in (snap.us, venue.owner)
+                    and bid.to in (None, snap.us)
+                    and bid.expires_tick is not None
+                    and bid.id not in unavailable
+                    and bid.open_at(snap.clock.tick)
+                ):
+                    net = bid.price - venue.fee(bid.price)
+                    demand[bid.venue] = max(demand.get(bid.venue, 0), net)
+        return best_venue(eligible, snap.us, target.price, to=target.to, demand=demand)
+
     def _listing(self, run: _MakerRun, t: Target, venue: str) -> Listing:
         if t.side == "ask" and t.asset_id is not None:
             listing = sell_listing(run.snap.me, str(t.asset_id), t.price, venue, to=t.to)
@@ -942,7 +978,7 @@ class Maker:
         venues = run.snap.venues
         if self.notices is not None:  # a fee announced for later in the listing's life counts now
             venues = self.notices.adjust(venues, tick, self.config.offer_ttl_ticks)
-        venue = best_venue(venues, run.snap.us, t.price)
+        venue = self._venue(run.snap, t, venues)
         blocked = self._blocked(run)
         if venue is not None and not blocked:
             t = self._route(run, t, venue.id)
@@ -950,6 +986,7 @@ class Maker:
         t, advice, candidates = self._jev_price(run, t, venue.id) if jev and venue else (t, None, None)
         if venue is not None and not blocked:
             t = self._address(run, t, venue.id)
+            venue = self._venue(run.snap, t, venues)  # price/recipient may have changed; reselect before the guard
         inputs = {
             "side": t.side,
             "ref": t.ref,
@@ -1168,7 +1205,7 @@ class Maker:
 
     def _refusal(self, run: _MakerRun, t: Target) -> str | None:
         """Why `_post` would refuse `t` in `run` at its target price (no venue, no slot, a guardrail)."""
-        venue = best_venue(run.snap.venues, run.snap.us, t.price)
+        venue = self._venue(run.snap, t)
         if venue is None:
             return "no venue we may trade on"
         return self._blocked(run) or self._denied(run, self._route(run, t, venue.id), venue.id)
