@@ -1572,3 +1572,11 @@ Pilar thread3670 settled LAV-09 at56 and Chato3702 settled LAV-06 at15; cash326�
 
 ### [2026-10-04] build-error — late cash-counter pause and stale alliance assertion
 Independent review reproduced PAUSE created during reservation still allowing a cash counter. Final pre-send check now includes the kill switch; proven-unsent promises are released and cash refunded, while unknown sends stay reserved. Deadline/pause regression passes. Adding t10 exposed one test pinning the previous owner list; updated only its expected configured list. Final focused gate:284 passed in1.97s; Ruff/Black/mypy clean.
+### [2026-10-04] gotcha
+Manual guarded dealer sales initially refused the shared publication mutex: read-only pg_locks identified bazaar-sales holding the session lock while outreach generated words. Coordinated service-local Taker/Maker/Sales pauses let the coordinator reserve dealer threads 3670 and 3672 without bypassing a lock. Maker/Sales resumed; Taker remains paused pending the pack-restock policy rollout. GET /api/clock timed out at ticks 2354–2356 and recovered on the next tick; this policy change adds no SDK/network fix. A diagnostic import of nonexistent card_hunt.enabled failed; corrected to the actual CLI default-on switch and a remote nonsecret environment check (BAZAAR_CARD_HUNT unset).
+
+### [2026-10-04] build-error
+PACK1 review found two deployed-policy tests still asserting restock enabled → update only those expectations to disabled restock/enabled dealer desk; preserve price-cap, cash-floor and quota checks.
+
+### [2026-10-04] finding
+PACK1 user correction: Sales should hunt teams across allied markets, not activate dealer sales. Final policy disables restock only; dealer_sell_enabled remains false and no dealer reclaim is introduced.
