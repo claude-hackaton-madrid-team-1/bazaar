@@ -1498,3 +1498,6 @@ Coordinator observed autonomous thread2712 opened at tick1878, progressed17→21
 
 ### [2026-10-04] build-error — pack promise snapshot is read-only
 Review found pack opening passed a stale snapshot to publication reconciliation, which could release a promise for a newly held card or treat a synthetic promise as its own observed offer. The pack filter now reads durable pending asset IDs without reconciling or releasing anything; explicit release rows alone clear those exclusions. First regression caught attempted update of a frozenset; materializing a set fixes the local merge. No game read or write added.
+
+### [2026-10-04] build-error — TR1 local Postgres setup timeout
+Full gate at00ceb581 ran5715passing tests with95%coverage but one holdings fixture could not connect to localhost5433 before its10s timeout. No product assertion failed. Reran the entire holdings DB module against127.0.0.1: `26 passed in15.03s`; Depot full CI passed at the same code head. No runtime code change for this transient local connection failure.
