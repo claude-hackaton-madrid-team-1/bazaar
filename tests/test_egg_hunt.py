@@ -268,7 +268,7 @@ def test_a_cooloff_or_strike_for_us_backs_off_that_dealer_and_after_a_weave_ever
     assert weave(h, r, dealer="chato", tick=101) is None and "backoff until tick 150" in lines[-1]
     send(h, r, tick=102)  # abuela
     h.observe(r, tick=103, hour=1, us=US, events=[event(2, "persona.strike", persona="abuela", team=US)])
-    assert weave(h, r, dealer="picaros", tick=104) is None and "after a woven message" in lines[-1]
+    assert weave(h, r, dealer="picaros", tick=104) is None and "after a recent phrase" in lines[-1]
     other, _ = hunter(tmp_path / "x")
     other.observe(r, tick=100, hour=1, us=US, events=[event(3, "persona.strike", persona="abuela", team="t09")])
     assert weave(other, r, tick=101) is not None  # someone else's strike
@@ -535,3 +535,102 @@ def test_a_background_write_that_fails_is_retried_with_its_rows() -> None:
     assert inner.saved == []
     inner.up = True
     assert store.drain(2) and [r.key for r in inner.saved] == ["k"]
+
+
+# ---------------------------------------------------------------- review-egg-hunt fixes
+
+
+def test_a_failed_read_keeps_the_hunt_off_and_is_retried_until_it_succeeds() -> None:
+    said = Tried("abuela", eh.fold("la chulapa dorada"), "x", 1, 1, "sent")
+
+    class Flaky:
+        calls = 0
+
+        def load(self) -> list[Tried] | None:
+            self.calls += 1
+            return None if self.calls == 1 else [said]
+
+        def save(self, rows: Any, tick: int) -> bool:
+            return True
+
+    inner = Flaky()
+    store = BackgroundStore(inner, lambda s: None, retry_s=0.05)
+    h = EggHunter(store, lambda s: None, mode_fn=lambda: "live")
+    assert weave(h, rules()) is None  # first read failed: off, not "nothing tried"
+    assert store.drain(2) and inner.calls == 2
+    w = weave(h, rules(), tick=101)
+    assert w is not None and w.candidate.key != said.key  # the phrase said before the restart is not repeated
+
+
+def test_the_postgres_store_answers_none_when_it_cannot_read() -> None:
+    def down() -> Any:
+        raise OSError("connection refused")
+
+    lines: list[str] = []
+    assert PgStore(down, lines.append).load() is None and "stays off" in lines[-1]
+
+
+def hint_from(eid: int, team: str, text: str = "Doña Pilar? Ask Pilar about the hidden garden.") -> dict[str, Any]:
+    return event(eid, "thread.message", "chato", text=text, team=team)
+
+
+def test_a_hint_from_one_other_team_is_never_said_and_seeds_come_first(tmp_path: Path) -> None:
+    h, _ = hunter(tmp_path)
+    r = rules()
+    h.observe(r, tick=100, hour=1, us=US, events=[hint_from(1, "t05")])
+    assert "the hidden garden" not in [c.phrase for c in h.candidates("pilar")]  # one team could have injected it
+    h.observe(r, tick=100, hour=1, us=US, events=[hint_from(2, "t07")])
+    got = [c.phrase for c in h.candidates("pilar")]
+    assert got[-1] == "the hidden garden" and len(got) > 1  # two teams: usable, after every seed
+    mine, _ = hunter(tmp_path / "us")
+    mine.observe(r, tick=100, hour=1, us=US, events=[hint_from(3, US)])
+    assert "the hidden garden" in [c.phrase for c in mine.candidates("pilar")]  # our own thread
+
+
+def test_an_abusive_or_accusing_hint_is_never_said_even_from_many_teams(tmp_path: Path) -> None:
+    h, _ = hunter(tmp_path)
+    hostile = "Ask Pilar about the estafa de Carmen."
+    h.observe(
+        rules(), tick=100, hour=1, us=US, events=[hint_from(i, t, hostile) for i, t in enumerate(["t02", "t03", US])]
+    )
+    assert not [c for c in h.candidates("pilar") if "estafa" in c.phrase]
+    assert not eh.vetted("el idiota de Chato") and not eh.vetted("me debes cinco primas")
+    assert eh.vetted("las rosquillas tontas y listas") and eh.vetted("el timo de la estampita")  # lore stays
+
+
+def test_a_cooloff_close_after_a_recent_phrase_stops_every_dealer(tmp_path: Path) -> None:
+    h, lines = hunter(tmp_path)
+    r = rules(egg_hunt_dealer_gap_ticks=2)
+    send(h, r, tick=100, dealer="chato")
+    h.observe(r, tick=110, hour=1, us=US, events=[])  # the pending phrase expired: the stored row still counts
+    closed = {"id": 40, "with": "chato", "status": "closed", "closed_reason": "cooloff"}
+    h.thread(r, closed, 110, "chato")
+    assert h.backoff["*"][0] >= 110 + r.egg_hunt_backoff_ticks
+    assert weave(h, r, tick=111, dealer="picaros") is None and "after a recent phrase" in lines[-1]
+    quiet, _ = hunter(tmp_path / "q")
+    quiet.thread(r, {**closed, "with": "pilar"}, 110, "pilar")  # no phrase to pilar: only pilar backs off
+    assert "*" not in quiet.backoff and "pilar" in quiet.backoff
+
+
+def test_a_warning_after_the_reply_window_still_counts(tmp_path: Path) -> None:
+    h, _ = hunter(tmp_path)
+    r = rules(egg_hunt_dealer_gap_ticks=2)
+    send(h, r, tick=100, dealer="picaros")
+    h.observe(r, tick=120, hour=1, us=US, events=[])  # pending gone
+    late = {"id": 9, "sender": "picaros", "tick": 119, "text": "Esto ya es spam, chaval."}
+    h.thread(r, {"id": 40, "with": "picaros", "messages": [late]}, 120, "picaros")
+    assert "*" in h.backoff and "picaros" in h.backoff
+
+
+def test_carriers_never_read_de_el_and_keep_the_phrase_whole() -> None:
+    for c in eh.seed_candidates():
+        said = eh.carrier(c.dealer, c.phrase)
+        assert " de el " not in said and " lo de el " not in said and c.phrase in said
+    assert eh.vetted("sile, nole, repe, me falta") and not eh.vetted("sile,, nole")
+
+
+def test_first_live_hour_settings_are_in_guardrails() -> None:
+    from bazaar_agent.guardrails import load_guardrails
+
+    live = load_guardrails().rules
+    assert live.egg_hunt_max_phrases_per_dealer_per_hour == 1 and live.egg_hunt_max_finds_per_dealer == 3
