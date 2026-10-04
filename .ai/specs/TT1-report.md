@@ -41,3 +41,7 @@ Success: no issues found in 212 source files
 - Retained120 ticks for ordinary stable strategy refresh, with a bounded4-tick retry on state change or uncertainty. No added state-read request.
 - Global hourly spend cap and amount approval remain disabled by the earlier explicit user decision. Sole-copy, value, cash and server limits remain enforced.
 - Work split in parallel across team execution, dealer planning and strategy/venue changes. Independent cross-reviews cover each author's changes.
+
+## CI fixture correction
+
+The initial unit run reported `1 failed, 5500 passed` in the pre-existing ladder-tolerance fixture. It set an infeasible value before opening, so the new planner correctly chose a different card. The fixture now lowers value after opening and still checks both allowed and denied mid-thread bids. Reproduced locally: `1 failed, 6 passed`; after correction with official-value regressions: `32 passed in 0.38s`. Production code is unchanged by this correction.
