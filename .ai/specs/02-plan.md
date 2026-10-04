@@ -782,3 +782,10 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 - Refresh strategy decisions on state change/failure; honor20tick announcement cooldown.
 - Integrate and test real agent paths, obtain independent reviews and run the full gate once frozen.
 - Use guarded rollout and verify live timing without claiming unobserved trades or score gains.
+
+### MM1 — Profitable market routing and trade visibility ([spec](MM1-spec.md))
+
+- Audit current markets and routing, including Team10, without placing manual trades.
+- Improve autonomous venue selection where current code misses net-profitable opportunities.
+- Show counterparty, venue, terms and precise operation status in Live UI.
+- Validate independently, run integrated checks, safely deploy and verify real data.
