@@ -80,8 +80,15 @@ class V2Params:
     min_share: float = 0.0  # duel_endgame_min_share
     jitter: float = 0.0  # duel_jitter
     jitter_seed: int = 0  # duel_jitter_seed
-    days_signed: bool = False  # duel_days_signed
+    days_signed: bool = False  # duel_days_signed (both roles)
+    days_signed_roles: str = "none"  # duel_days_signed_roles: one role only ("seller", "buyer") or "both"
     silent_floor_lead: int = 1  # duel_silent_floor_lead
+
+    def signed_for(self, duel: Mapping[str, Any]) -> bool:
+        """This duel's days valued with their sign: both roles signed, or this duel's role (as `days_signed_for`)."""
+        role = duel.get("role")
+        roles = self.days_signed_roles
+        return self.days_signed or roles == "both" or (role in ("seller", "buyer") and roles == role)
 
     @classmethod
     def from_rules(cls, rules: Any, anchor: float | None = None, floor: float | None = None) -> V2Params:
@@ -100,6 +107,7 @@ class V2Params:
             jitter=rules.duel_jitter,
             jitter_seed=_jitter_seed(rules),
             days_signed=rules.duel_days_signed,
+            days_signed_roles=getattr(rules, "duel_days_signed_roles", "none"),
             silent_floor_lead=rules.duel_silent_floor_lead,
         )
 
@@ -343,7 +351,7 @@ def duel_plan(duel: Mapping[str, Any], tick: int, started_tick: int, params: V2P
     left = (deadline - tick) if isinstance(deadline, int) else 12
     if duel_done(duel) or not isinstance(limit, int) or isinstance(limit, bool) or role not in ("seller", "buyer"):
         return V2Plan(DuelMove("hold", reason="done or unreadable duel"), None, 0.0, False, left)
-    signed = params.days_signed
+    signed = params.signed_for(duel)
     total = max(1, (deadline - started_tick) if isinstance(deadline, int) else 12)
     elapsed = tick - started_tick
     ours, theirs = own_offers(duel), len(_priced(duel, ours=False))
@@ -463,7 +471,7 @@ def counter_offer(duel: Mapping[str, Any], tick: int, started_tick: int, params:
     elapsed, left = tick - started_tick, (deadline - tick) if isinstance(deadline, int) else 12
     progress = elapsed / total if _priced(duel, ours=False) else silent_progress(elapsed, total, left, params)
     target = our_target(limit, str(role), progress, params.anchor, params.floor)
-    move = _offer(duel, target, params.days_signed, "counter at our target")
+    move = _offer(duel, target, params.signed_for(duel), "counter at our target")
     return move or DuelMove("hold", reason=f"no offer strictly inside our limit {limit}")
 
 

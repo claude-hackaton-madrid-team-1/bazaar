@@ -145,6 +145,7 @@ class Guardrails(BaseModel):
     duel_jitter: float = Field(default=0.0, ge=0, le=0.9)
     duel_jitter_seed: int = 0
     duel_days_signed: bool = False
+    duel_days_signed_roles: Literal["none", "seller", "buyer", "both"] = "none"
     duel_days_auto: bool = False
     steer_max_change: float = Field(default=0.5, ge=0, le=1)
     steer_max_ttl_ticks: int = Field(default=240, ge=1)
@@ -371,6 +372,7 @@ ENFORCED_BY: dict[str, str] = {
     "duel_jitter": "agents.duel_v2.jittered (v2 only)",
     "duel_jitter_seed": "agents.duel_v2.jittered (v2 only)",
     "duel_days_signed": "guardrails.check (duel_inside_limit) + agents.duel_v2.value_of (v2 only)",
+    "duel_days_signed_roles": "guardrails.check (duel_inside_limit) + agents.duel_v2.value_of (v2 only, per role)",
     "duel_days_auto": "cli duel run + runtime duel_move (agents.duel_days.effective_rules; v2 only)",
     "steer_max_change": "llm.steering.clamp",
     "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
@@ -1041,7 +1043,7 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
         v.extend(_taller_violations(action, ctx, rules))
     if action.kind in ("duel_offer", "duel_accept") and rules.duel_inside_limit:
         v2 = rules.duel_policy == "v2"
-        v.extend(_duel_limit_violations(action, v2 and rules.duel_days_signed, zero_days_free=v2))
+        v.extend(_duel_limit_violations(action, v2 and days_signed_for(rules, action.role), zero_days_free=v2))
     v.extend(_venue_violations(action, ctx, rules))
     v.extend(_breaker_violations(action, ctx, rules))
     if buying and not v:  # before the official value: a buy-back needs no /api/me/value read
@@ -1375,6 +1377,16 @@ def halts(ctx: Context, rules: Guardrails) -> tuple[str, ...]:
     if ctx.paused:
         stops.append(f"pause file {rules.pause_file} exists")
     return tuple(stops)
+
+
+def days_signed_for(rules: Any, role: object) -> bool:
+    """Whether a duel of this role values its days with their sign (v2): `duel_days_signed` for both roles,
+    `duel_days_signed_roles` for one. The real game's rule is role-dependent (Duels II: a seller's day adds cash to
+    its side, a buyer's day costs it), so one global sign is wrong for one of the two roles."""
+    if getattr(rules, "duel_days_signed", False):
+        return True
+    roles = getattr(rules, "duel_days_signed_roles", "none")
+    return roles == "both" or (role in ("seller", "buyer") and roles == role)
 
 
 def _duel_limit_violations(action: Action, signed: bool = False, zero_days_free: bool = False) -> list[str]:

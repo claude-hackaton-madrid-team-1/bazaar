@@ -346,9 +346,9 @@ def test_under_v2_the_guardrail_stops_a_duel_move_outside_our_limit_at_the_send_
 
     cli, client, asked, tmp_path = duel_cli
     use_policy(monkeypatch, cli, "v2")
-    if kind == "offer":  # 110 - 2 × 5 = 100 < cost 104
+    if kind == "offer":  # 90 + 2 × 5 = 100 < cost 104 even with the days signed (worst case: 80)
         client.payload = [{**LIVE, "issues": ["price", "days"], "your_days_weight": 2.0}]
-        outside = duelist.DuelMove("offer", 110, 5, "a planner bug")
+        outside = duelist.DuelMove("offer", 90, 5, "a planner bug")
     else:  # the rival's standing 100: on the limit is no surplus
         client.payload = [{**PLANNED_ACCEPT, "rival_offer": {"id": 702, "price": 100, "tick": 133, "days": 0}}]
         outside = duelist.DuelMove("accept", 100, None, "a planner bug")
