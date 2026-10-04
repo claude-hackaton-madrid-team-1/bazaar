@@ -29,7 +29,7 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 
 ## Operating priority
 
-Prioritise profitable team negotiations at private values. Buy below our marginal value, sell true duplicates above the server's `your_value`, and account for the accepting side's venue fees. Protect every only copy of a page card and obey approval, cash and tick limits. Next, negotiate dealer deals toward their final for the round's best three per level. Scheduled duels and Market Tests have their own policies and deadlines; the card playbook does not rank those mechanisms. Market-making rewards efficient matches and value other teams create on our venue.
+Prioritise profitable team negotiations at private values. Buy below our marginal value, sell guardrail-eligible inventory above the server's `your_value`, and account for the accepting side's venue fees. Preserve sole copies on protected complete pages under current `GUARDRAILS.md` and obey approval, cash and tick limits. Next, negotiate dealer deals toward their final for the round's best three per level. Scheduled duels and Market Tests have their own policies and deadlines; the card playbook does not rank those mechanisms. Market-making rewards efficient matches and value other teams create on our venue.
 
 The card playbook below is an inventory opportunity estimate, not the leaderboard objective. Its page-bonus share estimates buying value; it is never points for holding a card or completing a page. Scarcity is an urgency heuristic. A profitable settlement is the goal, and more trades, fees collected and pack luck earn no points.
 

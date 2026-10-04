@@ -1537,3 +1537,6 @@ Sales model smoke test: standard `claude-opus-5-5` returned OK; fast request ret
 
 ### [2026-10-04] build-error
 Sales review reproduced PAUSE during LLM wording followed by send → cached guard context → recheck pause/deadline immediately before publication and release only proven-unsent reservations. Initial outreach protected-page test used a non-server album shape → corrected fixture and regression.
+
+### [2026-10-04] build-error — SC1 strategy guidance
+Backend rebase conflicted with SALES1 backlog append; retained both task entries. Adviser wording was too restrictive for approved complete-page-only protection; aligned it with current GUARDRAILS. Commit hook caught E501 in the revised shared prompt; wrapped the prompt line, keeping its content.
