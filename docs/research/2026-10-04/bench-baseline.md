@@ -261,4 +261,23 @@ session 7's real data shows it would have.
 
 ## Session 8, read after it ended
 
-*Filled in after tick ~1792.*
+Session 8 (run b137, `bench.started` at tick 1774, 08:37:24Z, exactly where `/api/schedule` put it) is the eighth tie.
+
+**Ours.** The book had 20 offers (59 rows). `exact` made 4 matches (quoted surplus 99): ticks 1779, 1783 (×2)
+and 1786. `/me` from tick 1790: `bench_efficiency` **0.895**, `bench_points` **0.5**.
+
+**Everyone else**, from the leaderboard market at tick 1782 and then 1802:
+
+- 16 teams moved by only +0.02 to +0.04, which is the Sunday phase drift. Their Sunday bench mean stayed at 0.5, so
+  they all scored the stall level again.
+- **t07 fell 10.71 → 9.37 and t08 fell 9.06 → 7.73.** Both drops fit a session-8 `bench_points` of about **0**:
+  - The Sunday bench mean went from 0.5 to 0.25. That is −5.6 on the Sunday round and about −1.3 overall at phase
+    0.43.
+  - t07 had replaced its free stall (v11) with a new board venue, v29, at tick 1758, 16 ticks before the session. The
+    board apparently had no working broker in time.
+  - t08's board (v06, 100 bps) also realised nothing.
+- t12 −0.22 is organic drift.
+
+**This is the first observed below-stall score.** The scale is not floored at 0.5: a board venue that does not match
+scores about 0. It confirms rec 1, and it is the risk side of rec 2. A maker that is down, or an `edge` plan that holds
+pairs until they leave, costs up to the whole 0.5 (~−1.5 final points per session).
