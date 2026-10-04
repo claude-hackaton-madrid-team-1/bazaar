@@ -33,7 +33,7 @@ def test_a_dealer_fills_a_slot_only_on_a_known_level_with_an_empty_slot():
     assert not card_hunt.fills_slot("chato", None)
 
 
-def hunting_taker(tmp_path, **config):
+def hunting_taker(tmp_path, rules=None, **config):
     t = Taker(
         FakeTeam(),
         FakePublic(),
@@ -42,7 +42,7 @@ def hunting_taker(tmp_path, **config):
         now=lambda: 1000.0,
         sleep=lambda s: None,
         config=TakerConfig(max_dealer_threads=0, card_hunt=True, **config),
-        **parts(tmp_path),
+        **parts(tmp_path, **(rules or {})),
     )
     return t, lines
 
@@ -63,10 +63,12 @@ def test_the_hunt_keeps_packs_bought_to_resell_to_teams(tmp_path):
     book = playbook()
     collect = book.packs[0]
     restock = replace(collect, strategy=card_hunt.RESALE_PACKS)  # #289: open and resell the pulls to teams
-    t, _ = hunting_taker(tmp_path)
+    t, _ = hunting_taker(tmp_path, rules={"pack_restock_enabled": True})
     run = SimpleNamespace(slots=SLOTS, snap=SimpleNamespace(clock=clock()))
     kept = t._ladder_only(run, [collect, restock])  # type: ignore[arg-type]
     assert kept == [restock]
+    off, _ = hunting_taker(tmp_path, rules={"pack_restock_enabled": False})  # the switch stays the switch
+    assert off._ladder_only(run, [collect, restock]) == []  # type: ignore[arg-type]
 
 
 def test_the_hunt_switch_is_on_from_the_cli_and_off_in_code():
@@ -107,16 +109,22 @@ def test_a_page_that_cannot_complete_puts_no_bonus_at_stake_but_the_value_still_
     assert low is not None and low.ours < 0  # below our value: never a candidate (sell_min_surplus > 0)
 
 
-def test_the_sell_desk_hunt_never_sells_a_complete_page_copy_and_floors_at_our_value():
+def test_the_hunting_sell_desk_never_sells_an_only_copy_and_floors_at_our_value(tmp_path):
+    from tests.agent_fakes import FakeTeam as _Team
+    from tests.test_dealer_sell_desk import maker
+
     rules = Guardrails(protect_complete_pages_only=True)
-    found = sell.candidates(ME_DUP, CATALOG, MARKET, PARAMS, rules, hunt=True)
-    assert all(c.ref != "LAT-09" for c in found)  # LAT is complete: its only copy stays
+    found = sell.candidates(ME_DUP, CATALOG, MARKET, PARAMS, rules)
+    held = {r: sum(a.get("ref") == r for a in ME_DUP["assets"]) for r in {c.ref for c in found}}
+    assert found and all(held[c.ref] > 1 for c in found)  # duplicates only: LAV-06, LAT-09 are only copies
     assert all(c.floor >= c.your_value + rules.dealer_sell_min_surplus for c in found)
-    m = build_market(ME_DUP, CATALOG, [], [])
-    lav06 = m.cards["LAV-06"]
-    assert sell.hunt_single(m, lav06, rules, 1)  # 4 of 6 missing: cannot complete
-    assert not sell.hunt_single(m, lav06, Guardrails(), 1)  # needs protect_complete_pages_only
-    assert not sell.hunt_single(m, m.cards["LAT-09"], rules, 1)  # complete page
+    team = _Team(me=ME_DUP)
+    m, _ = maker(tmp_path, team, live=True, dealer_sell_enabled=True, protect_complete_pages_only=True)
+    m.sell_desk.hunt = True
+    m.on_tick(clock())
+    sold = [s for s in team.sent if s[0] == "open_thread"]
+    only = {int(a["id"]) for a in ME_DUP["assets"] if a.get("ref") in ("LAV-01", "LAV-06", "LAT-09")}
+    assert all(s[2]["sell"]["assets"][0] not in only for s in sold)  # a duplicate, never an only copy
 
 
 def test_a_dealer_sale_under_the_hunt_only_fills_an_empty_ladder_slot():
@@ -152,10 +160,11 @@ def test_the_hunt_never_sends_a_swap_the_rules_refuse(tmp_path):
     assert opened(team) == []
 
 
-def test_the_hunt_desk_uses_more_threads_but_never_the_servers_six(tmp_path):
+def test_the_hunt_desk_takes_one_more_thread_keeps_the_dealer_reserve_and_never_the_servers_six(tmp_path):
     rules = Guardrails()
     max_open, reserve = card_hunt.desk_limits(rules)
-    assert max_open >= rules.team_threads_max_open and reserve <= rules.team_threads_dealer_reserve
+    assert max_open == max(rules.team_threads_max_open, card_hunt.DESK_MAX_OPEN) <= rules.team_threads_max_open + 1
+    assert reserve == rules.team_threads_dealer_reserve  # the ladder probes keep their conversations
     team = Team()
     d, _ = hunting_desk(tmp_path, team)
     d.converse(view(in_use=6), set())  # every conversation in use
@@ -207,3 +216,28 @@ def test_under_the_live_guardrails_a_far_from_complete_single_copy_sells_above_v
     (lat,) = board_offers({"offers": [bid(10, "LAT-09", 500)]}, "rastro", "t01")
     op = score_offer(lat, m, me, PARAMS, rules, AffinityMap(), VENUES["rastro"], ctx, page_horizon=2)
     assert op is None or op.verdict != "allowed"  # LAT is complete: its only copy never goes
+
+
+def test_the_hunt_probes_an_empty_ladder_slot_without_the_gate_and_reads_at_most_one_value_per_tick(tmp_path):
+    from tests.test_ladder_probe import DEALERS as PROBE_DEALERS
+    from tests.test_ladder_probe import PARAMS as PROBE_PARAMS
+    from tests.test_ladder_probe import ValueTeam, gate, probe_rows
+
+    team = ValueTeam()
+    g, asks = gate("no")  # the gate would refuse: the hunt never asks it
+    kw = parts(tmp_path)
+    kw["params"] = lambda tick: PROBE_PARAMS.model_copy(update={"min_buy_surplus": 1000})
+    t = Taker(
+        team,
+        FakePublic(dealers=PROBE_DEALERS),
+        live=False,
+        log=[].append,
+        now=lambda: 1000.0,
+        sleep=lambda s: None,
+        config=TakerConfig(max_dealer_threads=1, card_hunt=True),
+        strategy_gate=g,
+        **kw,
+    )
+    t.on_tick(clock())
+    assert asks == [] and len(probe_rows(tmp_path)) == 1
+    assert len(team.value_reads) <= 1  # one dealer per tick: one official value read at most

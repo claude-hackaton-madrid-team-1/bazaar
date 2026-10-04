@@ -27,10 +27,9 @@ import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from bazaar_agent import impact_board
-from bazaar_agent.agents.card_hunt import KEEP_SETS, PAGE_HORIZON
 from bazaar_agent.agents.dealer import Move, settled_price, with_name
 from bazaar_agent.agents.dealer_memory import DealerMemory, address_for, recall_dealer
 from bazaar_agent.agents.dealer_sell import (
@@ -57,11 +56,7 @@ from bazaar_agent.agents.strategy_gate import DEALER_SELL, StrategyGate, holding
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.jev.decider import needed_budget_s
 from bazaar_agent.news import EVENTS_FILE, MarketEvent, active_signals, load_market_events
-from bazaar_agent.opportunities import missing_on_page
 from bazaar_agent.persona_model import Persona, parse_personas, sell_weight
-
-if TYPE_CHECKING:
-    from bazaar_agent.strategy import Card, Market
 
 UNKNOWN_FILL_START = 2.0  # no bid seen from this dealer for this rarity: open at this × the floor
 WALK_WORDS = "Muchas gracias por su tiempo, {n}. Otro día seguro que nos entendemos."
@@ -112,9 +107,6 @@ class Candidate:
     name: str = ""
     fill: Fill | None = None
     level: int | None = None  # the dealer's ladder level (`traders.level`, `/api/dealers`); None: not known
-    # Card hunt: our single copy of a card whose page cannot complete before the freeze (`hunt_single`), sold for
-    # a ladder slot; it stays sellable mid-thread (never "our last free copy").
-    single: bool = False
 
     @property
     def gain(self) -> float:
@@ -134,7 +126,6 @@ def candidates(
     personas: Mapping[str, Persona] | None = None,
     fever: Mapping[str, Mapping[str, float]] | None = None,
     deals: Mapping[str, int] | None = None,
-    hunt: bool = False,
 ) -> list[Candidate]:
     """Spare copies an unlocked dealer we have no open thread with buys, whose floor that dealer has been seen
     to bid for the rarity. Best first by the ladder's scoring (RULES.md: our best three deals per level count, a
@@ -145,15 +136,10 @@ def candidates(
     `personas` (the persona model, `/api/dealers`): a dealer whose published menu does not buy the copy's rarity
     in its set is dropped (never a common to Pilar), and the gain uses its typical fill × `sell_weight` (a
     favourite set, an official `fever`: dealer -> set -> pct over book). Ranking only: floors, expected fills
-    and every ask stay as they are.
-
-    `hunt` (card hunt) with `protect_complete_pages_only`: our single copy of a page card whose page misses more
-    than `card_hunt.PAGE_HORIZON` cards (it cannot complete before the freeze: no bonus at stake, the copy is
-    priced at its `your_value`) is a candidate too. A complete page, or one close to complete, keeps its copy."""
+    and every ask stay as they are."""
     from bazaar_agent.strategy import _spare, bonus_at_stake, build_market
 
     m = build_market(me, catalog, events, [])
-    complete = {c.set_code for c in m.cards.values() if c.page and missing_on_page(m, c.set_code) == 0}
     busy_ids, locked_ids = set(busy), set(locked)
     levels = dealer_levels(market, personas)
     cards = [a for a in me.get("assets") or [] if a.get("kind") == "card" and isinstance(a.get("id"), int)]
@@ -169,14 +155,11 @@ def candidates(
         card = m.cards.get(ref)
         if card is None or not isinstance(value, int | float) or isinstance(value, bool) or a["id"] in locked_ids:
             continue
-        single = hunt_single(m, card, rules, free.get(ref, 0)) if hunt else False
-        if card.set_code not in m.released or rules.protects(
-            ref, card.rarity, m.held.get(ref, 0), complete if single else None
-        ):
+        if card.set_code not in m.released or rules.protects(ref, card.rarity, m.held.get(ref, 0)):
             continue
-        if not single and (not _spare(m, card) or only_copy(ref, card.rarity, free.get(ref, 0))):
+        if not _spare(m, card) or only_copy(ref, card.rarity, free.get(ref, 0)):
             continue
-        ours = float(value) + (0.0 if single else bonus_at_stake(m, card, params))
+        ours = float(value) + bonus_at_stake(m, card, params)
         floor = sell_floor(ours, float(value), rules.dealer_sell_min_surplus, rules)
         for t in market.buyers(me, card.rarity, card.set_code, m.released):
             fill = market.fills.get((t.id, card.rarity))
@@ -189,9 +172,7 @@ def candidates(
                     continue  # its menu does not buy this rarity in this set
                 weights[(int(a["id"]), t.id)] = weight
             seen.add((ref, t.id))
-            cand = Candidate(
-                int(a["id"]), ref, card.rarity, round(ours, 1), float(value), floor, t.id, fill.expected, single=single
-            )
+            cand = Candidate(int(a["id"]), ref, card.rarity, round(ours, 1), float(value), floor, t.id, fill.expected)
             out.append(replace(cand, name=t.greeting, fill=fill, level=levels.get(t.id)))
     full = full_levels(levels, deals or {})
 
@@ -200,19 +181,6 @@ def candidates(
         return (c.level in full, -(c.level or 0), -gain, c.asset_id)
 
     return sorted(out, key=rank)
-
-
-def hunt_single(m: Market, card: Card, rules: Guardrails, free: int) -> bool:
-    """Card hunt: our one free copy of a page card on a page that misses more than `PAGE_HORIZON` cards may be
-    sold, only with `protect_complete_pages_only` (Marius: an incomplete page's card sells above our value)."""
-    return (
-        rules.protect_complete_pages_only
-        and card.page
-        and free == 1
-        and m.held.get(card.ref, 0) == 1
-        and card.set_code not in KEEP_SETS
-        and missing_on_page(m, card.set_code) > PAGE_HORIZON
-    )
 
 
 def ladder_slot_sells(
@@ -453,8 +421,6 @@ class SellTalk:
         other copy of its card left /me or is given by another open offer of ours (`locked`), so ours is the last
         free copy of a page card."""
         c = self.cand
-        if c.single:  # sold as our single copy of a page that cannot complete: still free of other offers below
-            return None
         assets = [a for a in (me or {}).get("assets") or [] if isinstance(a, Mapping)]
         if not any(a.get("id") == c.asset_id and a.get("ref") == c.ref for a in assets):
             return None  # no view of our copy's card to judge by (the guard's own count still applies)
@@ -569,7 +535,8 @@ class SellDesk:
     ) -> None:
         self.team, self.rules, self.rec, self.live, self.log = team, rules, rec, live, log
         # Card hunt: a new sell thread only where it fills an empty ladder slot (a known level with fewer than
-        # three scored deals today), opened on the desk's own plan (spare copy, floor, fills) without Jev's yes.
+        # three scored deals today), opened on the desk's own plan (a spare copy, never an only copy; floor, fills)
+        # without Jev's yes. Still only behind `dealer_sell_enabled`.
         self.hunt = hunt
         self.learnings = learnings  # a `LearningStore` for the dealers' memory; None: the feed window's words only
         self.hooks, self.load = hooks, load
@@ -744,7 +711,6 @@ class SellDesk:
             personas=personas,
             fever=fever,
             deals=deals,
-            hunt=self.hunt,
         )
         found = [c for c in found if self._retry_ok(c, clock)]
         if self.hunt:

@@ -1487,7 +1487,7 @@ class Taker:
             mv
             for mv in moves
             if (mv.side == "buy" and card_hunt.fills_slot(mv.source, slots))
-            or (mv.side == "pack" and mv.strategy == card_hunt.RESALE_PACKS)
+            or (mv.side == "pack" and mv.strategy == card_hunt.RESALE_PACKS and self.rules.pack_restock_enabled)
         ]
         if len(kept) < len(moves):
             dropped = Counter(str(mv.source) for mv in moves if not any(mv is k for k in kept))
@@ -1517,12 +1517,17 @@ class Taker:
         floor = effective_cash_floor(self.rules, ctx)
         room = self.rules.spend_room(ctx.cash - floor, ctx.spent_last_hour)
         opens = opening_asks(market, run.snap.events, run.snap.dealers)
-        if not plan_probes(market, opens, self.rules, room, skip, slots=slots):
+        free = plan_probes(market, opens, self.rules, room, skip, slots=slots)  # no value read yet
+        if not free:
             self._empty_slots(run, slots, ())
             return book
+        if self.config.card_hunt:  # one dealer per tick: at most one official value read (`GET /api/me/value`)
+            skip = skip | {p.dealer for p in free[1:]}
         state_key = holdings_key(run.snap.me)
-        if gate.due(LADDER_PROBE, clock.tick, state_key=state_key) and run.window.left() < needed_budget_s(
-            self.config.jev_min_budget_s
+        if (
+            not self.config.card_hunt  # the hunt never asks the gate: no Jev budget to wait for
+            and gate.due(LADDER_PROBE, clock.tick, state_key=state_key)
+            and run.window.left() < needed_budget_s(self.config.jev_min_budget_s)
         ):
             return book
         values = ctx.values
