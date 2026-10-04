@@ -1,6 +1,6 @@
 """Saturday's Market Test sessions: our broker's pairs and the score after each session (read-only).
 
-Usage: (cd docs/research/2026-10-04/mm-probe && uv run python bench_stats.py)
+Usage: (cd docs/market-making/reports/mm-probe && uv run python bench_stats.py)
 Pairs: `decisions` agent='broker' kind='broker_match' (every one status done, none refused).
 Score: `me_snapshots` t01 bench_efficiency / bench_points, first snapshot after each session.
 Session efficiency is shown under both readings: A = the /me number is the session's own; B = it is the round

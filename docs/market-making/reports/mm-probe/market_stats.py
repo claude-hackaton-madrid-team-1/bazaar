@@ -1,6 +1,6 @@
 """Saturday's public market and our own quoting, from the shared ledger (read-only).
 
-Usage: uv run python docs/research/2026-10-04/mm-probe/market_stats.py
+Usage: uv run python docs/market-making/reports/mm-probe/market_stats.py
 Saturday = round 2 = feed ticks >= 160 (round.started at tick 160) up to the close at 1445.
 Only public facts are printed in aggregate (listing prices are public on the feed); no private value of ours.
 """

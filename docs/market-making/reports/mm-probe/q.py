@@ -1,6 +1,6 @@
 """Read-only query helper for the shared game ledger.
 
-Usage: uv run python docs/research/2026-10-04/mm-probe/q.py "SELECT ..."
+Usage: uv run python docs/market-making/reports/mm-probe/q.py "SELECT ..."
 DATABASE_URL is read from the lets-start worktree's .env and never printed;
 every session is READ ONLY (default_transaction_read_only=on).
 """

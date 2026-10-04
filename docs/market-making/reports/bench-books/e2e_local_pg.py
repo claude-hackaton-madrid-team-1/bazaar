@@ -3,7 +3,7 @@ Postgres, then read them back. Never point this at the shared DB: it refuses any
 
     docker run -d --rm --name bench-books-pg -e POSTGRES_PASSWORD=x -p 127.0.0.1:55439:5432 postgres:18
     LOCAL_PG_URL=postgresql://postgres:x@127.0.0.1:55439/postgres \
-      uv run python docs/research/2026-10-04/bench-books/e2e_local_pg.py <dir of book_*.json> <stats dir>
+      uv run python docs/market-making/reports/bench-books/e2e_local_pg.py <dir of book_*.json> <stats dir>
     docker stop bench-books-pg
 """
 

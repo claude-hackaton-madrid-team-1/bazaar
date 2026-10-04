@@ -1,6 +1,6 @@
 """Per-card spread on the public books at Saturday's close (tick 1445, doors closed, keyless GETs).
 
-Usage: uv run python docs/research/2026-10-04/mm-probe/spreads.py <dir with <venue>.json>
+Usage: uv run python docs/market-making/reports/mm-probe/spreads.py <dir with <venue>.json>
 Each file is GET /api/venues/<venue>/offers. Addressed offers (`to` set) are left out: only their addressee can act.
 A bid is `give.cash` for `want.types` card:<REF>; an ask is one card asset for `want.cash`.
 """

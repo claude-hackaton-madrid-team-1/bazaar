@@ -7,11 +7,11 @@ for sources:*
 | Tag | Source |
 |---|---|
 | RULES | `vendor/bazaar-kit/RULES.md` (organisers' kit), lines 67–84 and 114–122 |
-| BASE | `docs/research/2026-10-04/bench-baseline.md` (branch `fix/bench-baseline`, `dc563e54`) |
-| SIM | `docs/research/2026-10-04/bench-sim.md` (branch `feat/bench-beat-stall`, PR #292, `15dc2cfc`) |
-| SEARCH | `docs/research/2026-10-04/bench-search.md` (local branch `feat/bench-search`, `f46edf96`) |
-| PROBE | `docs/research/2026-10-04/mm-probe.md` (branch `research/sat-review-crinoid`) |
-| BOOKS | `docs/research/2026-10-04/bench-books.md` (origin/main) |
+| BASE | [`bench-baseline.md`](bench-baseline.md) (moved from `docs/research/2026-10-04/`; branch `fix/bench-baseline`, `dc563e54`) |
+| SIM | [`bench-sim.md`](bench-sim.md) (moved from `docs/research/2026-10-04/`; branch `feat/bench-beat-stall`, PR #292, `15dc2cfc`) |
+| SEARCH | [`bench-search.md`](bench-search.md) (moved from `docs/research/2026-10-04/`; local branch `feat/bench-search`, `f46edf96`) |
+| PROBE | [`mm-probe.md`](mm-probe.md) (moved from `docs/research/2026-10-04/`; branch `research/sat-review-crinoid`) |
+| BOOKS | [`bench-books.md`](bench-books.md) (moved from `docs/research/2026-10-04/`; origin/main) |
 | REV-LA | `_sat-review/review-bench-lookahead.md` (adversarial review of PR #292, verdict SHIP; outside git) |
 | BBS | `_night/BENCH_BEAT_STALL.md` (Saturday night; outside git) |
 | STATUS | `_sat-review/STATUS.md`, the team's append-only log, lines quoted by time (outside git) |

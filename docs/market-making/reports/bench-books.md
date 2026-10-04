@@ -95,7 +95,7 @@ No Market Test has run since the writer shipped.
   `give.cash` → buy) and `run_of` splits `b52-2` → `b52`. Saturday's live logs show the same id form
   (`match bench: sell b103-11 (ask 95) × buy b103-1 (bid 102)`). RULES.md §Market Test: "It appears in your book as
   `bench_offers`."
-- End to end on local Postgres 18 (`docs/research/2026-10-04/bench-books/e2e_local_pg.py`): 44 snapshots → 23
+- End to end on local Postgres 18 (`docs/market-making/reports/bench-books/e2e_local_pg.py`): 44 snapshots → 23
   non-empty ticks → **66 rows, 9 distinct traders, ticks 680–705, zero failure log lines**; the sides and quotes
   match the capture (b52-2 buy 42 → 56 as it relaxed, b52-10 sell 62 → 55).
 

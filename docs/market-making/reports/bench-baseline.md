@@ -176,7 +176,7 @@ so the estimate is wrong. `/api/schedule` is keyless and has the real `at_hours`
 The "market-making 0" on the dashboard is `/me` → `score.mm_points`, the **organic** half: value created between other
 teams on our venue. It is 0 because nobody trades on v19. The bench half is fine (it is the 0.5).
 
-- `docs/research/2026-10-04/mm-probe.md` (branch `research/sat-review-crinoid`): all of Saturday, v19 had 0 trades,
+- [`mm-probe.md`](mm-probe.md) (from branch `research/sat-review-crinoid`): all of Saturday, v19 had 0 trades,
   0 traders and 0 pairs.
   - 15 outside listings arrived: 13 asks from t15 at ticks 373–381 and 2 from t04. All were single-card asks expiring
     in 6–10 ticks, and no bidder ever came.
