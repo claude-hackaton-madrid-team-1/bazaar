@@ -1,4 +1,4 @@
-"""Our own dealer threads, as the taker already reads them, kept in Postgres `threads` + `messages` (N12 part 3).
+"""Our own dealer and team threads, as our agents already read them, kept in Postgres `threads` + `messages` (N12 part 3).
 
 The public feed carries every dealer message and its structured offer, but not what only our own thread
 responses carry: `closed_reason` (`cooloff` + `until_tick`, `persona_quota`, `sold_out`, ...), the status a
@@ -171,7 +171,7 @@ def _rows(seen: list[Seen]) -> tuple[list[tuple[Any, ...]], list[tuple[Any, ...]
 
 
 class ThreadStore:
-    """Buffers the thread answers the taker read this tick; writes them after the sends."""
+    """Buffers observed threads and acknowledged sent words; writes them after the sends."""
 
     def __init__(
         self, connect: Callable[[], psycopg.Connection] | None, log: Callable[[str], None] = lambda message: None
