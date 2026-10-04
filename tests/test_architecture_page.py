@@ -39,6 +39,8 @@ def _load() -> ModuleType:
 ap = _load()
 
 DATA = {
+    "eyebrow": "Sunday <09:00> & ready",
+    "timeline_note": "Read `/api/schedule`; <pending> & unverified.",
     "boxes": {
         "state": {
             "title": "STATE",
@@ -105,6 +107,8 @@ def test_render_is_deterministic_and_complete() -> None:
     assert '<a href="https://github.com/o/r/issues/21">#21</a>' in first
     assert "&lt;b&gt;" in first  # plan text is escaped
     assert "N3 (new)" in first
+    assert "Sunday &lt;09:00&gt; &amp; ready" in first
+    assert "Read <code>/api/schedule</code>; &lt;pending&gt; &amp; unverified." in first
 
 
 def test_note_lines_are_spaced_below_the_body() -> None:
