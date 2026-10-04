@@ -254,6 +254,12 @@ class Guardrails(BaseModel):
     buy_target_start_share: float = Field(default=0.75, gt=0, le=1)
     buy_target_step_ticks: int = Field(default=6, ge=1, le=200)
     buy_target_steps: int = Field(default=5, ge=1, le=50)
+    # ROI buys (Marius, Sun 4 Oct): the taker buys any card on any open venue whose official value of one more copy
+    # beats ask + fee by at least `roi_buy_min_surplus`. Off here; GUARDRAILS.md is the switch.
+    roi_buy_enabled: bool = False
+    roi_buy_min_surplus: int = Field(default=1, ge=1)  # strictly positive: never a buy at or over the official value
+    roi_buy_max_value_reads_per_tick: int = Field(default=3, ge=0, le=10)  # GET /api/me/value, shared key budget
+    roi_buy_max_spend: int = Field(default=0, ge=0)  # P in all on ROI buys (ledger rows `roi:`); 0: none
     activity_stall_seconds: float = Field(default=0.0, ge=0, le=3600)  # 0: off (GUARDRAILS.md turns it on)
     # Easter-egg hunt (`agents/egg_hunt.py`): off here; GUARDRAILS.md is the switch (env BAZAAR_EGG_HUNT=0 overrides).
     egg_hunt_enabled: bool = False
@@ -456,6 +462,10 @@ ENFORCED_BY: dict[str, str] = {
     "buy_target_start_share": "buy_targets.ladder_price (the first bid: this × the ceiling)",
     "buy_target_step_ticks": "buy_targets.ladder_price (ticks between two steps up)",
     "buy_target_steps": "buy_targets.ladder_price (steps from the first bid to the ceiling)",
+    "roi_buy_enabled": "agents.taker._roi_asks + guardrails.check (Action.roi: the held-card exemption)",
+    "roi_buy_min_surplus": "agents.taker._roi_asks + guardrails.check (official value cap of an ROI buy)",
+    "roi_buy_max_value_reads_per_tick": "agents.taker._roi_asks (GET /api/me/value reads per tick)",
+    "roi_buy_max_spend": "agents.taker._roi_asks + guardrails.check (Context.roi_spent, ledger `roi:` spend rows)",
     "watchdog_window_ticks": "watchdog.run (every rule's window)",
     "watchdog_swap_cash_per_hour": "watchdog.swap_rules (trips team_swap)",
     "watchdog_max_swaps_per_team": "watchdog.swap_rules (trips team_swap)",
@@ -843,6 +853,7 @@ class Action:
     scope: str | None = None  # the circuit breaker this write answers to (`breaker_scope`); None: by kind
     asset: int | None = None  # a sale: the asset id of the copy that leaves (None: the worst copy of `item` we hold)
     assets: tuple[int, ...] = ()  # the Workshop: the three copies we give, in the order of `item`'s refs
+    roi: bool = False  # the taker's ROI buy (`roi_buy_*`): may buy a held card, capped at official value - surplus
 
 
 @dataclass(frozen=True)
@@ -933,6 +944,7 @@ class Context:
     # Dealers whose ladder level has an empty slot this round (the taker's `LadderSlots`): their card buys may use
     # `dealer_ladder_value_tolerance`. Empty: no buy ever does.
     ladder_open: frozenset[str] = frozenset()
+    roi_spent: int = 0  # P already spent on ROI buys (ledger `roi:` spend rows), for `roi_buy_max_spend`
 
 
 # What a stored or answered /me (`holdings.without_secrets`) keeps of `starter_broker_key`: that it was there.
@@ -1032,8 +1044,13 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
             f"{ctx.packs_last_hour} pack(s) bought this game hour (max_packs_per_game_hour "
             f"{rules.max_packs_per_game_hour})"
         )
-    if buying and rules.block_buying_held_cards and ctx.held.get(action.item, 0) > 0:
+    roi = action.roi and rules.roi_buy_enabled  # the one scoped exemption: the official value cap still binds
+    if buying and rules.block_buying_held_cards and ctx.held.get(action.item, 0) > 0 and not roi:
         v.append(f"we already hold {action.item} (block_buying_held_cards)")
+    if action.roi and not rules.roi_buy_enabled:
+        v.append("roi_buy_enabled = false")
+    if action.roi and action.price is not None and ctx.roi_spent + action.price > rules.roi_buy_max_spend:
+        v.append(f"ROI spend {ctx.roi_spent} + {action.price} > roi_buy_max_spend {rules.roi_buy_max_spend}")
     if action.kind in SELLING and action.price is not None and action.your_value is not None:
         floor = action.your_value * rules.sell_min_value_ratio
         if action.price < floor:
@@ -1335,6 +1352,18 @@ def _official_value_violations(action: Action, ctx: Context, rules: Guardrails) 
         return []
     held = ctx.held.get(action.item, 0)
     margin = rules.value_margin_for(action.rarity)  # an epic or legendary: strictly below, never liftable
+    if action.roi:  # an ROI buy: at least `roi_buy_min_surplus` under the official value, never a tolerance
+        return cap_violations(
+            action.item,
+            action.price,
+            action.gives_value,
+            ctx.values,
+            ctx.tick,
+            held,
+            rules,
+            max(margin, float(rules.roi_buy_min_surplus)),
+            rule="roi_buy_min_surplus" if margin < rules.roi_buy_min_surplus else None,
+        )
     if (tolerance := ladder_tolerance(action, ctx, rules)) > 0:
         return cap_violations(
             action.item,

@@ -234,6 +234,8 @@ class TakerConfig:
 
 
 FLAGS_FILE = "flags.jsonl"  # flags sent (or that may have landed), one per message, across restarts
+ROI_KIND = "roi_buy"  # the decisions kind of an ROI buy (`roi_buy_enabled`)
+ROI_SPEND = "roi:"  # the item prefix of an ROI buy's ledger spend row: `roi_buy_max_spend` sums these
 
 
 # ---------------------------------------------------------------- (a) standing asks on the boards
@@ -251,6 +253,7 @@ class AskCandidate:
     score: float
     reason: str
     replaces_bid: OpenOffer | None = None  # our own open bid for the same card, withdrawn after the accept
+    roi: bool = False  # an ROI buy (`roi_buy_enabled`): any card, `value` is its official value of one more copy
 
 
 def ask_candidates(
@@ -340,6 +343,10 @@ class AcceptProposal:
         return self.candidate is not None and self.candidate.scarce
 
     @property
+    def roi(self) -> bool:
+        return self.candidate is not None and self.candidate.roi
+
+    @property
     def score(self) -> float:
         return self.candidate.score if self.candidate is not None else self.surplus
 
@@ -375,8 +382,8 @@ def bid_proposal(op: Opportunity, asset_id: int, bid: BoardOffer | None = None) 
 
 def rank_accepts(proposals: Iterable[AcceptProposal]) -> list[AcceptProposal]:
     """A dealer's final offer first (it walks otherwise), then scarce cards, then the best score
-    (surplus raised by urgency, as the strategy ranks)."""
-    return sorted(proposals, key=lambda p: (not p.final, not p.scarce, -p.score, p.offer_id))
+    (surplus raised by urgency, as the strategy ranks). An ROI buy comes after every other candidate."""
+    return sorted(proposals, key=lambda p: (not p.final, p.roi, not p.scarce, -p.score, p.offer_id))
 
 
 def accept_kind(p: AcceptProposal) -> str:
@@ -385,6 +392,8 @@ def accept_kind(p: AcceptProposal) -> str:
         return "team_accept"
     if p.sell is not None:
         return "accept_bid"
+    if p.roi:
+        return ROI_KIND
     return "accept_ask" if p.source == "board" else "dealer_accept"
 
 
@@ -424,6 +433,8 @@ def board_proposal(c: AskCandidate) -> AcceptProposal:
         "score": c.score,
         "replaces_bid": c.replaces_bid.id if c.replaces_bid else None,
     }
+    if c.roi:
+        inputs["roi"] = True
     return AcceptProposal("board", o.ref, c.rarity, o.id, c.total, c.value, False, c.reason, inputs, candidate=c)
 
 
@@ -551,6 +562,7 @@ class _TickRun:
     mine: list[OpenOffer]
     started: float  # monotonic time the tick's work began (the clock was read just before)
     spent: int = 0  # dry run: this tick's board accepts, which only a live accept books in the ledger
+    roi_spent: int = 0  # dry run: this tick's ROI buys (`roi_buy_max_spend`), which only a live accept books
     jev_calls: int = 0
     settled: dict[str, int] | None = None  # primas settled with each team; None: max_counterparty_share is off
     accepted: list[AcceptProposal] = field(default_factory=list)
@@ -873,6 +885,7 @@ class Taker:
         board, board_venues = self._board_offers(run)
         proposals += [board_proposal(c) for c in self._board(run, market, board, board_venues)]
         proposals += [board_proposal(c) for c in self._target_asks(run, board, board_venues)]
+        proposals += [board_proposal(c) for c in self._roi_asks(run, market, board, board_venues)]
         if self.config.accept_bids:
             proposals += self._bids(run, market, board, board_venues)
         elif self.config.addressed == "all":  # bids addressed to us only: public bids stay behind `accept_bids`
@@ -1159,6 +1172,65 @@ class Taker:
             if best is not None:
                 out.append(best)
         return out
+
+    def _roi_spent(self) -> int:
+        """P spent on ROI buys so far (ledger spend rows `roi:`, every process)."""
+        return self.ledger.spent_since(-1.0, ROI_SPEND)
+
+    def _roi_asks(
+        self, run: _TickRun, market: Market, offers: list[BoardOffer], venues: dict[str, Venue]
+    ) -> list[AskCandidate]:
+        """`roi_buy_enabled` (Marius, Sun 4 Oct): the best standing ask for ANY card, held or not, whose official
+        value of one more copy beats ask + fee by `roi_buy_min_surplus` (an epic or legendary: `off_page_min_surplus`
+        if larger). The cheapest ask per card, cheapest first; at most `roi_buy_max_value_reads_per_tick` fresh value
+        reads. One candidate at most: it ranks after every other accept (`rank_accepts`) and passes the same check."""
+        rules = self.rules
+        if not rules.roi_buy_enabled or rules.roi_buy_max_value_reads_per_tick <= 0:
+            return []
+        tick = run.snap.clock.tick
+        room = rules.roi_buy_max_spend - self._roi_spent()
+        if room <= 0:
+            return []
+        ours = {o.id for o in run.mine}
+        own_bids = {o.ref: o for o in run.mine if o.side == "bid"}
+        cheapest: dict[str, tuple[int, int, BoardOffer, str]] = {}
+        for o in offers:
+            card, venue = market.cards.get(o.ref), venues.get(o.venue)
+            if o.side != "ask" or o.id in ours or o.ref in run.unread or card is None or venue is None:
+                continue
+            fee = venue.fee(o.price)
+            total = o.price + fee
+            cap = rules.max_price_for(card.rarity)
+            if cap is None or total > cap or total > room:
+                continue
+            if o.ref not in cheapest or total < cheapest[o.ref][0]:
+                cheapest[o.ref] = (total, fee, o, card.rarity)
+        if not cheapest:
+            return []
+        held = self._ctx(run).held  # as `check` reads it: the same (card, tick, held) value is read once
+        best: AskCandidate | None = None
+        start = self.values.reads
+        for total, fee, o, rarity in sorted(cheapest.values(), key=lambda c: (c[0], c[2].id)):
+            if self.values.reads - start >= rules.roi_buy_max_value_reads_per_tick or not run.window.open():
+                break
+            official = self.values.value(o.ref, tick, held.get(o.ref, 0))
+            if official is None:
+                continue
+            margin = max(rules.value_margin_for(rarity), float(rules.roi_buy_min_surplus))
+            surplus = round(official - total, 1)
+            if surplus < margin or (best is not None and surplus <= best.surplus):
+                continue
+            n = held.get(o.ref, 0)
+            why = f"ROI: official value {official:g} (one more copy, {n} held) - ask {o.price} - fee {fee} on {o.venue}"
+            best = AskCandidate(
+                o, rarity, fee, total, round(official, 1), surplus, False, surplus, why, own_bids.get(o.ref), roi=True
+            )
+        if best is not None:
+            self.log(
+                f"tick {tick} taker: ROI candidate {best.offer.ref} on {best.offer.venue}: ask {best.offer.price} + "
+                f"fee {best.fee}, surplus {best.surplus:g} ({self.values.reads - start} value read(s))"
+            )
+        return [best] if best is not None else []
 
     def _bids(
         self, run: _TickRun, market: Market, offers: list[BoardOffer], venues: dict[str, Venue]
@@ -2647,8 +2719,18 @@ class Taker:
         final = p.final and p.desk is not None  # a dealer's final: its cap is `final_cap_for` (N14a)
         dealer = p.source if p.desk is not None else None  # `dealer_ladder_value_tolerance`: dealer deals only
         action = Action(
-            "accept_buy", p.ref, p.rarity, p.price, counterparty=maker, volume=ask, final=final, dealer=dealer
+            "accept_buy",
+            p.ref,
+            p.rarity,
+            p.price,
+            counterparty=maker,
+            volume=ask,
+            final=final,
+            dealer=dealer,
+            roi=p.roi,
         )
+        if p.roi:
+            ctx = replace(ctx, roi_spent=self._roi_spent() + (run.roi_spent if not self.live else 0))
         verdict = check(action, ctx, self.rules)
         if not verdict.allowed:
             self._skip(run, p, str(verdict), "rejected")
@@ -2689,6 +2771,8 @@ class Taker:
             self._skip(run, p, self._accepts_stop, "rejected", jev, gate)
             return False
         kind = "accept_ask" if p.source == "board" else "dealer_accept"
+        if p.roi:
+            kind = ROI_KIND
         if p.cash_thread is not None:
             kind = "team_cash_accept"
         where = f"on {p.inputs.get('venue')}" if p.source == "board" else f"from {p.source}"
@@ -2709,6 +2793,7 @@ class Taker:
         )
         if not self.live:
             run.spent += p.price if p.desk is None else 0  # a live board accept is booked in the ledger
+            run.roi_spent += p.price if p.roi else 0
             self._commit(run, p.price, p.ref, skip_thread, maker, ask)
             return True
         reservation = None
@@ -2752,7 +2837,7 @@ class Taker:
         if p.desk is not None:
             p.desk.conv.accepted_tick, p.desk.conv.accepted_price = clock.tick, p.price
         else:
-            self.ledger.record("spend", clock.tick, clock.t_hours, p.price, p.ref)
+            self.ledger.record("spend", clock.tick, clock.t_hours, p.price, f"{ROI_SPEND}{p.ref}" if p.roi else p.ref)
             if body is not None and p.candidate is not None and p.candidate.replaces_bid is not None:
                 self._withdraw(run, p.candidate.replaces_bid)
         self._commit(run, p.price, p.ref, skip_thread, maker, ask)
