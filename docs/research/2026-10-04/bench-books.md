@@ -179,6 +179,15 @@ select run, day, first_tick, last_tick, ticks_seen, venue, session, jsonb_array_
 Expected: one run per bench (10–12 traders, close to 16 ticks seen), `venue = 'v19'`, `session` set. A
 `bench.started` with `ours = true` and still 0 rows in `bench_books` would refute this report.
 
+## Update 08:10 UTC (after the rebase on `42bcd890`)
+
+The deploy facts above are as of 07:30 UTC. Since then main took `src` changes and bazaar-maker redeployed five times
+(07:31–08:00 UTC: PRs #272, #275, #277, #278/#279, #280). It now runs **`42bcd890` (PR #280)**, started 08:01:25 UTC,
+and logged `tick 1631 venue: broker on for v19 (LIVE), bench exact` at 08:01:29. The recorder is still there:
+SR1 (`c5b1bdfe`, `6ad55283`) extended `bench_capture.py` with a `bench_evidence` table written through the same
+worker and raised the queue to 128 batches; the `bench_books` insert, columns and caller are unchanged. The
+conclusion stands; the risk that a restart lands inside a bench is now the live one (five restarts in 30 min).
+
 ## Prod verification
 
 Pending at the time of writing (07:30 UTC): the first Sunday bench (game hour 14.65, ≈ 08:16 UTC with 15 s ticks
