@@ -408,6 +408,9 @@ class Maker:
         by_hand = [o for o in mine if o.id in hands_off]
         mine = [o for o in mine if o.id not in hands_off]
         params = self.params(clock.tick)
+        # the ranks, before any venue is picked: who is addressed (buyer rank) and whose venue we avoid
+        if self.rules.buyer_rank_enabled or self.rules.venue_avoid_rivals:
+            self._refresh_ranks(clock.tick)
         self._preferred_sell_owners = team_ids(params.preferred_sell_venue_owners)
         if self.notices is not None:
             self.notices.update(snap.events, snap.us)
@@ -452,7 +455,6 @@ class Maker:
 
         actions = plan_offers(targets, mine, clock.tick, self.config, self.rules, above_value)
         if self.rules.buyer_rank_enabled:
-            self._refresh_ranks(clock.tick)
             actions = self._with_fallbacks(actions, targets, mine, clock.tick)
         actions = self._with_relocations(run, actions, targets, mine)
         for action in actions:
@@ -989,6 +991,8 @@ class Maker:
             demand=demand,
             preferred_owners=self._preferred_sell_owners if target.side == "ask" else (),
             spread_key=target.asset_id or sum(map(ord, target.ref)),
+            avoid=self._avoided_owners(snap.us),
+            team_penalty=self.rules.venue_team_penalty,
         )
 
     def _listing(self, run: _MakerRun, t: Target, venue: str) -> Listing:
@@ -1171,6 +1175,17 @@ class Maker:
             self._ranks = buyer_rank.leaderboard_ranks(self.public.leaderboard())
         except Exception as e:  # a read we can do without: the asks stay public
             self.log(f"tick {tick} maker: leaderboard unreadable ({type(e).__name__}); asks stay public")
+
+    def _avoided_owners(self, us: str) -> frozenset[str]:
+        """Teams whose venue the maker never lists on (`venue_avoid_rivals`): a trade on a team's venue scores
+        market points for its owner (RULES.md "Scoring"), so not for the podium nor the teams just above us, the
+        rivals `buyers.is_rival` names for the buyer rank. Empty with the switch off or no ranks read yet."""
+        if not self.rules.venue_avoid_rivals or not self._ranks:
+            return frozenset()
+        cfg = buyer_rank.BuyerConfig()
+        ours = self._ranks.get(us)
+        rivals = (team for team, rank in self._ranks.items() if team != us and buyer_rank.is_rival(rank, ours, cfg))
+        return frozenset(rivals)
 
     def _address(self, run: _MakerRun, t: Target, venue: str) -> Target:
         """An ask the maker already decided to post, addressed to the best buyer when that passes every guardrail.

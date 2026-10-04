@@ -187,3 +187,11 @@ def test_live_configuration_distributes_three_eligible_copies_across_all_three_a
     assert {p[3] for p in asks} == {"v05", "v15", "v28"}
     values = {a["id"]: a["your_value"] for a in me["assets"]}
     assert all(p[2]["cash"] > values[p[1]["assets"][0]] for p in asks)
+
+
+def test_rival_avoidance_never_drops_a_requested_partner_market():
+    venues = venues_from({"venues": [RASTRO, *PARTNERS, OURS]})
+    # t15 is a podium rival but a configured partner: still used; t18 stays usable too
+    assert best_venue(venues, "t01", 10, preferred_owners=OWNERS, spread_key=4, avoid={"t15"}).id == "v15"
+    # without the partner setting the same rival venue is skipped
+    assert best_venue(venues, "t01", 10, avoid={"t15", "t18"}).id == "rastro"

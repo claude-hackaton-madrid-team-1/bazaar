@@ -3,7 +3,7 @@ falls back to a public ask after `buyer_rank_fallback_ticks`, and never goes to 
 
 from bazaar_agent.agents.maker import Maker
 from bazaar_agent.guardrails import Guardrails
-from tests.agent_fakes import TICK, FakePublic, FakeTeam, clock, our_ask, parts, rows
+from tests.agent_fakes import CHEAP, RASTRO, TICK, FakePublic, FakeTeam, clock, our_ask, parts, rows
 
 BOARD = {
     "teams": [
@@ -134,3 +134,42 @@ def test_a_hostile_feed_string_keeps_asks_public_and_the_tick_alive(tmp_path, mo
     m.on_tick(clock())
     assert asks(team) and all(to is None for _, to in asks(team))
     assert any("buyer rank failed (AttributeError)" in line for line in lines)
+
+
+# ---------------------------------------------------------------- `venue_avoid_rivals`: never list on a rival's venue
+
+RIVAL_VENUE = {**CHEAP, "owner": "t13", "trades": 60}  # t13 is rank 4: top 5, a rival; its free venue is the busiest
+
+
+def venues_listed(team):
+    return {s[3] for s in team.sent if s[0] == "list_offer"}
+
+
+def test_off_the_maker_lists_on_the_busiest_venue_even_a_rivals(tmp_path):
+    assert Guardrails().venue_avoid_rivals is False
+    team, public = Team(), Public(venues=(RASTRO, RIVAL_VENUE))
+    maker(tmp_path, team, public)[0].on_tick(clock())
+    assert venues_listed(team) == {"v02"}
+    assert public.board_reads == 0  # neither switch on: no leaderboard read
+
+
+def test_on_the_maker_never_lists_on_a_rivals_venue_and_falls_back_to_the_house(tmp_path):
+    team, public = Team(), Public(venues=(RASTRO, RIVAL_VENUE))
+    m, _ = maker(tmp_path, team, public, venue_avoid_rivals=True)
+    m.on_tick(clock())
+    assert venues_listed(team) == {"rastro"}
+    assert public.board_reads == 1
+    assert m._avoided_owners("t01") == frozenset({"t14", "t13"})  # top 5; nobody sits 1-3 ranks above our 9th
+
+
+def test_on_without_a_readable_leaderboard_no_venue_is_avoided(tmp_path):
+    team, public = Team(), Public(board=None, venues=(RASTRO, RIVAL_VENUE))
+    maker(tmp_path, team, public, venue_avoid_rivals=True)[0].on_tick(clock())
+    assert venues_listed(team) == {"v02"}
+
+
+def test_team_penalty_the_maker_weighs_el_rastro_up_against_a_busier_free_team_venue(tmp_path):
+    assert Guardrails().venue_team_penalty == 0.0
+    team, public = Team(), Public(venues=(RASTRO, {**CHEAP, "trades": 60}))  # t12 is no rival in BOARD
+    maker(tmp_path, team, public, venue_team_penalty=0.5)[0].on_tick(clock())
+    assert venues_listed(team) == {"rastro"}
