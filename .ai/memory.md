@@ -1480,3 +1480,24 @@ Coordinator's guarded pack negotiation 2670 at ticks 1804–1809 offered 17→20
 ### [2026-10-04] build-error — TT2 focused test selection and pending holdings
 
 Initial focused commands named nonexistent test_taker_targets.py (and earlier review test_taller_publication.py); no tests ran in those commands. Re-ran actual tracked test files. Keeping the full bid commitment initially also counted its hoped-for card as already held; exclude only that exact still-open bid's expected card while retaining cash/exposure and all real/settling holdings.
+
+### [2026-10-04] finding — TR1: actual team-trade points, not album proximity
+Real snapshots show neg_points 0→3.5 at tick1824, matching settlement1301: RET-07 bought from t02 for14 versus card value17.5. Outcome `score=.2` is the evaluator's surplus ratio, not the official scoreboard delta. The observed -100.2 at1466 follows the round3 reset and must not be called a trade loss. TeamDesk previously searched nearest-page swaps separately and merged the unrestricted plan, then ranked replies/rival rank/page proximity before expected gain (it did not discard every other page). TR1 uses one all-page search and expected exchange surplus first; safeguards and equal-gain ties remain. Team negotiation messages now precede dealer messages after accepts and Workshop reservations; expired dealer work is dropped.
+
+### [2026-10-04] build-error — TR1 planner container type
+Mypy rejected the post-blocklist assignment after simplifying to one plan: its threads are a tuple while the filtered value is a list. Materialize the plan as a list before the existing filter; no strategy change.
+
+### [2026-10-04] build-error — TR1 review caught stale commitments after reordered messages
+Independent review reproduced a dealer bid after a new team cash promise using the tick's old offer list; hourly cap0 does not reserve cash. Before dealer messages, merge durable publication promises into the retained offer view under the shared trade lock, with no extra API calls. Exclude synthetic pending rows from observed-offer evidence so an unknown write cannot reconcile itself. Actor regression reserves30 then refuses dealer20 with only40 cash above the floor.
+
+### [2026-10-04] gotcha — TR1 message-order change withdrawn after review
+The attempted team-before-dealer ordering needs more than merging pending rows: existing local accept commitments can be double-counted, and stale holdings can incorrectly release a new asset+cash promise. Coordinator chose the smaller safe scope: restore original dealer/team ordering and remove its new reconciliation. TR1 ships only one all-page swap plan and expected-gain-first ranking; prior text describing reordered messages is superseded by this entry.
+
+### [2026-10-04] finding — replenishment ran; old 22 P cap blocked the new final
+Coordinator observed autonomous thread2712 opened at tick1878, progressed17→21, then walked at tick1883 because Abuela's final24 exceeded max_price_pack22. No pack purchase was proven. User's explicit replenish-to-trade objective authorizes cap30 (the observed opening), with the existing never-accept-opening behavior, three/hour quota and cash protections retained. TR1 updates the cap; it does not assume the earlier22 quote is permanent or claim packs immediately score.
+
+### [2026-10-04] build-error — pack promise snapshot is read-only
+Review found pack opening passed a stale snapshot to publication reconciliation, which could release a promise for a newly held card or treat a synthetic promise as its own observed offer. The pack filter now reads durable pending asset IDs without reconciling or releasing anything; explicit release rows alone clear those exclusions. First regression caught attempted update of a frozenset; materializing a set fixes the local merge. No game read or write added.
+
+### [2026-10-04] build-error — TR1 local Postgres setup timeout
+Full gate at00ceb581 ran5715passing tests with95%coverage but one holdings fixture could not connect to localhost5433 before its10s timeout. No product assertion failed. Reran the entire holdings DB module against127.0.0.1: `26 passed in15.03s`; Depot full CI passed at the same code head. No runtime code change for this transient local connection failure.
