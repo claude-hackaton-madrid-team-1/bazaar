@@ -11,8 +11,9 @@ again without a new price are spam") and no accept is ever involved. At most one
 whole team, at most `egg_hunt_max_phrases_per_dealer_per_hour` per dealer per game hour, never a phrase twice to
 the same dealer (the tried set survives restarts in Postgres, else a JSONL file), never on a dealer's final offer.
 
-What stops it: the env switch `BAZAAR_EGG_HUNT` (unset or 0: off; `dry`: logs what it WOULD send and sends the bid
-unchanged; 1: on) AND `egg_hunt_enabled` in GUARDRAILS.md; the kill switch (the taker sends nothing at all then);
+What stops it: `egg_hunt_enabled` in GUARDRAILS.md, the one permanent switch (committed, so every deploy keeps it);
+the env `BAZAAR_EGG_HUNT` only overrides it on one service (unset: follow the guardrail; 0/off: off; `dry`: log what it
+WOULD send and send the bid unchanged); the kill switch (the taker sends nothing at all then);
 a dealer's cool-off, strike or warning, our thread closed for cool-off, a flag on one of our messages, or a learned
 blocker (back off); a find with that dealer (`egg_hunt_max_finds_per_dealer`); our finds reaching
 `egg_hunt_max_finds`. The persona editor's conduct judge tags every team message (`injection`, `abuse`, `spam`,
@@ -137,9 +138,11 @@ FOUND_EVENTS = ("egg.found", "badge.awarded", "egg.given")
 
 
 def mode_from_env(env: Mapping[str, str] | None = None) -> Mode:
-    """`BAZAAR_EGG_HUNT`: 1/true/on/live → live, dry → dry, anything else (unset, 0) → off."""
+    """`BAZAAR_EGG_HUNT`, an optional override of GUARDRAILS.md `egg_hunt_enabled` (Marius, Sun 4 Oct: one permanent
+    switch, nothing to re-set on Railway): unset or 1/true/on/live → live (the guardrail decides), dry → dry,
+    anything else (0, off, a typo) → off."""
     raw = (os.environ if env is None else env).get(ENV, "").strip().lower()
-    if raw in ("1", "true", "on", "live", "yes"):
+    if raw in ("", "1", "true", "on", "live", "yes"):
         return "live"
     return "dry" if raw in ("dry", "dry-run", "dryrun") else "off"
 

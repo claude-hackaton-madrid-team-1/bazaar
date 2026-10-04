@@ -2,8 +2,8 @@
 
 Sun 4 Oct 2026, 09:05–10:30 Madrid. Branch `feat/egg-hunter` (from `origin/main` 235f296e), local commits only.
 Code: `src/bazaar_agent/agents/egg_hunt.py`, wired in `agents/taker.py` (`_desk_send`, `_tick`, `_after_sends`) and
-`cli.py` (`_egg_hunter`). Tests: `tests/test_egg_hunt.py`. It runs only with GUARDRAILS.md
-`egg_hunt_enabled = true` **and** env `BAZAAR_EGG_HUNT=1` on `bazaar-taker`. Nothing was sent to the game while
+`cli.py` (`_egg_hunter`). Tests: `tests/test_egg_hunt.py`. GUARDRAILS.md `egg_hunt_enabled` is its one switch;
+env `BAZAAR_EGG_HUNT` only overrides it per service (`0` off, `dry` log only; §7). Nothing was sent to the game while
 building it (no `BAZAAR_LIVE`, no `--live`, no keyed request, no Railway change).
 
 **Live history (Sun 4 Oct).** At Marius's request #275 merged at tick 1542 with `egg_hunt_enabled = true` and
@@ -184,25 +184,22 @@ public in the replies.
 
 ## 7. Enable (Marius) and rollback
 
-Rules are loaded at process start and the env is read each tick, but both changes redeploy the taker on Railway, so
-do them **outside** a Market Test (±10 ticks) and outside Duels III / the Grand Final (`uv run bazaar deploy-guard`).
+**One permanent switch (Marius, Sun 4 Oct: "so we don't have to re-set it each time"):** GUARDRAILS.md
+`egg_hunt_enabled`. It is committed, so every deploy and restart keeps it; nothing is set on Railway. The env
+`BAZAAR_EGG_HUNT` is now only an override on one service: unset follows the guardrail, `0`/`off` turns the hunt off,
+`dry` logs `egg_hunt would-send` lines and sends bids unchanged. Rules are read at process start, so a change to the
+line takes effect with the deploy its merge triggers. Merge only through `scripts/merge_safe.sh` (outside a Market
+Test ±10 ticks and Duels III / the Grand Final).
 
-Now (after the review): merge the review fixes (`egg_hunt_enabled` is already true on main; the env var is unset, so
-the hunt stays off), then `railway variable set BAZAAR_EGG_HUNT=1 --service bazaar-taker` in a quiet window (not
-±10 ticks of a Market Test, not Duels III ~11:00). Raise `egg_hunt_max_phrases_per_dealer_per_hour` to 3 after a
-clean hour. The steps as first written:
-
-1. Merge this branch (code + params, all off). Every service redeploys once.
-2. Dry run first: `railway variable set BAZAAR_EGG_HUNT=dry --service bazaar-taker`, and a one-line PR setting
-   `egg_hunt_enabled = true` in GUARDRAILS.md (or both in the same window). Watch
-   `railway logs --service bazaar-taker | grep egg_hunt`: `would-send` lines show the exact text.
-3. Live: `railway variable set BAZAAR_EGG_HUNT=1 --service bazaar-taker`.
-4. Watch: `egg_hunt sent|found|backoff`; the public board's badges; `select dealer, phrase_id, status, tick from
-   egg_hunt_tried order by tick` (READ ONLY).
-
-Rollback, fastest first: the kill switch stops every send (`touch /app/.local/PAUSE` on the service, docs/services.md);
-`railway variable delete BAZAAR_EGG_HUNT --service bazaar-taker` (redeploys with the hunt off, bids unchanged);
-`egg_hunt_enabled = false` in GUARDRAILS.md.
+- **On:** `egg_hunt_enabled = true` on main (since #275). With the review fixes merged (#279) and
+  `BAZAAR_EGG_HUNT` unset on bazaar-taker, the hunt is on from that deploy on. Raise
+  `egg_hunt_max_phrases_per_dealer_per_hour` to 3 after a clean hour.
+- **Watch:** `railway logs --service bazaar-taker | grep egg_hunt` (`sent|found|backoff|skipped`), the public board's
+  badges, `select dealer, phrase_id, status, tick from egg_hunt_tried order by tick` (READ ONLY).
+- **Rollback, fastest first:** the kill switch stops every send (`touch /app/.local/PAUSE` on the service,
+  docs/services.md); `railway variable set BAZAAR_EGG_HUNT=0 --service bazaar-taker` **then
+  `railway redeploy --service bazaar-taker`** (on Sun 4 Oct, a variable change alone did not restart the taker);
+  `egg_hunt_enabled = false` in GUARDRAILS.md (a PR, permanent).
 
 Stalls close at the Grand Final (~14:00 if the 09:00 schedule holds): no dealer threads after that, so the hunt
 ends there by itself.

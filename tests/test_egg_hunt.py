@@ -49,8 +49,9 @@ def event(eid: int, kind: str, actor: str = "", **payload: Any) -> dict[str, Any
 # ---------------------------------------------------------------- the switch
 
 
-def test_the_env_switch_reads_one_dry_and_everything_else_as_off() -> None:
-    assert [eh.mode_from_env({eh.ENV: v}) for v in ("1", "true", "dry", "0", "", "maybe")] == [
+def test_the_env_only_overrides_the_guardrail_unset_follows_it() -> None:
+    assert [eh.mode_from_env({eh.ENV: v}) for v in ("1", "true", "", "dry", "0", "off", "maybe")] == [
+        "live",
         "live",
         "live",
         "dry",
@@ -58,7 +59,7 @@ def test_the_env_switch_reads_one_dry_and_everything_else_as_off() -> None:
         "off",
         "off",
     ]
-    assert eh.mode_from_env({}) == "off"
+    assert eh.mode_from_env({}) == "live"  # unset: GUARDRAILS.md `egg_hunt_enabled` alone decides
 
 
 def test_an_off_hunter_never_reads_or_writes_its_store(tmp_path: Path) -> None:
@@ -75,12 +76,13 @@ def test_an_off_hunter_never_reads_or_writes_its_store(tmp_path: Path) -> None:
     h.flush(100)
 
 
-def test_off_by_default_in_the_guardrails_and_without_the_env(tmp_path: Path) -> None:
-    assert Guardrails().egg_hunt_enabled is False
-    h, _ = hunter(tmp_path)
-    assert weave(h, Guardrails()) is None  # env on, guardrail off
+def test_the_guardrail_is_the_switch_and_the_env_can_still_turn_it_off(tmp_path: Path) -> None:
+    assert Guardrails().egg_hunt_enabled is False  # code without GUARDRAILS.md: off
+    h = EggHunter(FileStore(tmp_path / eh.TRIED_FILE), lambda s: None, mode_fn=lambda: eh.mode_from_env({}))
+    assert weave(h, Guardrails()) is None  # env unset, guardrail off
+    assert weave(h, rules()) is not None  # env unset, guardrail on: on, nothing to set on Railway
     off, _ = hunter(tmp_path, mode="off")
-    assert weave(off, rules()) is None  # guardrail on, env off
+    assert weave(off, rules()) is None  # BAZAAR_EGG_HUNT=0 overrides the guardrail
 
 
 # ---------------------------------------------------------------- untrusted text
