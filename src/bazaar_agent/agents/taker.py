@@ -150,7 +150,7 @@ from bazaar_agent.guardrails import (
 )
 from bazaar_agent.holdings import Holdings
 from bazaar_agent.injection_log import InjectionLog
-from bazaar_agent.intel import Print, book_values, dealer_threads, listed_makers, settled_volume, tape
+from bazaar_agent.intel import TEAM_ID, Print, book_values, dealer_threads, listed_makers, settled_volume, tape
 from bazaar_agent.jev.decider import needed_budget_s
 from bazaar_agent.learn.blockers import Blocks
 from bazaar_agent.learn.curves import curve_stats, informative_fill
@@ -1022,9 +1022,10 @@ class Taker:
         offers: list[BoardOffer] = [o for venue_id in venues for o in boards[venue_id]]
         if self.config.addressed != "off":  # before the makers are named: a pseudonym is resolved like any other
             offers += self._addressed_in(run, venues, {o.id for o in offers})
-        if run.settled is not None:  # the board shows pseudonyms; the feed's `offer.listed` names the team
-            makers = listed_makers(run.snap.events)
-            offers = [replace(o, maker=makers.get(o.id, o.maker)) for o in offers]
+        # Public offer.listed identifies this exact offer independently of the optional exposure cap.
+        # Never infer its maker from the venue owner (the owner's own trades there are forbidden).
+        makers = {oid: team for oid, team in listed_makers(run.snap.events).items() if TEAM_ID.fullmatch(team)}
+        offers = [replace(o, maker=makers.get(o.id, o.maker)) for o in offers]
         return offers, venues
 
     def _addressed_in(self, run: _TickRun, venues: dict[str, Venue], on_board: set[int]) -> list[BoardOffer]:

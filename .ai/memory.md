@@ -1454,3 +1454,11 @@ This resembles the earlier heavy-load faulthandler incident; the native cause is
 one full run, so it was not repeated. The focused Workshop tests passed (43); the simulator smoke passed.
 A remaining local `bazaar-pytest` backend was idle in transaction with no live client-port owner; it was
 terminated only after checking its port with lsof. Full-suite completion and coverage remain unverified.
+
+### [2026-10-04] finding — MM1 market routing and trade visibility
+- Tick1774: Team10's v07 was open with zero fees and an empty direct book. Its LAT04 offer22486 was on Rastro, not v07. Venue owner must never be displayed as the buyer without settlement/offer evidence.
+- `show.agent_decisions` dropped the recipient of our RET07 bid22565 despite the recorded offer naming t02. Explicit destination/context must survive the private Live projection; a posted offer is not a settled sale.
+
+### [2026-10-04] build-error — MM1
+- Adding a JSON import with an unbounded replacement also changed a function-local import and caused an indentation error; restricted the edit and reused the module import. Cash-counter metadata suite:20passed.
+- MM1 routing tests initially indexed decision status-update rows as if every row had a kind; use `row.get('kind')` when selecting the actual decision. Black/Ruff disagreed on an inline annotation comment; moved the comment above the field.
