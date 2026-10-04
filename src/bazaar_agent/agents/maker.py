@@ -390,6 +390,9 @@ class Maker:
         by_hand = [o for o in mine if o.id in hands_off]
         mine = [o for o in mine if o.id not in hands_off]
         params = self.params(clock.tick)
+        # the ranks, before any venue is picked: who is addressed (buyer rank) and whose venue we avoid
+        if self.rules.buyer_rank_enabled or self.rules.venue_avoid_rivals:
+            self._refresh_ranks(clock.tick)
         if self.notices is not None:
             self.notices.update(snap.events, snap.us)
         book = build_playbook(snap.me, snap.catalog, snap.events, snap.dealers, params, self.rules, snap.scan)
@@ -427,7 +430,6 @@ class Maker:
 
         actions = plan_offers(targets, mine, clock.tick, self.config, self.rules, above_value)
         if self.rules.buyer_rank_enabled:
-            self._refresh_ranks(clock.tick)
             actions = self._with_fallbacks(actions, targets, mine, clock.tick)
         for action in actions:
             self._do(run, action)
@@ -473,7 +475,7 @@ class Maker:
                 ask_floor(t.value, self.rules),
                 sell_floor(float(your_value), self.rules) if isinstance(your_value, int | float) else 0,
             )
-            venue = best_venue(snap.venues, snap.us, t.price)
+            venue = best_venue(snap.venues, snap.us, t.price, *self._venue_weights(snap.us))
             median = market_median(prints, venue.id, t.ref, t.rarity, rarities, clock.tick, snap.us) if venue else None
             r = relist_price(
                 t.price,
@@ -672,7 +674,7 @@ class Maker:
         venues = run.snap.venues
         if self.notices is not None:  # a fee announced for later in the listing's life counts now
             venues = self.notices.adjust(venues, tick, self.config.offer_ttl_ticks)
-        venue = best_venue(venues, run.snap.us, t.price)
+        venue = best_venue(venues, run.snap.us, t.price, *self._venue_weights(run.snap.us))
         blocked = self._blocked(run)
         if venue is not None and not blocked:
             t = self._route(run, t, venue.id)
@@ -783,6 +785,21 @@ class Maker:
         except Exception as e:  # a read we can do without: the asks stay public
             self.log(f"tick {tick} maker: leaderboard unreadable ({type(e).__name__}); asks stay public")
 
+    def _venue_weights(self, us: str) -> tuple[frozenset[str], float]:
+        """`best_venue`'s weights: the owners we never list with, and the share a team venue's score is cut by."""
+        return self._avoided_owners(us), self.rules.venue_team_penalty
+
+    def _avoided_owners(self, us: str) -> frozenset[str]:
+        """Teams whose venue the maker never lists on (`venue_avoid_rivals`): a trade on a team's venue scores
+        market points for its owner (RULES.md "Scoring"), so not for the podium nor the teams just above us, the
+        rivals `buyers.is_rival` names for the buyer rank. Empty with the switch off or no ranks read yet."""
+        if not self.rules.venue_avoid_rivals or not self._ranks:
+            return frozenset()
+        cfg = buyer_rank.BuyerConfig()
+        ours = self._ranks.get(us)
+        rivals = (team for team, rank in self._ranks.items() if team != us and buyer_rank.is_rival(rank, ours, cfg))
+        return frozenset(rivals)
+
     def _address(self, run: _MakerRun, t: Target, venue: str) -> Target:
         """An ask the maker already decided to post, addressed to the best buyer when that passes every guardrail.
         Public when the rank is off, the ask is already addressed, the leaderboard is unknown, this copy was
@@ -891,7 +908,7 @@ class Maker:
 
     def _refusal(self, run: _MakerRun, t: Target) -> str | None:
         """Why `_post` would refuse `t` in `run` at its target price (no venue, no slot, a guardrail)."""
-        venue = best_venue(run.snap.venues, run.snap.us, t.price)
+        venue = best_venue(run.snap.venues, run.snap.us, t.price, *self._venue_weights(run.snap.us))
         if venue is None:
             return "no venue we may trade on"
         return self._blocked(run) or self._denied(run, self._route(run, t, venue.id), venue.id)

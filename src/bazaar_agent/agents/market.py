@@ -12,7 +12,7 @@ on a board is skipped, never guessed at. Words persuade, structure binds.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -216,13 +216,24 @@ def our_open_offers(response: dict[str, Any], us: str) -> tuple[list[OpenOffer],
     return mine, total
 
 
-def best_venue(venues: Iterable[Venue], us: str, price: int) -> Venue | None:
+def best_venue(
+    venues: Iterable[Venue], us: str, price: int, avoid: Collection[str] = frozenset(), team_penalty: float = 0.0
+) -> Venue | None:
     """Where an offer is likeliest to fill: the venue's trades so far (activity), discounted by the fee
-    share its taker pays. El Rastro wins until a team venue trades as much at a lower fee."""
+    share its taker pays. El Rastro wins until a team venue trades as much at a lower fee. `avoid`: teams whose
+    venue we never list on (`venue_avoid_rivals`: a trade on a team's venue scores market points for its owner);
+    the house venue has no team owner, so it is never avoided. `team_penalty` (`venue_team_penalty`): a team venue's
+    score is cut by this share, as a trade there scores market points for its owner and one on the house venue for
+    nobody; 0 weighs every venue alike (activity and fee only)."""
 
     def score(v: Venue) -> float:
         fee_share = min(1.0, v.fee(price) / max(1, price))
-        return (v.trades + 1) * (1.0 - fee_share)
+        owner_share = 0.0 if v.house else team_penalty
+        return (v.trades + 1) * (1.0 - fee_share) * (1.0 - owner_share)
 
-    candidates = [v for v in tradable_venues(venues, us) if v.mechanism in ("board", "auto", "")]
+    candidates = [
+        v
+        for v in tradable_venues(venues, us)
+        if v.mechanism in ("board", "auto", "") and (v.house or v.owner not in avoid)
+    ]
     return max(candidates, key=lambda v: (score(v), v.house, v.id), default=None)
