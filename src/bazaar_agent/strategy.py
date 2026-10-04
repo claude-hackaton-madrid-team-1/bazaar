@@ -19,7 +19,7 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from bazaar_agent import intel
 from bazaar_agent.config import REPO_ROOT
@@ -34,8 +34,10 @@ from bazaar_agent.guardrails import (
     action_kind,
     check,
     parse_md_config,
+    team_ids,
 )
 from bazaar_agent.guardrails import validated as validated_model
+from bazaar_agent.move_impact import our_cards
 from bazaar_agent.supply import SupplyMap, supply_map
 
 STRATEGY_FILE = REPO_ROOT / "STRATEGY.md"
@@ -67,6 +69,12 @@ class StrategyParams(BaseModel):
     # Optional too: 0 keeps today's sell_to_need (a spare below the buyer's need, or of a set nobody chases, is
     # not offered); N offers up to N of them at our value + `sell_min_surplus` (sell_spares, STRATEGY.md).
     sell_spare_slots: int = Field(default=0, ge=0)
+    preferred_sell_venue_owners: str = "none"
+
+    @field_validator("preferred_sell_venue_owners")
+    @classmethod
+    def valid_venue_owners(cls, value: str) -> str:
+        return ",".join(team_ids(value))
 
 
 @dataclass(frozen=True)
@@ -647,10 +655,17 @@ def _spare(m: Market, card: Card) -> bool:
     return m.held.get(card.ref, 0) > 1 or m.affinity.get(card.set_code, 1.0) <= SPARE_MAX_AFFINITY
 
 
-def sell_moves(m: Market, assets: Iterable[dict[str, Any]], params: StrategyParams, rules: Guardrails) -> list[Move]:
+def sell_moves(
+    m: Market,
+    assets: Iterable[dict[str, Any]],
+    params: StrategyParams,
+    rules: Guardrails,
+    complete: Iterable[str] | None = None,
+) -> list[Move]:
     """sell_to_need: one copy per card we hold, to the teams that chase its set, never below what we lose
     (our your_value plus any page bonus that selling our only copy gives up). Our only copy of a page card
-    of a new page (`protect_page_sets`) is never offered. sell_spares (`sell_spare_slots` > 0): up to that
+    of a protected page is kept according to the same complete-page policy as the execution guard.
+    sell_spares (`sell_spare_slots` > 0): up to that
     many more spare copies (`_spare`: a duplicate, or a set we hold no boost in), whose buyer's need and tape
     sit below what we lose + `sell_min_surplus` or whose set nobody is seen chasing, are offered to anyone
     at what we lose + `sell_min_surplus` (ranked like the rest)."""
@@ -665,7 +680,7 @@ def sell_moves(m: Market, assets: Iterable[dict[str, Any]], params: StrategyPara
     for ref, asset in copies.items():
         card = m.cards.get(ref)
         buyers = m.chasers.get(card.set_code, ()) if card else ()
-        if card is None or rules.protects(ref, card.rarity, m.held.get(ref, 0)):
+        if card is None or rules.protects(ref, card.rarity, m.held.get(ref, 0), complete):
             continue
         if not buyers and not params.sell_spare_slots:
             continue
@@ -936,7 +951,15 @@ def build_playbook(
         cash=m.cash,
         supply=tuple(supply_view(m, params)),
         buys=tuple(rank(buys, m, params, boost)),
-        sells=tuple(rank(sell_moves(m, me.get("assets") or [], params, rules), m, params)),
+        sells=tuple(
+            rank(
+                sell_moves(
+                    m, me.get("assets") or [], params, rules, our_cards(me).complete if me.get("album") else None
+                ),
+                m,
+                params,
+            )
+        ),
         packs=tuple(pack_moves(m, params, rules)),
         skipped=tuple(skipped),
         pack_quotas=quotas,

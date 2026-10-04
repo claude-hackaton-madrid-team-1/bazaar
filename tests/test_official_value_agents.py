@@ -8,7 +8,7 @@ from dataclasses import replace
 import pytest
 
 from bazaar_agent.agents.maker import Maker
-from bazaar_agent.agents.taker import Taker, TakerConfig
+from bazaar_agent.agents.taker import REFUSAL_RECHECK_TICKS, REFUSAL_ROW_TICKS, Taker, TakerConfig
 from bazaar_agent.sdk import BazaarError
 from tests.agent_fakes import TICK, FakePublic, FakeTeam, ask, bid, clock, parts, rows
 
@@ -247,14 +247,100 @@ def test_a_different_card_or_previous_round_fill_does_not_veto_the_plan(tmp_path
 
 
 def test_new_official_value_reconsiders_a_previously_unreachable_ret_plan(tmp_path, monkeypatch):
+    # An official value is only known by reading it: a remembered refusal re-reads it every REFUSAL_RECHECK_TICKS.
     t, team, _ = ret_plan(tmp_path, monkeypatch, alternative=False)
     t.on_tick(clock(tick_seconds=15))
     assert team.sent == []
     team.values["RET-09"] = 55
     t.on_tick(clock(tick=TICK + 1, tick_seconds=15))
+    assert team.sent == [] and team.value_calls == ["RET-09"]
+    t.on_tick(clock(tick=TICK + REFUSAL_RECHECK_TICKS, tick_seconds=15))
     assert ("open_thread", "picaros", {"buy": {"card": "RET-09"}}) in team.sent
     assert t.convs["picaros"].neg.plan.max_price == 55
     assert team.value_calls == ["RET-09", "RET-09"]
+
+
+# ---------------------------------------------------------------- 2b. taker: a refused open is remembered
+# Sun t1733-1888: picaros RET-09/RET-10 (ceiling 49, fills from 59) were refused 205 times, each a value read and
+# one of the tick's open attempts, while the dashboard counted "refused ×99".
+
+
+def ret_refusals(tmp_path):
+    return [r for r in rows(tmp_path) if r.get("kind") == "dealer_open" and r["status"] == "rejected"]
+
+
+def test_a_refused_open_is_not_retried_next_tick_nor_logged_again(tmp_path, monkeypatch):
+    t, team, _ = ret_plan(tmp_path, monkeypatch, alternative=False)
+    for tick in range(TICK, TICK + REFUSAL_RECHECK_TICKS):
+        t.on_tick(clock(tick=tick, tick_seconds=15))
+    assert team.sent == [] and team.value_calls == ["RET-09"]
+    assert len(ret_refusals(tmp_path)) == 1
+    t.on_tick(clock(tick=TICK + REFUSAL_RECHECK_TICKS, tick_seconds=15))  # the re-check reads it again, silently
+    assert team.value_calls == ["RET-09", "RET-09"] and len(ret_refusals(tmp_path)) == 1
+
+
+def test_a_lasting_refusal_is_written_again_every_refusal_row_ticks(tmp_path, monkeypatch):
+    # The dashboard's "why we do not buy" reads the last 300 ticks: a refusal that lasts must not age out of it.
+    t, team, _ = ret_plan(tmp_path, monkeypatch, alternative=False)
+    for tick in range(TICK, TICK + 2 * REFUSAL_ROW_TICKS + 1, REFUSAL_RECHECK_TICKS):
+        t.on_tick(clock(tick=tick, tick_seconds=15))
+    assert team.sent == []
+    assert [r["tick"] for r in ret_refusals(tmp_path)] == [TICK, TICK + REFUSAL_ROW_TICKS, TICK + 2 * REFUSAL_ROW_TICKS]
+
+
+def test_a_refused_open_is_retried_when_a_new_fill_comes_in(tmp_path, monkeypatch):
+    from tests.test_intel import msg, opened, settle
+
+    t, team, _ = ret_plan(tmp_path, monkeypatch, alternative=False)
+    t.on_tick(clock(tick_seconds=15))
+    assert team.sent == []
+    t.public._events += [
+        opened(905, 91, "t03", {"buy": {"card": "RET-09"}}, tick=96, dealer="picaros"),
+        msg(906, 91, "t03", "picaros", want_cash=50, tick=96),
+        settle(907, 91, "picaros", "t03", "RET-09", 45, tick=97, kind="card", persona="picaros", asset_id=901),
+    ]
+    t.on_tick(clock(tick=TICK + 1, tick_seconds=15))
+    assert ("open_thread", "picaros", {"buy": {"card": "RET-09"}}) in team.sent
+    assert team.value_calls == ["RET-09", "RET-09"]
+
+
+def test_a_refused_open_is_retried_when_a_cap_changes(tmp_path, monkeypatch):
+    t, team, _ = ret_plan(tmp_path, monkeypatch, alternative=False)
+    t.on_tick(clock(tick_seconds=15))
+    t.on_tick(clock(tick=TICK + 1, tick_seconds=15))
+    assert team.value_calls == ["RET-09"]
+    t.rules = t.rules.model_copy(update={"official_value_margin": 1.0})
+    t.on_tick(clock(tick=TICK + 2, tick_seconds=15))
+    assert team.value_calls == ["RET-09", "RET-09"]
+    first, second = ret_refusals(tmp_path)
+    assert "ceiling 49" in first["guardrail"] and "ceiling 48" in second["guardrail"]  # a new refusal: one new row
+
+
+def test_the_next_ranked_candidate_gets_the_open_attempt(tmp_path, monkeypatch):
+    # One open attempt a tick: RET-09 used it on the first tick; from the second, LAV-02 gets it.
+    t, team, _ = ret_plan(tmp_path, monkeypatch)
+    t.config = replace(t.config, max_dealer_threads=1)
+    t.on_tick(clock(tick_seconds=15))
+    assert team.sent == [] and team.value_calls == ["RET-09"]
+    t.on_tick(clock(tick=TICK + 1, tick_seconds=15))
+    assert [s for s in team.sent if s[0] == "open_thread"] == [("open_thread", "abuela", {"buy": {"card": "LAV-02"}})]
+    assert "RET-09" not in team.value_calls[1:]
+
+
+def test_a_card_no_longer_on_sale_is_forgotten(tmp_path, monkeypatch):
+    from bazaar_agent.agents import taker as module
+    from bazaar_agent.strategy import Playbook
+
+    t, team, _ = ret_plan(tmp_path, monkeypatch, alternative=False)
+    t.on_tick(clock(tick_seconds=15))
+    book = module.build_playbook()
+    monkeypatch.setattr(module, "build_playbook", lambda *a, **kw: Playbook(TICK, 400, (), (), (), (), (), {}))
+    t.on_tick(clock(tick=TICK + 1, tick_seconds=15))
+    assert t._refused_opens == {}
+    monkeypatch.setattr(module, "build_playbook", lambda *a, **kw: book)  # on sale again: judged afresh, once
+    t.on_tick(clock(tick=TICK + 2, tick_seconds=15))
+    t.on_tick(clock(tick=TICK + 3, tick_seconds=15))
+    assert team.value_calls == ["RET-09", "RET-09"] and len(ret_refusals(tmp_path)) == 2
 
 
 def test_official_read_that_uses_the_tick_prevents_further_reads_or_an_open(tmp_path, monkeypatch):

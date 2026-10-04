@@ -806,3 +806,32 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 - Stop treating an unfilled cheaper bid as an executable alternative to a profitable ask.
 - Retain full pending cash/exposure and settling-card protection until confirmed cancellation.
 - Verify actual public/addressed taker paths, independent review and CI before guarded rollout.
+
+## TR1 — Team negotiation surplus first
+
+- Spec: [TR1-spec.md](TR1-spec.md).
+- One all-page swap search; expected gain before album/rival-rank ties. Existing dealer/team message ordering and commitment safety remain unchanged.
+- Focused 107 ranking/team tests passed after withdrawing message reordering; independent review/full gate and rollout pending coordinator.
+
+- TR1 pack follow-up: cap30 permits observed final24; pack snapshot reads promised asset IDs without reconciling durable reservations. Pack/supply50 and config12 tests pass.
+
+## SI1 — Proactive supply follows complete-page protection
+
+- Spec: [SI1-spec.md](SI1-spec.md).
+- Reuse the existing album protection context in strategy and maker supply filters; preserve fresh guards, prices, reservations and listing budgets.
+- Focused79 tests pass; independent review, full gate and guarded rollout remain coordinator stages.
+## Q1 — Persist dealer quota through the actual game hour
+
+- Spec: [Q1-spec.md](Q1-spec.md).
+- Trusted server refusal uses game-hour expiry, records the observed dealer-wide10-conversation limit, and loads shared blockers before first opening after restart. Pack purchase quota remains separate.
+- Focused51 tests passed; independent review/full gate and coordinator rollout pending.
+
+## MR1 — Move standing asks toward crossing demand
+
+- [Spec and local evidence](MR1-spec.md): route an existing public ask only on strictly better crossing demand, after confirmed cancel and through existing fresh locked publication guards.
+- Actor regression red on main; targeted maker/routing suite and static checks; coordinator owns independent review, integrated gate and guarded rollout.
+
+## PM1 — Sustained preferred-market supply
+
+- [Spec](PM1-spec.md): validated Team4/Team15/Team18 public-ask fallback, crossing demand first, deterministic distribution and sticky one-time migration from nonpreferred markets.
+- 178 focused tests pass; independent reviews and coordinator's integrated gate/guarded deployment required.
