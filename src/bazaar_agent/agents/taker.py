@@ -52,6 +52,7 @@ from bazaar_agent.agents.dealer import (
 )
 from bazaar_agent.agents.dealer_memory import DealerMemory, address_for, recall_dealer
 from bazaar_agent.agents.dealer_plan import LIFTED_FINAL_MIN_BIDS, DealerPlan, plan_dealer_buy
+from bazaar_agent.agents.dealer_sell_data import ladder_deals
 from bazaar_agent.agents.desk import (
     Conversation,
     DeskMove,
@@ -65,7 +66,15 @@ from bazaar_agent.agents.desk import (
 from bazaar_agent.agents.injection_tags import INJECTIONS_FILE, InjectionTags, latest_message
 from bazaar_agent.agents.inspector import CardIndex, FlagBook, Inspection, flag_step
 from bazaar_agent.agents.jev_cache import CACHED_REASONS, VerdictCache, state_key
-from bazaar_agent.agents.ladder_probe import opening_asks, our_dealer_deals, plan_probes, probe_state
+from bazaar_agent.agents.ladder_probe import (
+    LadderSlots,
+    dealer_levels,
+    opening_asks,
+    our_dealer_deals,
+    plan_probes,
+    probe_state,
+    unfillable,
+)
 from bazaar_agent.agents.market import (
     BoardOffer,
     OpenOffer,
@@ -653,6 +662,7 @@ class Taker:
         self._taller_notes: set[tuple[str, str]] = set()  # (triple, verdict) already recorded and not sent
         self._taller_rest_until = 0  # a refused craft: no other try before this tick
         self._addressed_said: dict[int, str] = {}  # addressed offer id -> the reason last recorded (once each)
+        self._slot_said: dict[tuple[int, str], tuple[int, str]] = {}  # (level, dealer) -> (game hour, reason) said
 
     # ------------------------------------------------------------ entry point (run_per_tick calls it)
 
@@ -1413,8 +1423,9 @@ class Taker:
         (no official value read before), and with `jev_min_budget_s` of the tick left; the official value is
         read once per planned card. Every probe is guarded and checked per send like any dealer buy."""
         gate, clock = self.strategy_gate, run.snap.clock
-        if gate is None:
+        if gate is None:  # no Jev: no probe, and no slot rows either (the taker as it ran before slots)
             return book
+        slots = LadderSlots(dealer_levels(run.snap.dealers), ladder_deals(run.snap.events, run.snap.us))
         hour = int(clock.t_hours)
         self._probed = {k for k in self._probed if k[1] == hour}
         busy = {str(t.get("with")) for t in threads} | set(self.convs)
@@ -1422,7 +1433,8 @@ class Taker:
         floor = effective_cash_floor(self.rules, ctx)
         room = max(0, min(ctx.cash - floor, self.rules.max_spend_per_game_hour - ctx.spent_last_hour))
         opens = opening_asks(market, run.snap.events, run.snap.dealers)
-        if not plan_probes(market, opens, self.rules, room, skip):
+        if not plan_probes(market, opens, self.rules, room, skip, slots=slots):
+            self._empty_slots(run, slots, ())
             return book
         if gate.due(LADDER_PROBE, clock.tick) and run.window.left() < needed_budget_s(self.config.jev_min_budget_s):
             return book
@@ -1432,16 +1444,18 @@ class Taker:
             return values.value(ref, clock.tick, held=0) if values is not None else None
 
         def state() -> dict[str, Any]:
-            planned = plan_probes(market, opens, self.rules, room, skip, value_of)
+            planned = plan_probes(market, opens, self.rules, room, skip, value_of, slots)
             deals = our_dealer_deals(run.snap.events, run.snap.us)
-            return probe_state(planned, ctx.cash, floor, room, ctx.spent_last_hour, deals)
+            return probe_state(planned, ctx.cash, floor, room, ctx.spent_last_hour, deals, slots)
 
         if not gate.allows(LADDER_PROBE, clock.tick, state):
+            self._empty_slots(run, slots, (), "the ladder probe gate is not a decided yes (Jev or the LLM decider)")
             return book
-        probes = plan_probes(market, opens, self.rules, room, skip, value_of)  # values cached for the tick
+        probes = plan_probes(market, opens, self.rules, room, skip, value_of, slots)  # values cached for the tick
         # A dealer whose card fails once its official value is read rests for the hour too: no GET
         # /api/me/value every tick on the shared key while the gate stays yes (#212 review).
-        self._probed |= {(p.dealer, hour) for p in plan_probes(market, opens, self.rules, room, skip)}
+        self._probed |= {(p.dealer, hour) for p in plan_probes(market, opens, self.rules, room, skip, slots=slots)}
+        self._empty_slots(run, slots, [p.dealer for p in probes])
         moves = [p.move() for p in probes]
         for p, mv in zip(probes, moves, strict=True):
             self._probed.add((p.dealer, hour))
@@ -1456,6 +1470,30 @@ class Taker:
                 status="approved",
             )
         return replace(book, buys=(*book.buys, *moves))
+
+    def _empty_slots(
+        self, run: _TickRun, slots: LadderSlots, planned: Iterable[str], blocked: str | None = None
+    ) -> None:
+        """One `ladder_slot` row per level with an empty slot this round that no probe this tick fills, saying why
+        (a dealer that sells us no card, not unlocked, no probe inside our caps, the gate), once per game hour or
+        when the reason changes. Memory only, no request; a row, never a send."""
+        clock = run.snap.clock
+        hour = int(clock.t_hours)
+        unlocked = [str(d) for d in run.snap.me.get("unlocked") or [] if isinstance(d, str)]
+        for level, dealer, why in unfillable(run.snap.dealers, slots, unlocked, self.rules, planned, blocked):
+            if self._slot_said.get((level, dealer)) == (hour, why):
+                continue
+            self._slot_said[(level, dealer)] = (hour, why)
+            self.rec.decide(
+                clock.tick,
+                "ladder_slot",
+                f"empty ladder slot: {why}",
+                inputs={"level": level, "dealer": dealer, "scored": slots.scored(level), "why": why},
+                reason=why,
+                guardrail="-",
+                chosen=False,
+                status="rejected",
+            )
 
     def _all_denied(self, run: _TickRun, moves: list[StrategyMove]) -> None:
         """No dealer thread opens and every dealer buy the strategy ranked is denied by the guardrails (cash above
