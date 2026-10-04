@@ -27,8 +27,14 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
   - Workshop (`workshop_build_noul`): no, duplicates are worth more as team trades than as Workshop inputs.
   - Overnight build order (`overnight_first_build_choice`): undecided, leaning toward the Market Test edge broker (0.58) over the round-3 ladder tracker (0.36). The edge broker has since merged (#218, behind `BAZAAR_BENCH_POLICY`), so the open build is the ladder tracker.
 
-## Strategies the runtime implements
-- complete_pages: buy missing page cards of our highest-affinity sets first; each missing card also carries its share of the page bonus.
+## Operating priority
+
+Prioritise profitable team negotiations at private values. Buy below our marginal value, sell guardrail-eligible inventory above the server's `your_value`, and account for the accepting side's venue fees. Preserve sole copies on protected complete pages under current `GUARDRAILS.md` and obey approval, cash and tick limits. Next, negotiate dealer deals toward their final for the round's best three per level. Scheduled duels and Market Tests have their own policies and deadlines; the card playbook does not rank those mechanisms. Market-making rewards efficient matches and value other teams create on our venue.
+
+The card playbook below is an inventory opportunity estimate, not the leaderboard objective. Its page-bonus share estimates buying value; it is never points for holding a card or completing a page. Scarcity is an urgency heuristic. A profitable settlement is the goal, and more trades, fees collected and pack luck earn no points.
+
+## Card opportunities the runtime implements
+- complete_pages: identify missing page cards with positive estimated purchase surplus; affinity and a page-bonus share estimate their private value. Completing the page itself earns no score.
 - scarcity_first: the fewer copies exist, the sooner we act and the higher we value it; a card with zero minted copies cannot be bought yet, only pulled or waited for.
 - sell_to_need: sell duplicates and low-affinity cards to the teams that chase their set, priced at what the card is worth to them, never below our own value.
 - sell_spares: a spare copy (a duplicate, or a card of a set whose affinity to us is at most 1, i.e. no boost) nobody would pay `sell_min_surplus` over our value for at the buyer's need or the tape (or of a set nobody is seen chasing) is still offered to anyone, at our value + `sell_min_surplus` (`sell_spare_slots` of them at most), so the maker keeps listing what we can sell at a gain.
@@ -38,11 +44,11 @@ Guardrails still apply to every move: strategy proposes, `GUARDRAILS.md` dispose
 - pack_value (restocking disabled): buy a pack only when its expected value to us (given what we already hold) beats its learned price, a pack slot is left this game hour (`max_packs_per_game_hour` in GUARDRAILS.md and each dealer's `per_team_per_hour`), and Jev (`spend_pack_slot_now`, `questions/packs.json`) decides yes; `no` or `undecided` keeps the slot.
 - level_unlock: keep negotiated deals flowing with the newest dealer to unlock the next level early.
 
-## How the engine scores a move
+## How the card playbook ranks a move
 - Value of a missing page card: book × affinity, plus its share (by book, among the page's missing cards) of the page bonus, times `page_bonus_weight`.
 - Expected price: median tape price for the card, else for its rarity, else the dealer list price, else `rare_fallback_price` (rares) or book; dealer buys use that dealer's fills, rare bids use team-to-team prints.
 - Urgency: the mean of scarcity (1 at or below `scarce_minted_max` copies, then falling) and demand (teams whose top set is the card's set).
-- Score: surplus × (1 + `scarcity_weight` × urgency). Each side shows its best `max_moves`.
+- Priority estimate, not leaderboard points: surplus × (1 + `scarcity_weight` × urgency). Each side shows its best `max_moves`.
 - Sell ask: the highest of what we lose × `sell_min_value_ratio` (GUARDRAILS.md), `sell_need_share` × book × 1.6 and the tape price. What we lose is our `your_value`, plus the page bonus when we sell our only copy of a page card (all of it on a complete page, else its weighted share). That is today's code; on a complete page it counts the bonus twice (see "The economics"). Our only copy on a complete page remains protected; an incomplete page may supply a listing when `protect_complete_pages_only` is enabled. A copy without `your_value` is never offered.
 - A buy whose guardrail price cap sits below the market price is not proposed ("cap below market"): that ladder cannot fill.
 - Dealer ladder: open at the lowest fill that dealer gave for the rarity; for a dealer with no fills yet (a new level), open at the deepest discount off list any dealer has given. The step reaches the max within `dealer_max_ticks_per_thread`.
