@@ -1213,13 +1213,19 @@ class Taker:
     # ------------------------------------------------------------ (c) sealed packs we hold
 
     def _open_pack(self, run: _TickRun, market: Market) -> None:
-        """Open at most one sealed pack a tick when its cards are worth more to us than any sealed price
-        (`pack_open.choose`), behind `open_sealed_packs`. The next tick re-reads /me (album first)."""
+        """Open at most one pack per tick for enabled restocking or favorable holding EV, behind
+        `open_sealed_packs`. The next tick re-reads /me (album first)."""
         packs = [p for p in sealed_packs(run.snap.me) if p.asset_id not in self._pack_refused]
         if not packs:
             return
+        clock = run.snap.clock
+        offers = publication.with_pending(self.ledger, run.snap.me, run.offers, run.snap.us, clock.tick, clock.t_hours)
+        committed = open_commitments(offers, run.snap.us).listed
+        packs = [p for p in packs if p.asset_id not in committed]
+        if not packs:
+            return
         tick = run.snap.clock.tick
-        choices = [choose(market, p, run.params) for p in packs]
+        choices = [choose(market, p, run.params, restock=self.rules.pack_restock_enabled) for p in packs]
         choice = next((c for c in choices if c.verdict == "open"), choices[0])
         verdict = check(Action("open_pack", choice.pack.pack, "pack"), self._ctx(run), self.rules)
         status: Status = "approved" if verdict.allowed and choice.verdict == "open" else "rejected"
@@ -1407,7 +1413,9 @@ class Taker:
             return
         dealer_ids = {str(d.get("id")) for d in run.snap.dealers}
         ctx = self._ctx(run)
-        if self.pack_judge is not None and run.window.left() >= needed_budget_s(self.config.jev_min_budget_s):
+        if self.rules.pack_restock_enabled or (
+            self.pack_judge is not None and run.window.left() >= needed_budget_s(self.config.jev_min_budget_s)
+        ):
             used = self.ledger.packs_since(clock.t_hours - 1.0)
             slots = PackSlots(sum(used.values()), self.rules.max_packs_per_game_hour)
             book = gate_packs(book, self.pack_judge, slots, used, self.rules, clock.t_hours)
@@ -1422,7 +1430,10 @@ class Taker:
                 for mv in (*book.buys, *book.packs)
                 if mv.source in dealer_ids and self.cooling.get((mv.source, mv.ref), -1.0) <= clock.t_hours
             ],
-            key=lambda mv: -boosted_score(mv, run.boost),  # a fresh release opens first (order only, #185)
+            key=lambda mv: (
+                not (self.rules.pack_restock_enabled and mv.side == "pack"),
+                -boosted_score(mv, run.boost),
+            ),
         )
         busy = {str(t.get("with")) for t in threads} | set(self.convs)
         moves = self._unblocked(run, moves, busy)

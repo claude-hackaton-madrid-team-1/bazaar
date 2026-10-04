@@ -104,6 +104,7 @@ class Guardrails(BaseModel):
     max_price_uncommon: int = 26
     max_price_rare: int = 80
     max_price_pack: int = 20
+    pack_restock_enabled: bool = False  # acquisition policy only; quota, cash and sale guards still apply
     max_price_epic: int = Field(default=0, ge=0)  # 0: buying an epic is not allowed (no max_price for it)
     off_page_min_surplus: int = Field(default=1, ge=1)  # an epic or legendary buy: at most official value minus this
     dealer_final_lift: float = Field(default=0.0, ge=0, le=0.5)
@@ -347,6 +348,7 @@ ENFORCED_BY: dict[str, str] = {
     "max_price_uncommon": "guardrails.check",
     "max_price_rare": "guardrails.check",
     "max_price_pack": "guardrails.check",
+    "pack_restock_enabled": "strategy.pack_moves + pack_gate.gate_packs + agents.taker",
     "max_price_epic": "guardrails.check (0: no epic is ever bought) + runtime.human_tools.buy_refusals",
     "off_page_min_surplus": "guardrails.check (every epic or legendary buy: official value minus this) + approve",
     "trickster_max_strictness": "agents.dealer.decide (a forgiving dealer's FINAL is not its limit)",

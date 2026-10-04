@@ -97,8 +97,9 @@ feed without us. Never count our own fills as market evidence of what the compet
 `uv run bazaar strategy [--json]` ranks what to do next from `STRATEGY.md` (buys, sells, packs), each
 move with its guardrail verdict and the exact command. Supply is finite: zero minted copies is never a
 buy. Run the move's command as printed (a dry run), read the verdict, then add `--live` only when the
-coordinator decides to trade. Pack moves need a pack slot left this game hour and a Jev `yes` on
-`spend_pack_slot_now` (the `jev` column shows the verdict and its probability).
+coordinator decides to trade. Pack moves need a pack slot left this game hour. Explicit `pack_restock_enabled` replenishes inventory
+without a holding-EV or Jev veto; otherwise `spend_pack_slot_now` requires Jev `yes`. The pack cap, cash
+floor and all later sale guards still apply. A pull itself never earns score.
 
 | Offer | Command (dry run unless `--live`) |
 |---|---|
