@@ -1462,3 +1462,9 @@ terminated only after checking its port with lsof. Full-suite completion and cov
 ### [2026-10-04] build-error — MM1
 - Adding a JSON import with an unbounded replacement also changed a function-local import and caused an indentation error; restricted the edit and reused the module import. Cash-counter metadata suite:20passed.
 - MM1 routing tests initially indexed decision status-update rows as if every row had a kind; use `row.get('kind')` when selecting the actual decision. Black/Ruff disagreed on an inline annotation comment; moved the comment above the field.
+
+### [2026-10-04] finding — PL1 pack inventory replenishment
+Omar explicitly prioritised buying/opening packs for team resale over private holding EV. Add pack_restock_enabled with observed22P cap (Abuela thread2670), preserve3/hour, cash, tick and all sale guards. Expected immediately sale-eligible pulls rank inventory; holding EV13.3 versus price22 stays diagnostic and does not claim score. Full fake buy/open/list cycle verifies capability; live conversion remains unverified.
+
+### [2026-10-04] build-error — PL1 fixtures
+Initial regressions used a tuple for string-config protect_page_sets and omitted settle.tick → corrected fixtures to typed contract. Accept test showed only final22, correctly rejected as unchanged opening → supply initial30 then final22 on increasing ticks. Ruff found a long diagnostic string and unordered test import → split literal and sort imports.

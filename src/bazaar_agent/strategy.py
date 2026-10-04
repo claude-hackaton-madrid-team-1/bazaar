@@ -799,7 +799,7 @@ def pack_ev(m: Market, slots: Sequence[dict[str, float]], params: StrategyParams
 
 
 def pack_moves(m: Market, params: StrategyParams, rules: Guardrails) -> list[Move]:
-    """pack_value: expected value to us of each pack vs its learned price; a command when a dealer sells it."""
+    """Pack holding EV is diagnostic during explicitly enabled inventory replenishment."""
     moves = []
     for pack, slots in m.packs.items():
         ev, slot_text = pack_ev(m, slots, params)
@@ -812,24 +812,43 @@ def pack_moves(m: Market, params: StrategyParams, rules: Guardrails) -> list[Mov
         else:
             est = Estimate(m.expected_book.get(pack, 0.0), "expected book (no seller)")
         plan = bid_range(fills, est.price, ev, rules.max_price_for("pack"), params.min_buy_surplus, opening_ratio(m))
+        restock = rules.pack_restock_enabled
+        pullable = pack_cards(m, slots) if restock else {}
+        # ponytail: count immediately sale-eligible pulls; future multi-pull duplicates are not forecast.
+        tradable = sum(p for ref, p in pullable.items() if not m.cards[ref].page or m.held.get(ref, 0) > 0)
+        if restock:
+            cap = rules.max_price_pack
+            start = max(1, min(cap, math.floor(min(fills) if fills else est.price * (opening_ratio(m) or 1))))
+            plan = (start, cap) if cap > 0 and pullable else None
         capped = plan is not None and plan[1] < est.price
-        actionable = quote is not None and plan is not None and not capped and ev - est.price >= params.min_buy_surplus
+        actionable = (
+            quote is not None
+            and plan is not None
+            and not capped
+            and (restock or ev - est.price >= params.min_buy_surplus)
+        )
         moves.append(
             Move(
                 "pack",
-                "pack_value",
+                "pack_restock" if restock else "pack_value",
                 pack,
                 "pack",
                 round(ev, 1),
                 est.price,
                 round(ev - est.price, 1),
                 0.0,
-                score_of(ev - est.price, 0.0, params),
+                round(tradable, 2) if restock else score_of(ev - est.price, 0.0, params),
                 quote.dealer if quote else "none",
                 (quote.dealer,) if quote else (),
                 "buy",
                 plan[1] if plan else 0,
                 f"EV {ev:.1f} = {slot_text}; price {est.basis} {est.price:g}"
+                + (
+                    f"; inventory restock: {tradable:.2f} expected sale-eligible pulls; "
+                    "holding EV is diagnostic, resale and score not guaranteed"
+                    if restock
+                    else ""
+                )
                 + ("" if quote else "; no dealer we can reach sells it")
                 + (f"; max_price_pack caps us at {plan[1]}, below the price" if quote and plan and capped else ""),
                 (
@@ -840,7 +859,7 @@ def pack_moves(m: Market, params: StrategyParams, rules: Guardrails) -> list[Mov
                 ladder=(*plan, ladder_step(*plan, rules.dealer_max_ticks_per_thread)) if actionable and plan else None,
             )
         )
-    return sorted(moves, key=lambda mv: (not mv.command, -mv.surplus))[: params.max_moves]  # actionable first
+    return sorted(moves, key=lambda mv: (not mv.command, -mv.score))[: params.max_moves]  # actionable first
 
 
 # ---------------------------------------------------------------- the playbook
