@@ -1478,6 +1478,5 @@ WARN line, a `decisions` row (agent `guard`) and a `guard_trip` learning.
 | [#267](../../pull/267) | docs: simplify README and refresh the implemented architecture (DOC1) | `codex/docs-cleanup` |
 | [#266](../../pull/266) | ci: limit Depot to unit, integration, formatter and linter | `codex/ci-four-checks` |
 | [#244](../../pull/244) | fix(taller): interlock with dealer sells, promise a craft before its POST (#239 review follow-ups) | `fix/sa1-taller-hardening` |
-| [#231](../../pull/231) | fix: bench policy edge needs BAZAAR_BENCH_EDGE_CONFIRM=yes on the maker (DO NOT MERGE before tick 1190) | `fix/bench-edge-needs-confirm` |
 
 <!-- BAZAAR:ACTIVITY:END -->
