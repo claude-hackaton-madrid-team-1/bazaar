@@ -1524,3 +1524,7 @@ Initial no-demand fixture removed all buyer evidence, triggering the pre-existin
 ### [2026-10-04] finding — PM1 requested partner markets need an explicit fallback
 
 MR1 moves asks only on observed crossing demand; absent bids, lifetime activity still selects Rastro after partner listings expire. Omar explicitly requested sustained Team15/Team18 market presence. PM1 adds validated STRATEGY owner preference `t15,t18`: eligible zero-fee public fallback, stable asset-ID distribution, confirmed-cancel migration from nonpreferred markets. Crossing net demand remains first; already-preferred asks stay put. No new API reads or live fills claimed. `177 passed in 1.79s`; mypy3files and Black/Ruff clean. Initial Ruff import-order error corrected by sorting the existing guardrails import.
+
+### [2026-10-04] finding — PM1 third alliance market verified
+
+Omar added v05; coordinator's fresh SDK venue read verified owner t04, open board, fees0/0. Runtime preference is now t04,t15,t18 (v05/v15/v28); the routing code is unchanged. Added actual15s maker actor regression: three eligible copies yield three public asks, one per alliance venue, every ask above its copy value. Final focused suite `178 passed in 2.18s`. Venue name and explicit live MCP operations belong to coordinator, not this code slice.

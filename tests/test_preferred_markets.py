@@ -30,7 +30,7 @@ def configured(tmp_path, team, venues=(RASTRO, *PARTNERS, OURS), events=EVENTS):
 
 def test_config_defaults_disabled_and_deployed_owner_ids_are_validated():
     assert PARAMS.preferred_sell_venue_owners == "none"
-    assert load_strategy().params.preferred_sell_venue_owners == "t15,t18"
+    assert load_strategy().params.preferred_sell_venue_owners == "t04,t15,t18"
     with pytest.raises(ValidationError):
         type(PARAMS)(**{**PARAMS.model_dump(), "preferred_sell_venue_owners": "v15,t18"})
 
@@ -160,3 +160,30 @@ def test_better_crossing_demand_can_move_an_ask_out_of_a_preferred_market(tmp_pa
     agent.on_tick(clock(tick_seconds=15))
     assert ("cancel", 800) in team.sent
     assert [(p[2], p[3]) for p in posted(team) if p[1].get("assets") == [4]] == [({"cash": 10}, "rastro")]
+
+
+def test_live_configuration_distributes_three_eligible_copies_across_all_three_alliance_markets(tmp_path):
+    from tests.test_maker_supply import RULES, inventory
+
+    me, catalog = inventory()
+    refs = {"LAT-01", "LAT-02", "LAT-03"}
+    me["assets"] = [a for a in me["assets"] if a["ref"] in refs]
+    me["album"]["pages"] = [p for p in me["album"]["pages"] if p["set"] == "LAT"]
+    catalog["sets"] = [s for s in catalog["sets"] if s["id"] == "LAT"]
+    catalog["sets"][0]["cards"] = [c for c in catalog["sets"][0]["cards"] if c["id"] in refs]
+    gacela = {**CHEAP, "venue": "v05", "owner": "t04"}
+    team = Team(me=me)
+    agent, _ = maker(
+        tmp_path,
+        team,
+        FakePublic(venues=(RASTRO, gacela, *PARTNERS, OURS), catalog=catalog, dealers=[], events=[]),
+        live=True,
+        **RULES.model_dump(),
+    )
+    agent.params = lambda tick: load_strategy().params
+    agent.on_tick(clock(tick_seconds=15))
+    asks = [p for p in posted(team) if p[1].get("assets")]
+    assert len(asks) == 3
+    assert {p[3] for p in asks} == {"v05", "v15", "v28"}
+    values = {a["id"]: a["your_value"] for a in me["assets"]}
+    assert all(p[2]["cash"] > values[p[1]["assets"][0]] for p in asks)

@@ -833,5 +833,5 @@ Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded,
 
 ## PM1 — Sustained preferred-market supply
 
-- [Spec](PM1-spec.md): validated Team15/Team18 public-ask fallback, crossing demand first, deterministic distribution and sticky one-time migration from nonpreferred markets.
-- 177 focused tests pass; independent reviews and coordinator's integrated gate/guarded deployment required.
+- [Spec](PM1-spec.md): validated Team4/Team15/Team18 public-ask fallback, crossing demand first, deterministic distribution and sticky one-time migration from nonpreferred markets.
+- 178 focused tests pass; independent reviews and coordinator's integrated gate/guarded deployment required.
