@@ -1480,3 +1480,51 @@ Coordinator's guarded pack negotiation 2670 at ticks 1804–1809 offered 17→20
 ### [2026-10-04] build-error — TT2 focused test selection and pending holdings
 
 Initial focused commands named nonexistent test_taker_targets.py (and earlier review test_taller_publication.py); no tests ran in those commands. Re-ran actual tracked test files. Keeping the full bid commitment initially also counted its hoped-for card as already held; exclude only that exact still-open bid's expected card while retaining cash/exposure and all real/settling holdings.
+
+### [2026-10-04] finding — TR1: actual team-trade points, not album proximity
+Real snapshots show neg_points 0→3.5 at tick1824, matching settlement1301: RET-07 bought from t02 for14 versus card value17.5. Outcome `score=.2` is the evaluator's surplus ratio, not the official scoreboard delta. The observed -100.2 at1466 follows the round3 reset and must not be called a trade loss. TeamDesk previously searched nearest-page swaps separately and merged the unrestricted plan, then ranked replies/rival rank/page proximity before expected gain (it did not discard every other page). TR1 uses one all-page search and expected exchange surplus first; safeguards and equal-gain ties remain. Team negotiation messages now precede dealer messages after accepts and Workshop reservations; expired dealer work is dropped.
+
+### [2026-10-04] build-error — TR1 planner container type
+Mypy rejected the post-blocklist assignment after simplifying to one plan: its threads are a tuple while the filtered value is a list. Materialize the plan as a list before the existing filter; no strategy change.
+
+### [2026-10-04] build-error — TR1 review caught stale commitments after reordered messages
+Independent review reproduced a dealer bid after a new team cash promise using the tick's old offer list; hourly cap0 does not reserve cash. Before dealer messages, merge durable publication promises into the retained offer view under the shared trade lock, with no extra API calls. Exclude synthetic pending rows from observed-offer evidence so an unknown write cannot reconcile itself. Actor regression reserves30 then refuses dealer20 with only40 cash above the floor.
+
+### [2026-10-04] gotcha — TR1 message-order change withdrawn after review
+The attempted team-before-dealer ordering needs more than merging pending rows: existing local accept commitments can be double-counted, and stale holdings can incorrectly release a new asset+cash promise. Coordinator chose the smaller safe scope: restore original dealer/team ordering and remove its new reconciliation. TR1 ships only one all-page swap plan and expected-gain-first ranking; prior text describing reordered messages is superseded by this entry.
+
+### [2026-10-04] finding — replenishment ran; old 22 P cap blocked the new final
+Coordinator observed autonomous thread2712 opened at tick1878, progressed17→21, then walked at tick1883 because Abuela's final24 exceeded max_price_pack22. No pack purchase was proven. User's explicit replenish-to-trade objective authorizes cap30 (the observed opening), with the existing never-accept-opening behavior, three/hour quota and cash protections retained. TR1 updates the cap; it does not assume the earlier22 quote is permanent or claim packs immediately score.
+
+### [2026-10-04] build-error — pack promise snapshot is read-only
+Review found pack opening passed a stale snapshot to publication reconciliation, which could release a promise for a newly held card or treat a synthetic promise as its own observed offer. The pack filter now reads durable pending asset IDs without reconciling or releasing anything; explicit release rows alone clear those exclusions. First regression caught attempted update of a frozenset; materializing a set fixes the local merge. No game read or write added.
+
+### [2026-10-04] build-error — TR1 local Postgres setup timeout
+Full gate at00ceb581 ran5715passing tests with95%coverage but one holdings fixture could not connect to localhost5433 before its10s timeout. No product assertion failed. Reran the entire holdings DB module against127.0.0.1: `26 passed in15.03s`; Depot full CI passed at the same code head. No runtime code change for this transient local connection failure.
+
+### [2026-10-04] finding — SI1: duplicate count is not sellable inventory
+Tick1943 real inventory contained49 copies, four complete pages (40 retained copies), eight incomplete-page singletons and one spare LAV04 already offered. With protect_complete_pages_only=true, the eight singles can be eligible at safe prices; saying only the duplicate was sellable was wrong. Strategy.sell_moves and maker._leave_desk_copy omitted album context and blocked these proactive listings. They now use the guard's existing complete-page context. No price/floor/protection/rate changes; production fills unverified.
+
+### [2026-10-04] build-error — SI1 fixture API and formatting
+New tests initially referenced nonexistent Target.your_value and Ledger.mark_hands_off; corrected to Target.value and the existing hands-off listing row. Ruff found import order and a long docstring; sorted imports and wrapped prose. Focused79 tests and changed-source mypy then passed.
+### [2026-10-04] finding — Abuela limits conversations separately from pack purchases
+Railway open_thread1884 returned `persona_quota` with “at most 10 conversations per hour with abuela”. This is dealer-wide, not the3-pack purchase quota. Shared learning was present but scoped to sobre_barrio and shortened by60-tick retry cap to1944; at15s the actual next game hour was about2014. Q1 preserves trusted server/game-clock expiry and records10 from the fixed server message; generic legacy/LLM caps remain. It preloads persisted blockers before the first opening after restart. The original database evidence remains intact; coordinator may record a separate corrected typed fact after code rollout.
+
+### [2026-10-04] gotcha — quota audit queries
+The learnings timestamp is created_tick, not tick; qualifying public.learnings avoids duplicate information_schema results from temporary test schemas. Read-only audit queries corrected these assumptions; no production mutation occurred.
+
+### [2026-10-04] finding — MR1 standing asks stranded on their original market
+
+`maker.plan_offers` compared price/floor but never venue, while taker correctly excluded the committed copy. A new crossing bid elsewhere could route a NEW ask but could not move the existing unchanged ask. MR1 reuses cancel-confirm/repost only for strictly better observed crossing net demand, keeping price and guards; no activity-only rotation or forced partner market. Actor regression red on main (`1 failed in 0.25s`), focused final checks in MR1 report. Live conversion remains unverified.
+
+### [2026-10-04] build-error — MR1 fixtures
+
+Initial no-demand fixture removed all buyer evidence, triggering the pre-existing no-longer-target cancellation; retain baseline market events to isolate relocation. Cancellation fakes initially used incorrect SDK exception arguments and raw TimeoutError; use BazaarError(code, message, status), matching the wrapped SDK transport boundary. No production exception handling changed.
+
+### [2026-10-04] finding — PM1 requested partner markets need an explicit fallback
+
+MR1 moves asks only on observed crossing demand; absent bids, lifetime activity still selects Rastro after partner listings expire. Omar explicitly requested sustained Team15/Team18 market presence. PM1 adds validated STRATEGY owner preference `t15,t18`: eligible zero-fee public fallback, stable asset-ID distribution, confirmed-cancel migration from nonpreferred markets. Crossing net demand remains first; already-preferred asks stay put. No new API reads or live fills claimed. `177 passed in 1.79s`; mypy3files and Black/Ruff clean. Initial Ruff import-order error corrected by sorting the existing guardrails import.
+
+### [2026-10-04] finding — PM1 third alliance market verified
+
+Omar added v05; coordinator's fresh SDK venue read verified owner t04, open board, fees0/0. Runtime preference is now t04,t15,t18 (v05/v15/v28); the routing code is unchanged. Added actual15s maker actor regression: three eligible copies yield three public asks, one per alliance venue, every ask above its copy value. Final focused suite `178 passed in 2.18s`. Venue name and explicit live MCP operations belong to coordinator, not this code slice.

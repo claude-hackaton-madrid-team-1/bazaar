@@ -259,8 +259,8 @@ class _Plan:
 
 @dataclass(frozen=True)
 class PageNeed:
-    """One album page as the desk ranks it: the fewer cards missing (then the higher our affinity), the sooner
-    its missing cards are asked for; the bonus is what completing it scores (`strategy.page_bonus_of`)."""
+    """Album context for valuation and tie-breaking; completion alone never scores.
+    The official marginal card value and guarded exchange surplus determine a trade’s benefit."""
 
     set_code: str
     have: int
@@ -274,13 +274,6 @@ class PageNeed:
 
     def rank(self) -> tuple[int, float]:
         return (self.missing, -self.affinity)
-
-
-def closest_pages(pages: Mapping[str, PageNeed]) -> frozenset[str]:
-    """The pages with the fewest cards missing: the plan picks swaps for their cards first (`build_plan(focus=)`),
-    and for any other page only when none of theirs can be planned."""
-    fewest = min((p.missing for p in pages.values()), default=None)
-    return frozenset(code for code, p in pages.items() if p.missing == fewest)
 
 
 def page_needs(m: Market) -> dict[str, PageNeed]:
@@ -1160,7 +1153,7 @@ class TeamDesk:
         }
 
     def _page_bonus(self, need: PageNeed, ref: str, official: float | None) -> dict[str, Any]:
-        """The bonus completing the page scores. /api/me/value is the source of truth: for the page's last
+        """The collection-value bonus, not standalone score. /api/me/value is the source of truth: for the page's last
         missing card it already includes the completion gain (SAL-09 read 177.1 = 70 × 1.3 + 86.1 at SAL 9/10),
         so the bonus is that value less book × affinity. Our model (25 % of the page's value) only when the
         card does not complete the page or the official value is unread."""
@@ -1521,14 +1514,7 @@ class TeamDesk:
             m = build_market(v.me, v.catalog, v.events, [])
             pages = page_needs(m)
             args = (v.me, v.catalog, v.events, amap, v.params, self.rules, pp, rastro, v.offers, spent, v.scan)
-            focus = closest_pages(pages)
-            # The closest pages' swaps are planned on their own (build_plan's objective would trade them away
-            # for bigger gains elsewhere), then the rest of the plan follows them, so a page whose holders will
-            # not deal never stops every other swap.
-            first = build_plan(*args, focus=focus).threads if focus else ()
-            rest = build_plan(*args).threads
-            planned = {(f.counterparty, f.refs) for f in first}
-            threads = [*first, *(t for t in rest if (t.counterparty, t.refs) not in planned)]
+            threads = list(build_plan(*args).threads)
             worth = {w.ref: w.worth for w in wanted_cards(m, v.params, self.rules, dealer_prices(v.events))}
         except (BazaarError, LedgerUnavailable):
             raise  # a refused read or a ledger outage is the taker's to report (it holds the tick)
@@ -1550,19 +1536,17 @@ class TeamDesk:
         answered: Mapping[str, int] | None = None,
         ranks: Mapping[str, int] | None = None,
     ) -> tuple[Any, ...]:
-        """Who first (Omar, Sat 21:55: "si les ganamos en negociación a los más débiles vamos a subir"): a team that
-        answered our proposals before (likelier to take one), then the weaker team by the leaderboard (a higher rank
-        number; unknown ranks last), then, among the planned swaps (`build_plan` already kept only the closest
-        pages' cards while it could), the page closest to complete, our affinity for it and the expected gain.
-        Their share of any swap stays capped by `team_swap_max_their_share` in `swaps.judge`."""
+        """Expected negotiation surplus first: both card legs, cash and fees are already in `Trade.ours`.
+        Reply history, rival rank and album context only break equal-gain ties; no team is excluded by rank.
+        Every proposed exchange still passes the fresh value, inventory and per-deal fairness guards."""
         page = pages.get(set_of(t.refs[1]) or "")
         replies = (answered or {}).get(t.counterparty, 0)
         weaker = (ranks or {}).get(t.counterparty, 0)
         return (
+            -t.expected,
             -min(replies, 3),
             -weaker,
             *(page.rank() if page is not None else (99, 0.0)),
-            -t.expected,
             t.counterparty,
             t.refs,
         )

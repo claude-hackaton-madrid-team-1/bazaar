@@ -231,9 +231,16 @@ def addressed_to_us(response: dict[str, Any], us: str) -> list[dict[str, Any]]:
 
 
 def best_venue(
-    venues: Iterable[Venue], us: str, price: int, *, to: str | None = None, demand: Mapping[str, int] | None = None
+    venues: Iterable[Venue],
+    us: str,
+    price: int,
+    *,
+    to: str | None = None,
+    demand: Mapping[str, int] | None = None,
+    preferred_owners: Iterable[str] = (),
+    spread_key: int = 0,
 ) -> Venue | None:
-    """Route public asks toward observed card-specific net bids, else activity and fees.
+    """Route public asks toward crossing net bids, then configured free markets, else activity.
 
     An addressed offer already has a counterparty: minimise their acceptance fee, and
     never choose their own venue (they cannot accept there). Demand is a hint, not a fill.
@@ -251,4 +258,8 @@ def best_venue(
     liquid = [v for v in candidates if demand and demand.get(v.id, 0) >= price]
     if liquid and demand is not None:
         return max(liquid, key=lambda v: (demand[v.id], -v.fee(price), score(v), v.id))
+    preferred = sorted((v for v in candidates if v.owner in preferred_owners and v.fee(price) == 0), key=lambda v: v.id)
+    if preferred:
+        # ponytail: stable copy-based distribution; no mutable rotation state or extra reads.
+        return preferred[spread_key % len(preferred)]
     return max(candidates, key=lambda v: (score(v), v.house, v.id), default=None)
