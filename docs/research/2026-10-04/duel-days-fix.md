@@ -113,7 +113,8 @@ Tests (`tests/test_duel_days_sessions.py`, plus the updated latch tests):
 - Rows from older sessions never move the verdict.
 - `reads_done` stays on while any role can still learn.
 
-Gates: `uv run pytest` passes 5317 tests (152 skipped, 2 xfailed). `ruff check src tests scripts`, `black --check
+`832eb692` pins the worst case in the three older tests that assumed it from GUARDRAILS.md, so they hold under
+either seller setting. Gates: `uv run pytest` passes 5317 tests (152 skipped, 2 xfailed). `ruff check src tests scripts`, `black --check
 src tests scripts` and `mypy src` are all clean.
 
 Replay script: `docs/research/2026-10-04/duel-days-fix/replay_by_role.py` (read-only SELECT). Output:
@@ -153,8 +154,8 @@ same path. It runs dry unless `BAZAAR_LIVE=1`.
 
 1. Choose the seller setting:
    - (a) Merge `fix/duel-days-stuck` as is (`duel_days_signed_roles = none`, auto only).
-   - (b) Also take the one-line commit on `fix/duel-days-stuck-seller` (`duel_days_signed_roles = seller`). That
-     option is not committed on `fix/duel-days-stuck`.
+   - (b) Merge `fix/duel-days-stuck-seller` instead. It is this branch plus one GUARDRAILS.md line, commit
+     `2dd9be09` (`duel_days_signed_roles = seller`). The full suite passes on both branches (5317).
 2. Push, open a PR, wait for CI to pass, and merge in a gap outside the benches (see the deadline in the TL;DR).
    Every merge to main redeploys bazaar-duels, bazaar-taker, bazaar-maker and bazaar-mcp, so a 1–2 minute restart of
    all of them is the usual cost.
