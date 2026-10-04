@@ -217,3 +217,13 @@ def test_a_dealer_whose_card_fails_on_its_official_value_is_not_read_again_this_
     for tick in range(TICK, TICK + 5):  # one game hour (t_hours 1.5), the gate cached at yes
         t.on_tick(clock(tick=tick))
     assert team.value_reads == ["LAV-02"] and probe_rows(tmp_path) == []
+
+
+def test_disabled_hourly_cap_still_plans_a_probe_from_available_cash(tmp_path):
+    team = ValueTeam()
+    t, _ = taker(tmp_path, team, gate("yes")[0], live=True)
+    t.rules = t.rules.model_copy(update={"max_spend_per_game_hour": 0})
+    t.ledger.record("spend", TICK - 1, 1.4, 10_000, "earlier")
+    t.on_tick(clock())
+    assert team.sent[0] == ("open_thread", "abuela", {"buy": {"card": "LAV-02"}})
+    assert probe_rows(tmp_path)

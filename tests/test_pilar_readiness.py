@@ -1,9 +1,10 @@
 """Doña Pilar readiness (level 3, a collector, opens to everyone ~12:50 Madrid on 2026-10-03).
 
 What our agents do when she appears, proven with fakes only (no network): her quote is picked up from
-`/api/dealers` + `/me.unlocked` every tick, her gold pack (list 420) is never an actionable move under
-`max_price_pack`, the taker opens no thread with her, and her kind "collector" breaks nothing that iterates
-dealers. The simulator half (her style and her over-book bids for SAL/RET) is at the bottom.
+`/api/dealers` + `/me.unlocked` every tick, her gold pack (list 420) is never actionable under conservative
+defaults (runtime policy may opt in), the default taker opens no thread with her, and her kind "collector"
+breaks nothing that iterates dealers. The simulator half
+(her style and her over-book bids for SAL/RET) is at the bottom.
 """
 
 from copy import deepcopy
@@ -132,12 +133,14 @@ def test_the_taker_rereads_dealers_and_me_every_tick(tmp_path):
     assert any("pilar" in str(r.get("move")) and "sobre_oro" in str(r.get("move")) for r in opens), opens
 
 
-# ---------------------------------------------------------------- (b) the gold pack is never a move today
+# ---------------------------------------------------------------- (b) conservative defaults remain safe
 
 
-def test_todays_guardrails_cap_packs_at_20():
-    assert load_guardrails().rules.max_price_pack == 20
-    assert Guardrails().max_price_pack == 20
+def test_operator_restock_policy_does_not_change_conservative_defaults():
+    deployed, defaults = load_guardrails().rules, Guardrails()
+    assert not deployed.pack_restock_enabled and not deployed.dealer_sell_enabled
+    assert deployed.max_price_pack > defaults.max_price_pack
+    assert defaults.max_price_pack == 20 and not defaults.pack_restock_enabled
 
 
 def test_the_gold_pack_is_never_actionable_under_max_price_pack():

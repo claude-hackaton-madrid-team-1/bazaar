@@ -42,3 +42,7 @@ Model aliases (`src/bazaar_agent/llm/models.py`): `opus-5-5` → `claude-opus-5-
 `gpt-6-1-sol` → `gpt-6.1-sol`. Any other `claude-*` id goes to Anthropic and any `gpt-*` / `o<digit>`
 id goes to OpenAI unchanged. Steering limits (`steer_max_change`, `steer_max_ttl_ticks`) live in
 `GUARDRAILS.md`, because they fence what an LLM may change.
+
+## Sales worker
+
+`bazaar agent sales` owns team conversations and uses `claude-opus-5-5` at standard speed for message wording, as requested. Failure falls back to deterministic templates; traces record the failure reason. Existing `subscription_words_timeout_s` and `words_max_chars` bound this path. No LLM changes structured trade terms.

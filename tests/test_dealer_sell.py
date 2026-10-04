@@ -337,6 +337,40 @@ def test_cli_refuses_the_last_copy_not_already_listed_by_the_maker(sell_cli, mon
     assert result.exit_code == 1 and "never sell the last one" in " ".join(result.output.split())
 
 
+@pytest.mark.parametrize("terminal,thread,released", [("closed", 42, True), ("held", 42, False), ("held", None, True)])
+def test_live_cli_reserves_before_negotiating_and_releases_only_confirmed_close(
+    monkeypatch, tmp_path, terminal, thread, released
+):
+    from types import SimpleNamespace
+
+    from typer.testing import CliRunner
+
+    from bazaar_agent import cli
+    from bazaar_agent.agents import dealer_sell, publication
+    from bazaar_agent.agents.seller import open_commitments
+    from bazaar_agent.config import Settings
+    from bazaar_agent.guardrails import Ledger
+    from tests.agent_fakes import FakeTeam
+
+    team, ledger = FakeTeam(me=ME), Ledger(tmp_path / "ledger.jsonl")
+    monkeypatch.setattr(cli, "load_settings", lambda: Settings(data_dir=tmp_path))
+    monkeypatch.setattr(cli, "_team_me", lambda: (team, ME))
+    monkeypatch.setattr(cli, "_ledger", lambda *a, **kw: ledger)
+    monkeypatch.setattr(cli, "public_client", lambda settings: SimpleNamespace(dealers=lambda: {"personas": [ABUELA]}))
+    monkeypatch.setattr(cli, "_offer_inspector", lambda *a: {})
+    monkeypatch.setattr(cli, "_dealer_kind", lambda *a: "dealer")
+
+    def negotiate(*args, **kw):
+        offers = publication.with_pending(ledger, ME, [], "t01", 100, 1.5)
+        assert 8 in open_commitments(offers, "t01").listed
+        return SimpleNamespace(status=terminal, thread=thread, price=None, bids=(), ticks=1)
+
+    monkeypatch.setattr(dealer_sell, "negotiate_sell", negotiate)
+    result = CliRunner().invoke(cli.app, ["dealer", "sell", "MAL-02", "--start", "12", "--min", "6", "--live"])
+    assert result.exit_code == 0, result.output
+    assert (publication.with_pending(ledger, ME, [], "t01", 101, 1.6) == []) is released
+
+
 def test_listed_copies_do_not_count_toward_the_only_copy_rule():
     held = {
         "assets": [{"id": i, "kind": "card", "ref": "LAT-04", "rarity": "common", "your_value": 1.3} for i in (4, 5)]

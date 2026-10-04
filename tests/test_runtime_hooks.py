@@ -57,7 +57,8 @@ def test_the_hook_denies_a_guardrail_violation_and_allows_a_valid_write(tmp_path
     assert any("DENIED buyer → sell_bid" in line for line in lines)
     (row,) = rows(tmp_path)
     assert row["agent"] == "desk/buyer" and row["status"] == "rejected" and row["chosen"] is False
-    assert "max_price_rare" in row["guardrail"] and row["inputs"] == BID_TOO_HIGH
+    assert "max_price_rare" in row["guardrail"]
+    assert row["inputs"] == {**BID_TOO_HIGH, "evidence_context": b.decisions.context}
 
 
 def test_each_agent_may_call_only_its_own_tools(tmp_path):

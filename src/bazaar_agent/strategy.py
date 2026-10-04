@@ -19,7 +19,7 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from bazaar_agent import intel
 from bazaar_agent.config import REPO_ROOT
@@ -34,8 +34,10 @@ from bazaar_agent.guardrails import (
     action_kind,
     check,
     parse_md_config,
+    team_ids,
 )
 from bazaar_agent.guardrails import validated as validated_model
+from bazaar_agent.move_impact import our_cards
 from bazaar_agent.supply import SupplyMap, supply_map
 
 STRATEGY_FILE = REPO_ROOT / "STRATEGY.md"
@@ -67,6 +69,12 @@ class StrategyParams(BaseModel):
     # Optional too: 0 keeps today's sell_to_need (a spare below the buyer's need, or of a set nobody chases, is
     # not offered); N offers up to N of them at our value + `sell_min_surplus` (sell_spares, STRATEGY.md).
     sell_spare_slots: int = Field(default=0, ge=0)
+    preferred_sell_venue_owners: str = "none"
+
+    @field_validator("preferred_sell_venue_owners")
+    @classmethod
+    def valid_venue_owners(cls, value: str) -> str:
+        return ",".join(team_ids(value))
 
 
 @dataclass(frozen=True)
@@ -647,10 +655,17 @@ def _spare(m: Market, card: Card) -> bool:
     return m.held.get(card.ref, 0) > 1 or m.affinity.get(card.set_code, 1.0) <= SPARE_MAX_AFFINITY
 
 
-def sell_moves(m: Market, assets: Iterable[dict[str, Any]], params: StrategyParams, rules: Guardrails) -> list[Move]:
+def sell_moves(
+    m: Market,
+    assets: Iterable[dict[str, Any]],
+    params: StrategyParams,
+    rules: Guardrails,
+    complete: Iterable[str] | None = None,
+) -> list[Move]:
     """sell_to_need: one copy per card we hold, to the teams that chase its set, never below what we lose
     (our your_value plus any page bonus that selling our only copy gives up). Our only copy of a page card
-    of a new page (`protect_page_sets`) is never offered. sell_spares (`sell_spare_slots` > 0): up to that
+    of a protected page is kept according to the same complete-page policy as the execution guard.
+    sell_spares (`sell_spare_slots` > 0): up to that
     many more spare copies (`_spare`: a duplicate, or a set we hold no boost in), whose buyer's need and tape
     sit below what we lose + `sell_min_surplus` or whose set nobody is seen chasing, are offered to anyone
     at what we lose + `sell_min_surplus` (ranked like the rest)."""
@@ -665,7 +680,7 @@ def sell_moves(m: Market, assets: Iterable[dict[str, Any]], params: StrategyPara
     for ref, asset in copies.items():
         card = m.cards.get(ref)
         buyers = m.chasers.get(card.set_code, ()) if card else ()
-        if card is None or rules.protects(ref, card.rarity, m.held.get(ref, 0)):
+        if card is None or rules.protects(ref, card.rarity, m.held.get(ref, 0), complete):
             continue
         if not buyers and not params.sell_spare_slots:
             continue
@@ -799,7 +814,7 @@ def pack_ev(m: Market, slots: Sequence[dict[str, float]], params: StrategyParams
 
 
 def pack_moves(m: Market, params: StrategyParams, rules: Guardrails) -> list[Move]:
-    """pack_value: expected value to us of each pack vs its learned price; a command when a dealer sells it."""
+    """Pack holding EV is diagnostic during explicitly enabled inventory replenishment."""
     moves = []
     for pack, slots in m.packs.items():
         ev, slot_text = pack_ev(m, slots, params)
@@ -812,24 +827,43 @@ def pack_moves(m: Market, params: StrategyParams, rules: Guardrails) -> list[Mov
         else:
             est = Estimate(m.expected_book.get(pack, 0.0), "expected book (no seller)")
         plan = bid_range(fills, est.price, ev, rules.max_price_for("pack"), params.min_buy_surplus, opening_ratio(m))
+        restock = rules.pack_restock_enabled
+        pullable = pack_cards(m, slots) if restock else {}
+        # ponytail: count immediately sale-eligible pulls; future multi-pull duplicates are not forecast.
+        tradable = sum(p for ref, p in pullable.items() if not m.cards[ref].page or m.held.get(ref, 0) > 0)
+        if restock:
+            cap = rules.max_price_pack
+            start = max(1, min(cap, math.floor(min(fills) if fills else est.price * (opening_ratio(m) or 1))))
+            plan = (start, cap) if cap > 0 and pullable else None
         capped = plan is not None and plan[1] < est.price
-        actionable = quote is not None and plan is not None and not capped and ev - est.price >= params.min_buy_surplus
+        actionable = (
+            quote is not None
+            and plan is not None
+            and not capped
+            and (restock or ev - est.price >= params.min_buy_surplus)
+        )
         moves.append(
             Move(
                 "pack",
-                "pack_value",
+                "pack_restock" if restock else "pack_value",
                 pack,
                 "pack",
                 round(ev, 1),
                 est.price,
                 round(ev - est.price, 1),
                 0.0,
-                score_of(ev - est.price, 0.0, params),
+                round(tradable, 2) if restock else score_of(ev - est.price, 0.0, params),
                 quote.dealer if quote else "none",
                 (quote.dealer,) if quote else (),
                 "buy",
                 plan[1] if plan else 0,
                 f"EV {ev:.1f} = {slot_text}; price {est.basis} {est.price:g}"
+                + (
+                    f"; inventory restock: {tradable:.2f} expected sale-eligible pulls; "
+                    "holding EV is diagnostic, resale and score not guaranteed"
+                    if restock
+                    else ""
+                )
                 + ("" if quote else "; no dealer we can reach sells it")
                 + (f"; max_price_pack caps us at {plan[1]}, below the price" if quote and plan and capped else ""),
                 (
@@ -840,7 +874,7 @@ def pack_moves(m: Market, params: StrategyParams, rules: Guardrails) -> list[Mov
                 ladder=(*plan, ladder_step(*plan, rules.dealer_max_ticks_per_thread)) if actionable and plan else None,
             )
         )
-    return sorted(moves, key=lambda mv: (not mv.command, -mv.surplus))[: params.max_moves]  # actionable first
+    return sorted(moves, key=lambda mv: (not mv.command, -mv.score))[: params.max_moves]  # actionable first
 
 
 # ---------------------------------------------------------------- the playbook
@@ -917,7 +951,15 @@ def build_playbook(
         cash=m.cash,
         supply=tuple(supply_view(m, params)),
         buys=tuple(rank(buys, m, params, boost)),
-        sells=tuple(rank(sell_moves(m, me.get("assets") or [], params, rules), m, params)),
+        sells=tuple(
+            rank(
+                sell_moves(
+                    m, me.get("assets") or [], params, rules, our_cards(me).complete if me.get("album") else None
+                ),
+                m,
+                params,
+            )
+        ),
         packs=tuple(pack_moves(m, params, rules)),
         skipped=tuple(skipped),
         pack_quotas=quotas,

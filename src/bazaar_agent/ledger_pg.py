@@ -15,11 +15,14 @@ Postgres when it answers.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
+import hashlib
 import ipaddress
 import re
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import TypeVar
 from urllib.parse import urlsplit
@@ -27,7 +30,7 @@ from urllib.parse import urlsplit
 import psycopg
 from psycopg.conninfo import conninfo_to_dict
 
-from bazaar_agent.guardrails import HANDS_OFF, Ledger, LedgerStore, hands_off_id, is_pack
+from bazaar_agent.guardrails import HANDS_OFF, Ledger, LedgerStore, hands_off_id, is_pack, matching_bid_spend
 from bazaar_agent.pgconn import RETRY_EVERY_S, DatabaseUrlError, Reconnector, Target, describe
 
 ACCEPT_LOCK = "bazaar_agent.ledger.accept"
@@ -63,6 +66,9 @@ class PgLedger:
         retry_every_s: float = RETRY_EVERY_S,
         now: Callable[[], float] = time.monotonic,
     ) -> None:
+        self._connect = connect
+        self.world = "unknown"
+
         def opened() -> psycopg.Connection:
             conn = connect()
             try:
@@ -122,6 +128,39 @@ class PgLedger:
                 (kind, tick, t_hours, int(price), item, self._source),
             ),
         )
+
+    def publication_rows(self) -> list[tuple[str, str]]:
+        rows = self._run(
+            "publication reservations",
+            lambda conn: conn.execute(
+                "select kind,item from ledger where starts_with(kind, 'publication_') order by id"
+            ).fetchall(),
+        )
+        return [(str(kind), str(item)) for kind, item in rows]
+
+    def refund_bid(self, tick: int, t_hours: float, price: int, item: str) -> float | None:
+        if price <= 0:
+            raise ValueError("bid refund price must be positive")
+
+        def refund(conn: psycopg.Connection) -> float | None:
+            with conn.transaction():
+                conn.execute("select pg_advisory_xact_lock(hashtext('bazaar.ledger.bid_refund'))")
+                rows = conn.execute(
+                    "select kind,t_hours,price from ledger where tick=%s and item=%s "
+                    "and kind in ('spend','listing') and abs(price)=%s and (source=%s or price<0)",
+                    (tick, item, price, self._source),
+                ).fetchall()
+                if any(p < 0 for _, _, p in rows):
+                    return None
+                exact = matching_bid_spend([(str(k), float(t), int(p)) for k, t, p in rows])
+                at = t_hours if exact is None else exact
+                conn.execute(
+                    "insert into ledger(kind,tick,t_hours,price,item,source) values ('spend',%s,%s,%s,%s,%s)",
+                    (tick, at, -price, item, self._source),
+                )
+                return at
+
+        return self._run("bid refund", refund)
 
     def spent_since(self, t_hours: float, prefix: str = "") -> int:
         if not prefix:
@@ -233,6 +272,7 @@ class FallbackLedger:
 
     def __init__(self, pg: PgLedger, file: Ledger) -> None:
         self._pg, self._file = pg, file
+        self.world = pg.world
 
     @property
     def on_file(self) -> bool:
@@ -251,6 +291,12 @@ class FallbackLedger:
 
     def record(self, kind: str, tick: int, t_hours: float, price: int = 0, item: str = "") -> None:
         self._use(lambda ledger: ledger.record(kind, tick, t_hours, price, item))
+
+    def publication_rows(self) -> list[tuple[str, str]]:
+        return self._use(lambda ledger: ledger.publication_rows())
+
+    def refund_bid(self, tick: int, t_hours: float, price: int, item: str) -> float | None:
+        return self._use(lambda ledger: ledger.refund_bid(tick, t_hours, price, item))
 
     def spent_since(self, t_hours: float, prefix: str = "") -> int:
         return self._use(lambda ledger: ledger.spent_since(t_hours, prefix))
@@ -404,9 +450,51 @@ def open_ledger(
         else f"using {file.where} (this machine only) until it answers"
     )
     pg = PgLedger(opener, source, log=log, where=where, name=f"ledger: Postgres on {label}", down_note=down_note)
+    pg.world = file.world = hashlib.sha256(game_url.rstrip("/").encode()).hexdigest()[:16]
     up = pg.reachable  # down: the reconnector has already said so, with the error's type
     if up:
         log(f"ledger: {where}")
     if live and not strict:
         log(f"ledger: {urlsplit(game_url).hostname} is a simulator, so a live run may count on {file.where}")
     return pg if up or strict else FallbackLedger(pg, file)
+
+
+@contextlib.contextmanager
+def trade_lock(ledger: LedgerStore, ref: str = "__publication__") -> Iterator[None]:
+    """Serialize fresh-read/guard/send across cooperating writers; fail closed when busy.
+
+    Use the default team-wide key when cash, thread or listing quotas are involved. A dedicated
+    connection keeps the advisory lock out of the ledger's short transactions. This is a mutex,
+    not proof of settlement: an unknown HTTP outcome still needs reconciliation before a retry.
+    """
+    if isinstance(ledger, FallbackLedger):
+        ledger = ledger._file if ledger.on_file else ledger._pg
+    if isinstance(ledger, PgLedger):
+        try:
+            with ledger._connect() as conn:
+                conn.autocommit = True
+                conn.execute("set statement_timeout = 3000")
+                row = conn.execute(
+                    "select pg_try_advisory_lock(hashtext(%s))", ("bazaar.publication:" + ref,)
+                ).fetchone()
+                if not row or not row[0]:
+                    raise LedgerUnavailable("another writer holds the publication lock")
+                try:
+                    yield
+                finally:
+                    conn.execute("select pg_advisory_unlock(hashtext(%s))", ("bazaar.publication:" + ref,))
+        except psycopg.Error as exc:
+            raise LedgerUnavailable(f"publication lock unavailable ({type(exc).__name__})") from None
+        return
+    if not isinstance(ledger, Ledger):
+        raise LedgerUnavailable("publication lock requires a supported shared ledger")
+    ledger.path.parent.mkdir(parents=True, exist_ok=True)
+    with ledger.path.with_suffix(".publication.lock").open("a") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise LedgerUnavailable("another writer holds the publication lock") from None
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)

@@ -27,7 +27,7 @@ def test_a_closed_thread_keeps_its_reason_expiry_and_every_message():
     assert "\x00" not in rows[2][4]  # dealer words stored as clean text
 
 
-def test_team_threads_and_junk_are_not_kept():
+def test_unrelated_team_threads_and_junk_are_not_kept():
     assert thread_row(Seen({**THREAD, "kind": "team"}, US, 6, {})) is None
     store = ThreadStore(None)
     store.saw({"id": "x"}, US, 6)
@@ -246,3 +246,78 @@ def test_a_refused_walk_keeps_how_the_thread_really_ended(tmp_path):
         if ("close_thread", 5000) in team.sent:
             break
     assert store.buffer[5000].thread["status"] == "deal"  # not the open read from before the walk
+
+
+def test_acknowledged_team_words_survive_later_pre_send_snapshot():
+    from bazaar_agent.learn.threads import _rows
+
+    store = ThreadStore(None)
+    payload = {"id": 44, "kind": "team", "team": "t01", "with": "t15", "status": "open", "messages": []}
+    store.saw(payload, "t01", 100)
+    store.sent(
+        44, "t15", "t01", 100, 9001, "La propuesta exacta va adjunta.", {"give": {"assets": [3]}, "want": {"cash": 9}}
+    )
+    store.saw(payload, "t01", 100)
+    threads, messages = _rows(list(store.buffer.values()))
+    assert threads[0][:3] == (44, "t15", "team")
+    assert len(messages) == 1 and messages[0][:5] == (9001, 44, "t01", 100, "La propuesta exacta va adjunta.")
+    assert messages[0][8] is True
+
+
+def test_sent_words_require_valid_acknowledgement_identity():
+    store = ThreadStore(None)
+    for mid, other in ((True, "t15"), (None, "t15"), (1, "t01"), (1, "abuela")):
+        store.sent(44, other, "t01", 100, mid, "Hola", {})
+    assert store.buffer == {}
+
+
+def test_inbound_team_thread_keeps_actual_counterparty():
+    seen = Seen({"id": 44, "kind": "team", "team": "t15", "with": "t01", "messages": []}, "t01", 100, {})
+    assert thread_row(seen)[:3] == (44, "t15", "team")
+
+
+@pytest.mark.integration
+def test_acknowledged_team_message_persists_and_fills_existing_missing_text(database_url, schema):  # noqa: F811
+    from bazaar_agent import db
+
+    with open_in(database_url, schema) as conn:
+        db.init_schema(conn)
+    store = ThreadStore(lambda: open_in(database_url, schema))
+    payload = {
+        "id": 44,
+        "kind": "team",
+        "team": "t01",
+        "with": "t15",
+        "status": "open",
+        "messages": [{"id": 9001, "sender": "t01", "tick": 100, "text": None}],
+    }
+    store.saw(payload, "t01", 100)
+    assert store.flush(100) == 1
+    store.sent(44, "t15", "t01", 100, 9001, "Propuesta exacta adjunta.", {"give": {"assets": [3]}, "want": {"cash": 9}})
+    assert store.flush(100) == 1
+    with open_in(database_url, schema) as conn:
+        assert conn.execute("select kind, counterpart, ours from threads where id=44").fetchone() == (
+            "team",
+            "t15",
+            True,
+        )
+        assert conn.execute("select id, thread_id, sender, text, ours from messages where id=9001").fetchone() == (
+            9001,
+            44,
+            "t01",
+            "Propuesta exacta adjunta.",
+            True,
+        )
+    store.close()
+
+
+def test_acknowledged_sales_message_preserves_actual_partner_venue():
+    from bazaar_agent.learn.threads import _rows
+
+    store = ThreadStore(None)
+    store.sent(44, "t05", "t01", 100, 9001, "Propuesta adjunta.", {}, "v28")
+    threads, messages = _rows(list(store.buffer.values()))
+    assert store.buffer[44].thread["venue"] == "v28"
+    assert threads[0][4] == "v28" and messages[0][0] == 9001
+    store.sent(45, "t05", "t01", 100, 9002, "No guardar", {}, "bad venue")
+    assert 45 not in store.buffer

@@ -1,0 +1,41 @@
+{
+  "board_png": {
+    "file": "bazaar-live-board.png",
+    "source": "https://bazaar-live-production.up.railway.app/?lang=en&tts=off",
+    "captured_utc": "2026-10-03T22:26:21Z",
+    "crop": "stage only"
+  },
+  "voice_ui_png": {
+    "file": "bazaar-live-voice-ui.png",
+    "source": "https://bazaar-live-production.up.railway.app/?lang=en&tts=off",
+    "captured_utc": "2026-10-03T22:26:22Z",
+    "crop": "English header and voice controls, playback disabled"
+  },
+  "architecture_png": {
+    "file": "architecture-runtime.png",
+    "source": "../../architecture.html",
+    "captured_utc": "2026-10-03T22:29:19Z",
+    "crop_viewbox": "1540 40 460 560",
+    "crop": "Railway runtime and MCP runtime; private policy values excluded"
+  },
+  "idle_gif": {
+    "file": "bazaar-live-idle.gif",
+    "durations_ms": [
+      3191,
+      2995,
+      2893,
+      2998,
+      2979,
+      1000
+    ],
+    "safe_frames": 6,
+    "source": "https://bazaar-live-production.up.railway.app/?lang=en&tts=off",
+    "kind": "Real idle board, game closed, muted, no simulated activity"
+  },
+  "phoenix": {
+    "source": "https://phoenix-production-6aa3.up.railway.app",
+    "status": "skipped",
+    "reason": "Login required; no authenticated session available"
+  },
+  "pre_save_checks": "Visible crop text inspected for credentials, connection strings and emails before every capture; final PNGs visually reviewed"
+}

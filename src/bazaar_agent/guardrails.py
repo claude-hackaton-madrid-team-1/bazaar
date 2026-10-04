@@ -17,6 +17,7 @@ import json
 import math
 import re
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast, get_args
@@ -98,17 +99,21 @@ class Guardrails(BaseModel):
     trading_enabled: bool = True
     pause_file: str = ".local/PAUSE"
     cash_floor: int = 270
-    max_spend_per_game_hour: int = 150
+    max_spend_per_game_hour: int = Field(default=150, ge=0)  # 0: no hourly cap; cash limits still apply
     max_price_common: int = 12
     max_price_uncommon: int = 26
     max_price_rare: int = 80
     max_price_pack: int = 20
+    pack_restock_enabled: bool = False  # acquisition policy only; quota, cash and sale guards still apply
     max_price_epic: int = Field(default=0, ge=0)  # 0: buying an epic is not allowed (no max_price for it)
     off_page_min_surplus: int = Field(default=1, ge=1)  # an epic or legendary buy: at most official value minus this
     dealer_final_lift: float = Field(default=0.0, ge=0, le=0.5)
     trickster_max_strictness: float = Field(default=0.0, ge=0, le=1)  # 0: the published kind alone decides
     trickster_accept_fill_share: float = Field(default=1 / 3, gt=0, le=1)
     official_value_margin: float = Field(default=0.0, ge=0)
+    # A taker dealer buy (not epic or legendary) may pay up to this many P OVER the official value while that dealer's
+    # level has an empty ladder slot this round (`Context.ladder_open`). 0: today's cap. At most 10 (a typo guard).
+    dealer_ladder_value_tolerance: float = Field(default=0.0, ge=0, le=10)
     max_packs_per_game_hour: int = 3
     sell_min_value_ratio: float = 1.0
     relist_step_share: float = Field(default=0.05, ge=0, le=0.5)
@@ -142,6 +147,7 @@ class Guardrails(BaseModel):
     duel_jitter: float = Field(default=0.0, ge=0, le=0.9)
     duel_jitter_seed: int = 0
     duel_days_signed: bool = False
+    duel_days_signed_roles: Literal["none", "seller", "buyer", "both"] = "none"
     duel_days_auto: bool = False
     steer_max_change: float = Field(default=0.5, ge=0, le=1)
     steer_max_ttl_ticks: int = Field(default=240, ge=1)
@@ -158,7 +164,7 @@ class Guardrails(BaseModel):
     inspect_accepts: bool = True
     bluff_enabled: bool = True
 
-    @field_validator("flag_trusted_dealers", "flag_dealers")
+    @field_validator("flag_trusted_dealers", "flag_dealers", "egg_hunt_dealers")
     @classmethod
     def _dealer_list_parse(cls, value: str, info: ValidationInfo) -> str:
         if value.strip().lower() == "none":
@@ -185,6 +191,9 @@ class Guardrails(BaseModel):
 
     protect_page_sets: str = "none"
     protect_page_exceptions: str = "none"  # card refs `protect_page_sets` lets us sell as a last copy
+    # True: `protect_page_sets` keeps our only copy only while its page is complete (a caller that cannot tell keeps
+    # protecting it). False: every only copy of a listed set is kept.
+    protect_complete_pages_only: bool = False
     open_sealed_packs: bool = False
     taller_enabled: bool = False
     max_taller_per_game_hour: int = Field(default=2, ge=0, le=20)
@@ -223,11 +232,13 @@ class Guardrails(BaseModel):
     risk_posture: str = Field(default="", max_length=200)
     buyer_rank_enabled: bool = False
     buyer_rank_fallback_ticks: int = Field(default=6, ge=1, le=40)
+    venue_avoid_rivals: bool = False
+    venue_team_penalty: float = Field(default=0.0, ge=0, le=1)
     # Live guard: off-by-default values here, so code built without GUARDRAILS.md behaves as before.
     deploy_guard_duel_ticks: int = Field(default=4, ge=0, le=100)
     deploy_guard_bench_ticks: int = Field(default=10, ge=0, le=200)
     breaker_read_timeout_s: float = Field(default=1.0, gt=0, le=5)
-    human_approval_above: int = Field(default=0, ge=0)  # 0: off (GUARDRAILS.md turns it on)
+    human_approval_above: int = Field(default=0, ge=0)  # 0: amount-based approval is off
     max_score_loss_per_move: float = Field(default=0.0, ge=0)  # 0: off (GUARDRAILS.md turns it on)
     score_per_neg_point_fallback: float = Field(default=0.053, gt=0, le=1)
     dealer_ladder_score: float = Field(default=0.05, ge=0, le=1)
@@ -238,6 +249,7 @@ class Guardrails(BaseModel):
     watchdog_max_swaps_per_team: int = Field(default=3, ge=1)
     watchdog_repeat_price_max: int = Field(default=3, ge=1)
     watchdog_repeat_trip_ticks: int = Field(default=20, ge=1, le=500)
+    dealer_sell_breaker_reset_ticks: int = Field(default=40, ge=0, le=2000)  # 0: only a human resets it
     watchdog_refusal_storm: int = Field(default=50, ge=1)
     # Buy targets (`buy_targets.py`): a human's buy approval of an off-page card becomes a card the agents pursue.
     buy_targets_enabled: bool = False
@@ -245,6 +257,14 @@ class Guardrails(BaseModel):
     buy_target_step_ticks: int = Field(default=6, ge=1, le=200)
     buy_target_steps: int = Field(default=5, ge=1, le=50)
     activity_stall_seconds: float = Field(default=0.0, ge=0, le=3600)  # 0: off (GUARDRAILS.md turns it on)
+    # Easter-egg hunt (`agents/egg_hunt.py`): off here; GUARDRAILS.md is the switch (env BAZAAR_EGG_HUNT=0 overrides).
+    egg_hunt_enabled: bool = False
+    egg_hunt_dealers: str = "abuela,picaros,chato,pilar"
+    egg_hunt_max_phrases_per_dealer_per_hour: int = Field(default=3, ge=0, le=20)
+    egg_hunt_dealer_gap_ticks: int = Field(default=8, ge=1, le=2000)
+    egg_hunt_backoff_ticks: int = Field(default=240, ge=1, le=5000)
+    egg_hunt_max_finds_per_dealer: int = Field(default=1, ge=0, le=10)
+    egg_hunt_max_finds: int = Field(default=5, ge=0, le=30)
 
     @field_validator("team_desk_never_trade")
     @classmethod
@@ -277,13 +297,23 @@ class Guardrails(BaseModel):
         """The least we may receive for an excepted card (0: not excepted)."""
         return card_minimums(self.protect_page_exceptions).get(ref, 0)
 
-    def protects(self, ref: str, rarity: str | None, copies: int) -> bool:
+    def protects(self, ref: str, rarity: str | None, copies: int, complete: Iterable[str] | None = None) -> bool:
         """Our only copy of a page card of a protected (new) page: never sold. A copy of unknown rarity
         counts as a page card (fail closed); a duplicate may still be sold. A card named in
-        `protect_page_exceptions` is never protected (that card only, not its set)."""
+        `protect_page_exceptions` is never protected (that card only, not its set). With
+        `protect_complete_pages_only`, a copy whose page is not complete (`complete`: the sets whose page is, from
+        /me) may be sold too, at our value and above like any sale; without `complete` it stays protected."""
         code = ref.split("-", 1)[0].strip().upper() if "-" in ref else ""
         page_card = str(rarity or "").strip().lower() not in OFF_PAGE_RARITIES
+        if self.protect_complete_pages_only and complete is not None and code not in {c.upper() for c in complete}:
+            return False
         return copies <= 1 and page_card and code in set_codes(self.protect_page_sets) and not self.excepted(ref)
+
+    def spend_room(self, cash_available: int, spent_last_hour: int) -> int:
+        """Cash available for a new commitment, bounded by a positive hourly cap when enabled."""
+        if self.max_spend_per_game_hour > 0:
+            cash_available = min(cash_available, self.max_spend_per_game_hour - spent_last_hour)
+        return max(0, cash_available)
 
     def max_price_for(self, rarity: str | None) -> int | None:
         return {
@@ -320,12 +350,14 @@ ENFORCED_BY: dict[str, str] = {
     "max_price_uncommon": "guardrails.check",
     "max_price_rare": "guardrails.check",
     "max_price_pack": "guardrails.check",
+    "pack_restock_enabled": "strategy.pack_moves + pack_gate.gate_packs + agents.taker",
     "max_price_epic": "guardrails.check (0: no epic is ever bought) + runtime.human_tools.buy_refusals",
     "off_page_min_surplus": "guardrails.check (every epic or legendary buy: official value minus this) + approve",
     "trickster_max_strictness": "agents.dealer.decide (a forgiving dealer's FINAL is not its limit)",
     "trickster_accept_fill_share": "agents.dealer.decide (a forgiving dealer: accept only low in its fill range)",
     "dealer_final_lift": "guardrails.check (a dealer's final only) + agents.dealer_plan",
     "official_value_margin": "guardrails.check (every card buy, official_values.OfficialValues: GET /api/me/value)",
+    "dealer_ladder_value_tolerance": "guardrails.check (taker dealer buys, a level with an empty ladder slot only)",
     "max_packs_per_game_hour": "guardrails.check + ledger",
     "sell_min_value_ratio": "guardrails.check",
     "relist_step_share": "agents.relist.relist_price (maker asks)",
@@ -358,6 +390,7 @@ ENFORCED_BY: dict[str, str] = {
     "duel_jitter": "agents.duel_v2.jittered (v2 only)",
     "duel_jitter_seed": "agents.duel_v2.jittered (v2 only)",
     "duel_days_signed": "guardrails.check (duel_inside_limit) + agents.duel_v2.value_of (v2 only)",
+    "duel_days_signed_roles": "guardrails.check (duel_inside_limit) + agents.duel_v2.value_of (v2 only, per role)",
     "duel_days_auto": "cli duel run + runtime duel_move (agents.duel_days.effective_rules; v2 only)",
     "steer_max_change": "llm.steering.clamp",
     "steer_max_ttl_ticks": "llm.steering.steering_from_draft",
@@ -370,6 +403,7 @@ ENFORCED_BY: dict[str, str] = {
     "flag_trusted_dealers": "agents.inspector.FlagBook (flag_step: the desk) + guardrails (never in flag_dealers)",
     "inspect_accepts": "agents.accept_gate (taker accepts, cli dealer buy, duel run --play, runtime duel_move)",
     "protect_page_sets": "guardrails.check (album from /me) + strategy.sell_moves",
+    "protect_complete_pages_only": "guardrails.protects (check, counter_bids: only a complete page keeps its copy)",
     "protect_page_exceptions": "guardrails.protects + check (every sale >= MIN) + maker ask floors (maker_jev, relist)",
     "open_sealed_packs": "guardrails.check (open_pack) + agents.taker",
     "taller_enabled": "guardrails.check (taller, + max_score_loss_per_move) + agents.taker._taller (level_watch)",
@@ -410,6 +444,8 @@ ENFORCED_BY: dict[str, str] = {
     "ladder_probe_min_share": "agents.ladder_probe.plan_one (share of her range a top keeps)",
     "buyer_rank_enabled": "agents.maker._address (the addressee of an ask the maker already decided to post)",
     "buyer_rank_fallback_ticks": "agents.maker._with_fallbacks (an addressed ask unfilled this long goes public)",
+    "venue_avoid_rivals": "agents.maker._avoided_owners (venues never listed on: the rivals of `buyers.is_rival`)",
+    "venue_team_penalty": "agents.market.best_venue (a team venue's score cut: its owner scores our trade)",
     "deploy_guard_duel_ticks": "deploy_guard.verdict (`bazaar deploy-guard`, scripts/merge_safe.sh)",
     "deploy_guard_bench_ticks": "deploy_guard.verdict (`bazaar deploy-guard`, scripts/merge_safe.sh)",
     "breaker_read_timeout_s": "guardrails.check → breakers.BreakerBoard.tripped (once per tick, fail open)",
@@ -429,8 +465,16 @@ ENFORCED_BY: dict[str, str] = {
     "watchdog_max_swaps_per_team": "watchdog.swap_rules (trips team_swap)",
     "watchdog_repeat_price_max": "watchdog.repeat_price_rule (trips the scope for a while)",
     "watchdog_repeat_trip_ticks": "watchdog.repeat_price_rule (the trip's until_tick)",
+    "dealer_sell_breaker_reset_ticks": "watchdog.run (a dealer_sell trip's until_tick; the sell guards still refuse)",
     "watchdog_refusal_storm": "watchdog.refusal_storms (WARN only)",
     "activity_stall_seconds": "agents.taker → activity.ActivityWatch (after the tick's sends; logs, never trades)",
+    "egg_hunt_enabled": "agents.egg_hunt.EggHunter.mode (env BAZAAR_EGG_HUNT=0/dry overrides) ← taker._desk_send",
+    "egg_hunt_dealers": "agents.egg_hunt.EggHunter.blocked (the dealers a phrase may ride to)",
+    "egg_hunt_max_phrases_per_dealer_per_hour": "agents.egg_hunt.EggHunter.blocked (live + dry, per game hour)",
+    "egg_hunt_dealer_gap_ticks": "agents.egg_hunt.EggHunter.blocked + _expire (wait for the reply and the find)",
+    "egg_hunt_backoff_ticks": "agents.egg_hunt.EggHunter.observe (cool-off, strike, warning, flag back-off)",
+    "egg_hunt_max_finds_per_dealer": "agents.egg_hunt.EggHunter.blocked (stop per dealer after its find)",
+    "egg_hunt_max_finds": "agents.egg_hunt.EggHunter.blocked (stop everywhere at our cap)",
 }
 
 
@@ -576,6 +620,8 @@ class LedgerStore(Protocol):
     def reserve_accept(self, tick: int, t_hours: float, price: int, item: str, limit: int) -> bool: ...
     def release_accept(self, tick: int, item: str) -> None: ...
     def hands_off_ids(self) -> set[int]: ...
+    def publication_rows(self) -> list[tuple[str, str]]: ...
+    def refund_bid(self, tick: int, t_hours: float, price: int, item: str) -> float | None: ...
 
 
 RELEASE = "release"  # a JSONL row that gives back one reserved accept of its tick (`Ledger.release_accept`)
@@ -586,7 +632,37 @@ class Ledger:
 
     def __init__(self, path: Path) -> None:
         self.path = path
+        self.world = "unknown"
         self.where = f"file {path.name}"
+
+    def publication_rows(self) -> list[tuple[str, str]]:
+        return [
+            (str(e["kind"]), str(e.get("item", "")))
+            for e in self.entries()
+            if str(e.get("kind", "")).startswith("publication_")
+        ]
+
+    def refund_bid(self, tick: int, t_hours: float, price: int, item: str) -> float | None:
+        """Record one bid refund; prior credit blocks it even when its date was wrong."""
+        if price <= 0:
+            raise ValueError("bid refund price must be positive")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.with_suffix(".refund.lock").open("a") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            rows = [
+                (str(e["kind"]), float(e["t_hours"]), int(e["price"]))
+                for e in self.entries()
+                if e["kind"] in {"spend", "listing"}
+                and e["tick"] == tick
+                and e.get("item") == item
+                and abs(int(e.get("price", 0))) == price
+            ]
+            if any(p < 0 for _, _, p in rows):
+                return None
+            exact = matching_bid_spend(rows)
+            at = t_hours if exact is None else exact
+            self.record("spend", tick, at, -price, item)
+            return at
 
     def entries(self) -> list[dict[str, Any]]:
         if not self.path.is_file():
@@ -681,6 +757,15 @@ class Ledger:
 LedgerRow = tuple[str, int, float, int, str]  # kind, tick, t_hours, price, item: `LedgerStore.record`'s arguments
 
 
+def matching_bid_spend(rows: list[tuple[str, float, int]]) -> float | None:
+    """Only one original listing/spend pair proves the date; duplicates or any refund are ambiguous."""
+    if len(rows) != 2 or {r[0] for r in rows} != {"spend", "listing"}:
+        return None
+    if rows[0][1:] != rows[1][1:] or rows[0][2] <= 0:
+        return None
+    return rows[0][1]
+
+
 def refund_row(
     price: int, item: str, created_tick: int | None, tick: int, t_hours: float, max_tick_seconds: float
 ) -> LedgerRow:
@@ -723,6 +808,8 @@ ActionKind = Literal[
     "flag",
     "cancel",
     "close_thread",
+    "team_open",
+    "team_say",
     "open_pack",
     "venue_open",
     "venue_close",
@@ -751,6 +838,7 @@ class Action:
     counterparty: str | None = None
     volume: int | None = None  # what the trade adds to the counterparty's share (default: `price`)
     final: bool = False  # a dealer's final offer (take it or it walks): its cap is `final_cap_for` (N14a)
+    dealer: str | None = None  # a taker buy from this dealer (`dealer_ladder_value_tolerance`); None: any other buy
     limit: int | None = None  # duels: our private limit (a seller's cost, a buyer's value)
     role: str | None = None  # duels: "seller" | "buyer"
     days: float | None = None  # two-issue duels: the delivery days of the deal (None in price-only duels)
@@ -846,6 +934,9 @@ class Context:
     taller_last_hour: int = 0  # Workshop crafts in the last game hour (`max_taller_per_game_hour`, this process)
     # Why no Workshop craft may go this tick: an accept still settling hands over a copy we cannot name.
     taller_hold: str | None = None
+    # Dealers whose ladder level has an empty slot this round (the taker's `LadderSlots`): their card buys may use
+    # `dealer_ladder_value_tolerance`. Empty: no buy ever does.
+    ladder_open: frozenset[str] = frozenset()
 
 
 # What a stored or answered /me (`holdings.without_secrets`) keeps of `starter_broker_key`: that it was there.
@@ -935,7 +1026,7 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
             v.append(f"price {action.price} > {lifted or f'max_price_{action.rarity} {cap}'}")
         if ctx.cash - action.price < effective_cash_floor(rules, ctx):
             v.append(f"cash {ctx.cash} - {action.price} < {floor_text(rules, ctx)}")
-        if ctx.spent_last_hour + action.price > rules.max_spend_per_game_hour:
+        if rules.max_spend_per_game_hour > 0 and ctx.spent_last_hour + action.price > rules.max_spend_per_game_hour:
             v.append(
                 f"spend {ctx.spent_last_hour} + {action.price} > max_spend_per_game_hour "
                 f"{rules.max_spend_per_game_hour}"
@@ -953,7 +1044,8 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
             v.append(f"sell price {action.price} < {rules.sell_min_value_ratio} × your_value {action.your_value}")
     selling = action.kind in SELLING
     copies = _copies(ctx, action.item)
-    if selling and rules.protects(action.item, action.rarity, copies):
+    complete = ctx.cards.complete if ctx.cards is not None else None  # /me's complete pages (None: protect)
+    if selling and rules.protects(action.item, action.rarity, copies, complete):
         v.append(f"{action.item} is our only copy of a page card of a new page (protect_page_sets)")
     if selling and (wrong := _not_a_copy_of_the_excepted_card(action, ctx, rules)):
         v.append(wrong)
@@ -973,7 +1065,7 @@ def check(action: Action, ctx: Context, rules: Guardrails) -> Verdict:
         v.extend(_taller_violations(action, ctx, rules))
     if action.kind in ("duel_offer", "duel_accept") and rules.duel_inside_limit:
         v2 = rules.duel_policy == "v2"
-        v.extend(_duel_limit_violations(action, v2 and rules.duel_days_signed, zero_days_free=v2))
+        v.extend(_duel_limit_violations(action, v2 and days_signed_for(rules, action.role), zero_days_free=v2))
     v.extend(_venue_violations(action, ctx, rules))
     v.extend(_breaker_violations(action, ctx, rules))
     if buying and not v:  # before the official value: a buy-back needs no /api/me/value read
@@ -992,6 +1084,8 @@ def _taller_violations(action: Action, ctx: Context, rules: Guardrails) -> list[
     and `max_taller_per_game_hour`; every card keeps at least one free copy (a copy in an open ask of ours is not
     free: `Context.sellable`), whatever the set, so a page never loses its last copy."""
     v = [] if rules.taller_enabled else ["taller_enabled = false"]
+    if rules.dealer_sell_enabled:  # SA1 interlock: the maker's sell desk may sell the very copy the Workshop keeps
+        v.append("dealer_sell_enabled = true: the Workshop waits (nothing shared tells it what the sell desk sells)")
     if ctx.taller_last_hour >= rules.max_taller_per_game_hour:
         v.append(
             f"{ctx.taller_last_hour} Workshop craft(s) this game hour (max_taller_per_game_hour "
@@ -1004,6 +1098,10 @@ def _taller_violations(action: Action, ctx: Context, rules: Guardrails) -> list[
     for ref, n in sorted(Counter(refs).items()):
         if free.get(ref, 0) - n < 1:
             v.append(f"{ref}: giving {n} of our {free.get(ref, 0)} free copies leaves none (we keep one of each card)")
+    if len(set(action.assets)) != len(action.assets):
+        v.append(f"the Workshop's copies {list(action.assets)} repeat one")
+    if action.assets and ctx.cards is None:
+        v.append("the Workshop's copies cannot be matched to our /me (no cards read)")
     if ctx.taller_hold:  # `agents.taller.unnamed_settling`
         v.append(ctx.taller_hold)
     if action.assets and ctx.cards is not None:  # the copies named are the cards named, one by one
@@ -1101,6 +1199,8 @@ def _approval_violations(action: Action, ctx: Context, rules: Guardrails) -> lis
     if side is None or rules.human_approval_above <= 0 or action.price is None or ctx.ranking:
         return []
     price = action.price + (action.gives_value if side == "buy" else 0.0)
+    if action.kind == "accept_sell":
+        price = max(price, action.volume or 0)  # approval sees the quoted price; the floor sees net proceeds
     if price < rules.human_approval_above:
         return []
     from bazaar_agent import approvals
@@ -1239,7 +1339,32 @@ def _official_value_violations(action: Action, ctx: Context, rules: Guardrails) 
         return []
     held = ctx.held.get(action.item, 0)
     margin = rules.value_margin_for(action.rarity)  # an epic or legendary: strictly below, never liftable
+    if (tolerance := ladder_tolerance(action, ctx, rules)) > 0:
+        return cap_violations(
+            action.item,
+            action.price,
+            action.gives_value,
+            ctx.values,
+            ctx.tick,
+            held,
+            rules,
+            margin - tolerance,
+            rule="dealer_ladder_value_tolerance",
+        )
     return cap_violations(action.item, action.price, action.gives_value, ctx.values, ctx.tick, held, rules, margin)
+
+
+def ladder_tolerance(action: Action, ctx: Context, rules: Guardrails) -> float:
+    """How far over the official value this buy may go: `dealer_ladder_value_tolerance` for a taker buy from a
+    dealer (open, bid or accept) whose level has an empty ladder slot this round, never for an epic or legendary
+    (`off_page_min_surplus` is Marius's hard rule) nor a team trade; else 0. A dealer deal scores on the ladder (a
+    share of the dealer's own range); whether a dealer buy above our value costs neg_points was never observed (no
+    Saturday buy was above it), so each such buy may also cost up to the tolerance in neg_points."""
+    if rules.dealer_ladder_value_tolerance <= 0 or action.dealer is None or action.counterparty is not None:
+        return 0.0
+    if action.kind not in ("buy", "bid", "accept_buy") or str(action.rarity or "").lower() in OFF_PAGE_RARITIES:
+        return 0.0
+    return rules.dealer_ladder_value_tolerance if action.dealer in ctx.ladder_open else 0.0
 
 
 # Our own market (RULES.md "Your own market"): opening costs a refundable bond plus an opening fee.
@@ -1280,6 +1405,16 @@ def halts(ctx: Context, rules: Guardrails) -> tuple[str, ...]:
     if ctx.paused:
         stops.append(f"pause file {rules.pause_file} exists")
     return tuple(stops)
+
+
+def days_signed_for(rules: Any, role: object) -> bool:
+    """Whether a duel of this role values its days with their sign (v2): `duel_days_signed` for both roles,
+    `duel_days_signed_roles` for one. The real game's rule is role-dependent (Duels II: a seller's day adds cash to
+    its side, a buyer's day costs it), so one global sign is wrong for one of the two roles."""
+    if getattr(rules, "duel_days_signed", False):
+        return True
+    roles = getattr(rules, "duel_days_signed_roles", "none")
+    return roles == "both" or (role in ("seller", "buyer") and roles == role)
 
 
 def _duel_limit_violations(action: Action, signed: bool = False, zero_days_free: bool = False) -> list[str]:

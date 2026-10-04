@@ -3,10 +3,14 @@
 import json
 import time
 from copy import deepcopy
+from pathlib import Path
 
 import psycopg
+import pytest
 
-from bazaar_agent.agents.bench_capture import FILE_NAME, BenchBooks, rows_for, run_of, side_and_quote
+from bazaar_agent.agents.bench_capture import EVIDENCE_FILE, FILE_NAME, BenchBooks, rows_for, run_of, side_and_quote
+from bazaar_agent.agents.matcher import BrokerBook
+from bazaar_agent.sdk import BazaarError
 from tests.agent_fakes import clock
 from tests.test_broker_agent import FakeBroker, agent
 from tests.test_matcher import bench_buy, bench_sell
@@ -120,6 +124,41 @@ def test_no_file_dir_no_database_is_a_noop():
     BenchBooks(None, None).record(1, [SELL])
 
 
+def test_evidence_preserves_full_payload_in_file_and_database(tmp_path):
+    sink = []
+    books = BenchBooks(lambda: FakeConn(sink), tmp_path, venue="v19", inline=True)
+    payload = {"settlement": {"sell": "b35-17", "details": "x" * 1500}}
+    books.evidence(450, "settlement", payload)
+    saved = json.loads((tmp_path / EVIDENCE_FILE).read_text())
+    assert saved["kind"] == "settlement" and saved["payload"] == payload
+    assert sink[0][0:4] == ("real", "v19", 450, "settlement")
+    assert sink[0][-1].obj == payload
+
+
+def test_exact_broker_captures_settlement_empty_book_and_official_session_result(tmp_path):
+    broker = FakeBroker(bench=[bench_sell("b1-1", 20), bench_buy("b1-2", 40)])
+    result = {
+        "id": 17,
+        "type": "bench.finished",
+        "tick": 8,
+        "payload": {"session": 1, "venue": "v19", "efficiency": 0.854, "auto_baseline": 0.854},
+    }
+    a = agent(tmp_path, broker, live=True, allow_venue_open=True)
+    a.on_tick(clock(7))
+    settlement = {"sell": "b1-1", "buy": "b1-2", "price": 30, "detail": "x" * 1500}
+    original = broker.book
+    broker.book = lambda: {**original(), "settlements": [settlement]}
+    a.on_tick(clock(8), events=[result])
+    a.on_tick(clock(9), events=[result])
+    evidence = [json.loads(line) for line in (tmp_path / "agents" / EVIDENCE_FILE).read_text().splitlines()]
+    assert [row["payload"]["offers"] for row in evidence if row["kind"] == "book"][-1] == []
+    assert [row["payload"] for row in evidence if row["kind"] == "settlement"] == [{"settlement": settlement}]
+    assert [row["payload"] for row in evidence if row["kind"] == "session"] == [result]
+    response = next(row["payload"] for row in evidence if row["kind"] == "match_response")
+    assert response["request"] == {"sell": "b1-1", "buy": "b1-2", "price": 30}
+    assert response["state"] == "queued_or_acknowledged"
+
+
 def test_the_broker_records_the_book_it_read_without_a_second_request(tmp_path):
     broker = FakeBroker(bench=[deepcopy(bench_sell("b1-1", 20)), bench_buy("b1-2", 40)])
     reads = []
@@ -132,6 +171,20 @@ def test_the_broker_records_the_book_it_read_without_a_second_request(tmp_path):
     assert row["tick"] == 7 and {o["id"] for o in row["offers"]} == {"b1-1", "b1-2"}
 
 
+@pytest.mark.parametrize("status,state", [(400, "refused"), (408, "unknown"), (503, "unknown")])
+def test_match_evidence_distinguishes_refusal_from_uncertainty(tmp_path, status, state):
+    class FailingBroker(FakeBroker):
+        def match(self, sell, buy, price):
+            raise BazaarError("failed", "no definite result", status)
+
+    broker = FailingBroker(bench=[bench_sell("b1-1", 20), bench_buy("b1-2", 40)])
+    agent(tmp_path, broker, live=True, allow_venue_open=True).on_tick(clock(7))
+    evidence = [json.loads(line) for line in (tmp_path / "agents" / EVIDENCE_FILE).read_text().splitlines()]
+    response = next(row["payload"] for row in evidence if row["kind"] == "match_response")
+    assert response["state"] == state
+    assert response["http_status"] == status
+
+
 def test_an_unwritable_stats_dir_never_stops_the_tick(tmp_path):
     blocker = tmp_path / "blocked"
     blocker.write_text("a file, not a directory")
@@ -141,3 +194,36 @@ def test_an_unwritable_stats_dir_never_stops_the_tick(tmp_path):
     a.books = BenchBooks(None, blocker / "agents", lines.append)
     a.on_tick(clock(7))
     assert any("bench books: file failed" in x for x in lines)
+
+
+# A real `GET /api/broker/book` of our venue v19 during Saturday's Market Test b52 (session 3, tick ~686), read-only:
+# bench buyers bid `give.cash` and want `bench:cromo`, the seller asks `want.cash`, every offer carries `bench: true`.
+REAL_BOOK = json.loads((Path(__file__).parent / "fixtures" / "broker_book_bench_b52.json").read_text())
+
+
+def test_a_real_bench_book_becomes_one_row_per_trader():
+    book = BrokerBook.model_validate(REAL_BOOK)
+    rows = rows_for("real", 686, book.bench_offers, "v19", book.fee_bps, book.fee_per_card)
+    assert [r[:9] for r in rows] == [
+        ("real", "b52", 686, "b52-2", "buy", 42, "v19", 0, 0),
+        ("real", "b52", 686, "b52-7", "buy", 35, "v19", 0, 0),
+        ("real", "b52", 686, "b52-8", "buy", 26, "v19", 0, 0),
+        ("real", "b52", 686, "b52-10", "sell", 62, "v19", 0, 0),
+    ]
+    assert rows[0][9] == REAL_BOOK["bench_offers"][0]  # the raw offer, whole
+
+
+def test_the_broker_records_a_real_bench_book_for_postgres(tmp_path):
+    sink: list = []
+    broker = FakeBroker(bench=REAL_BOOK["bench_offers"])
+    a = agent(tmp_path, broker)
+    a.books = BenchBooks(lambda: FakeConn(sink), tmp_path, world="real", venue="v19", inline=True)
+    a.on_tick(clock(686))
+    books = [r for r in sink if len(r) == 10]  # bench_books rows; the 6-column ones are bench_evidence
+    assert sorted((r[1], r[3], r[4], r[5]) for r in books) == [
+        ("b52", "b52-10", "sell", 62),
+        ("b52", "b52-2", "buy", 42),
+        ("b52", "b52-7", "buy", 35),
+        ("b52", "b52-8", "buy", 26),
+    ]
+    assert {r[0] for r in books} == {"real"} and {r[2] for r in books} == {686}

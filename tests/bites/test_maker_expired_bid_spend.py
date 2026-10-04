@@ -49,6 +49,10 @@ def test_one_standing_bid_reposted_after_expiry_counts_once_in_the_hour(tmp_path
         m.on_tick(team.now)
         now = sunday(t0 + cycle * TTL, t0, h0)
         assert m.ledger.spent_since(now.t_hours - 1.0) <= 130  # the new bid + at most the lapse being confirmed
+        # The running maker observes its acknowledged offer before it expires.
+        team.offers = [bid(team.bid_ids[-1], "LAV-09", 65, expires=now.tick + TTL, created=now.tick)]
+        team.now = sunday(now.tick + 1, t0, h0)
+        m.on_tick(team.now)
     now = sunday(t0 + 2 * TTL + 1, t0, h0)
     team.offers = [bid(team.bid_ids[-1], "LAV-09", 65, expires=now.tick + TTL - 1, created=now.tick - 1)]
     team.now = now
@@ -64,6 +68,9 @@ def test_the_bid_target_stays_on_the_board_all_hour(tmp_path):
     for cycle in range(5):  # 50 min on Sunday
         team.offers = []
         team.now = sunday(t0 + cycle * TTL, t0, h0)
+        m.on_tick(team.now)
+        team.offers = [bid(team.bid_ids[-1], "LAV-09", 65, expires=team.now.tick + TTL, created=team.now.tick)]
+        team.now = sunday(team.now.tick + 1, t0, h0)
         m.on_tick(team.now)
     bids = [p for p in posted(team) if p[1].get("cash")]
     assert len(bids) == 5, [line for line in lines if "max_spend_per_game_hour" in line][:1]

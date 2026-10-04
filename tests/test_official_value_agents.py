@@ -8,10 +8,9 @@ from dataclasses import replace
 import pytest
 
 from bazaar_agent.agents.maker import Maker
-from bazaar_agent.agents.taker import Taker, TakerConfig
+from bazaar_agent.agents.taker import REFUSAL_RECHECK_TICKS, REFUSAL_ROW_TICKS, Taker, TakerConfig
 from bazaar_agent.sdk import BazaarError
 from tests.agent_fakes import TICK, FakePublic, FakeTeam, ask, bid, clock, parts, rows
-from tests.test_strategy import ME
 
 pytestmark = pytest.mark.official_values
 
@@ -130,8 +129,9 @@ def test_a_dealer_thread_is_not_opened_when_its_opening_bid_is_above_the_officia
     team = ValuedTeam(values={"LAV-08": 15.0})
     t, lines = taker(tmp_path, team, FakePublic(), live=True, dealers=3)
     t.on_tick(clock())
-    assert not [s for s in team.sent if s[0] in ("open_thread", "say")]
-    (row,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_open"]
+    assert ("open_thread", "abuela", {"buy": {"card": "LAV-08"}}) not in team.sent
+    assert ("open_thread", "abuela", {"buy": {"card": "LAV-02"}}) in team.sent
+    (row,) = [r for r in rows(tmp_path) if r.get("kind") == "dealer_open" and r["status"] == "rejected"]
     assert row["inputs"]["item"] == "LAV-08" and row["status"] == "rejected"
     assert row["guardrail"] == "denied: price 18 > official value 15 of LAV-08 (GET /api/me/value)"
     assert any("official value" in line for line in lines)
@@ -139,11 +139,12 @@ def test_a_dealer_thread_is_not_opened_when_its_opening_bid_is_above_the_officia
 
 def test_a_later_dealer_bid_above_the_official_value_is_refused(tmp_path):
     # 18.5 lets the opening 18 through; her ask 24 calls for 19 next, which is above it.
-    team = ValuedTeam(values={"LAV-08": 18.5})
+    team = ValuedTeam(values={"LAV-08": 40.0})
     t, lines = taker(tmp_path, team, FakePublic(), live=True, dealers=3)
     t.on_tick(clock())
     assert ("open_thread", "abuela", {"buy": {"card": "LAV-08"}}) in team.sent
     assert [s for s in team.sent if s[0] == "say"] == [("say", 5000, 18)]
+    team.values["LAV-08"] = 18.5  # A lower value after opening must still guard the next bid.
     her_ask(team, 5000, 800, 24)
     t.on_tick(at(team, TICK + 1))
     assert [s for s in team.sent if s[0] == "say"] == [("say", 5000, 18)]  # 19 never sent
@@ -153,9 +154,10 @@ def test_a_later_dealer_bid_above_the_official_value_is_refused(tmp_path):
 def test_a_walk_at_our_official_value_top_rests_on_the_card_instead_of_reopening_it(tmp_path):
     # UB1 (Sat ticks 1205-1227): Los Pícaros asked 64-73 for RET-10 (worth 49); the taker walked at 50 and reopened
     # the same ladder 48, 49 every three ticks. A walk at the official-value top now cools that card for an hour.
-    team = ValuedTeam(values={"LAV-08": 18.5})
+    team = ValuedTeam(values={"LAV-08": 40.0})
     t, _ = taker(tmp_path, team, FakePublic(), live=True, dealers=3)
     t.on_tick(clock())
+    team.values["LAV-08"] = 18.5
     her_ask(team, 5000, 800, 24)
     t.on_tick(at(team, TICK + 1))
     assert ("close_thread", 5000) in team.sent
@@ -183,6 +185,178 @@ def test_a_failed_value_read_holds_the_dealer_thread_for_the_tick_and_never_walk
     t.on_tick(at(team, TICK + 2))
     assert not [s for s in team.sent if s[0] == "close_thread"]
     assert [s for s in team.sent if s[0] == "say"][-1] == ("say", 5000, 19)
+
+
+def ret_plan(tmp_path, monkeypatch, *, filled=True, alternative=True, history_card="RET-09", new_round=False):
+    """Real opening path with the observed RET plan (48..61) versus official value 49."""
+    from bazaar_agent.agents import taker as module
+    from bazaar_agent.agents.runtime import MarketFeed
+    from bazaar_agent.strategy import Playbook
+    from tests.test_dealer_plan import chato_move
+    from tests.test_intel import msg, opened, settle
+    from tests.test_strategy import ABUELA
+
+    rare = replace(
+        chato_move(value=63.8, ladder=(48, 61, 1)), source="picaros", ref="RET-09", rarity="rare", price=52, score=20
+    )
+    common = replace(
+        rare, source="abuela", ref="LAV-02", rarity="common", ladder=(8, 12, 1), limit=12, price=8, score=10
+    )
+    book = Playbook(TICK, 400, (), (rare, common) if alternative else (rare,), (), (), (), {})
+    monkeypatch.setattr(module, "build_playbook", lambda *a, **kw: book)
+    events = [
+        opened(901, 90, "t02", {"buy": {"card": history_card}}, tick=90, dealer="picaros"),
+        msg(902, 90, "t02", "picaros", want_cash=63, tick=90),
+    ]
+    if filled:
+        events.append(settle(903, 90, "picaros", "t02", history_card, 52, tick=91, kind="card", persona="picaros"))
+    if new_round:
+        events.append({"id": 904, "tick": 95, "type": "round.started", "payload": {"round": 3}})
+    team = ValuedTeam(values={"RET-09": 49, "LAV-02": 16})
+    public = FakePublic(events=events, dealers=[ABUELA, {"id": "picaros", "status": "active", "level": 4}])
+    t, lines = taker(tmp_path, team, public, live=True, dealers=3, max_spend_per_game_hour=0)
+    t.feed = MarketFeed(public.feed_window)
+    return t, team, lines
+
+
+def test_official_ceiling_skips_known_ret_fill_and_opens_affordable_alternative(tmp_path, monkeypatch):
+    t, team, _ = ret_plan(tmp_path, monkeypatch)
+    t.on_tick(clock(tick_seconds=15))
+    assert [s for s in team.sent if s[0] == "open_thread"] == [("open_thread", "abuela", {"buy": {"card": "LAV-02"}})]
+    assert team.value_calls == ["RET-09", "LAV-02"]  # opening and first bid reuse the cache
+    rejected = [r for r in rows(tmp_path) if r.get("kind") == "dealer_open" and r["status"] == "rejected"]
+    assert (
+        len(rejected) == 1 and "ceiling 49" in rejected[0]["guardrail"] and "fills from 52" in rejected[0]["guardrail"]
+    )
+
+
+def test_unknown_ret_final_still_negotiates_with_the_entire_plan_capped(tmp_path, monkeypatch):
+    t, team, _ = ret_plan(tmp_path, monkeypatch, filled=False, alternative=False)
+    t.on_tick(clock(tick_seconds=15))
+    assert ("open_thread", "picaros", {"buy": {"card": "RET-09"}}) in team.sent
+    assert t.convs["picaros"].neg.plan.max_price == 49
+    assert team.value_calls == ["RET-09"]
+
+
+@pytest.mark.parametrize("history_card,new_round", [("RET-10", False), ("RET-09", True)])
+def test_a_different_card_or_previous_round_fill_does_not_veto_the_plan(tmp_path, monkeypatch, history_card, new_round):
+    t, team, _ = ret_plan(tmp_path, monkeypatch, alternative=False, history_card=history_card, new_round=new_round)
+    t.on_tick(clock(tick_seconds=15))
+    assert ("open_thread", "picaros", {"buy": {"card": "RET-09"}}) in team.sent
+    assert t.convs["picaros"].neg.plan.max_price == 49
+
+
+def test_new_official_value_reconsiders_a_previously_unreachable_ret_plan(tmp_path, monkeypatch):
+    # An official value is only known by reading it: a remembered refusal re-reads it every REFUSAL_RECHECK_TICKS.
+    t, team, _ = ret_plan(tmp_path, monkeypatch, alternative=False)
+    t.on_tick(clock(tick_seconds=15))
+    assert team.sent == []
+    team.values["RET-09"] = 55
+    t.on_tick(clock(tick=TICK + 1, tick_seconds=15))
+    assert team.sent == [] and team.value_calls == ["RET-09"]
+    t.on_tick(clock(tick=TICK + REFUSAL_RECHECK_TICKS, tick_seconds=15))
+    assert ("open_thread", "picaros", {"buy": {"card": "RET-09"}}) in team.sent
+    assert t.convs["picaros"].neg.plan.max_price == 55
+    assert team.value_calls == ["RET-09", "RET-09"]
+
+
+# ---------------------------------------------------------------- 2b. taker: a refused open is remembered
+# Sun t1733-1888: picaros RET-09/RET-10 (ceiling 49, fills from 59) were refused 205 times, each a value read and
+# one of the tick's open attempts, while the dashboard counted "refused ×99".
+
+
+def ret_refusals(tmp_path):
+    return [r for r in rows(tmp_path) if r.get("kind") == "dealer_open" and r["status"] == "rejected"]
+
+
+def test_a_refused_open_is_not_retried_next_tick_nor_logged_again(tmp_path, monkeypatch):
+    t, team, _ = ret_plan(tmp_path, monkeypatch, alternative=False)
+    for tick in range(TICK, TICK + REFUSAL_RECHECK_TICKS):
+        t.on_tick(clock(tick=tick, tick_seconds=15))
+    assert team.sent == [] and team.value_calls == ["RET-09"]
+    assert len(ret_refusals(tmp_path)) == 1
+    t.on_tick(clock(tick=TICK + REFUSAL_RECHECK_TICKS, tick_seconds=15))  # the re-check reads it again, silently
+    assert team.value_calls == ["RET-09", "RET-09"] and len(ret_refusals(tmp_path)) == 1
+
+
+def test_a_lasting_refusal_is_written_again_every_refusal_row_ticks(tmp_path, monkeypatch):
+    # The dashboard's "why we do not buy" reads the last 300 ticks: a refusal that lasts must not age out of it.
+    t, team, _ = ret_plan(tmp_path, monkeypatch, alternative=False)
+    for tick in range(TICK, TICK + 2 * REFUSAL_ROW_TICKS + 1, REFUSAL_RECHECK_TICKS):
+        t.on_tick(clock(tick=tick, tick_seconds=15))
+    assert team.sent == []
+    assert [r["tick"] for r in ret_refusals(tmp_path)] == [TICK, TICK + REFUSAL_ROW_TICKS, TICK + 2 * REFUSAL_ROW_TICKS]
+
+
+def test_a_refused_open_is_retried_when_a_new_fill_comes_in(tmp_path, monkeypatch):
+    from tests.test_intel import msg, opened, settle
+
+    t, team, _ = ret_plan(tmp_path, monkeypatch, alternative=False)
+    t.on_tick(clock(tick_seconds=15))
+    assert team.sent == []
+    t.public._events += [
+        opened(905, 91, "t03", {"buy": {"card": "RET-09"}}, tick=96, dealer="picaros"),
+        msg(906, 91, "t03", "picaros", want_cash=50, tick=96),
+        settle(907, 91, "picaros", "t03", "RET-09", 45, tick=97, kind="card", persona="picaros", asset_id=901),
+    ]
+    t.on_tick(clock(tick=TICK + 1, tick_seconds=15))
+    assert ("open_thread", "picaros", {"buy": {"card": "RET-09"}}) in team.sent
+    assert team.value_calls == ["RET-09", "RET-09"]
+
+
+def test_a_refused_open_is_retried_when_a_cap_changes(tmp_path, monkeypatch):
+    t, team, _ = ret_plan(tmp_path, monkeypatch, alternative=False)
+    t.on_tick(clock(tick_seconds=15))
+    t.on_tick(clock(tick=TICK + 1, tick_seconds=15))
+    assert team.value_calls == ["RET-09"]
+    t.rules = t.rules.model_copy(update={"official_value_margin": 1.0})
+    t.on_tick(clock(tick=TICK + 2, tick_seconds=15))
+    assert team.value_calls == ["RET-09", "RET-09"]
+    first, second = ret_refusals(tmp_path)
+    assert "ceiling 49" in first["guardrail"] and "ceiling 48" in second["guardrail"]  # a new refusal: one new row
+
+
+def test_the_next_ranked_candidate_gets_the_open_attempt(tmp_path, monkeypatch):
+    # One open attempt a tick: RET-09 used it on the first tick; from the second, LAV-02 gets it.
+    t, team, _ = ret_plan(tmp_path, monkeypatch)
+    t.config = replace(t.config, max_dealer_threads=1)
+    t.on_tick(clock(tick_seconds=15))
+    assert team.sent == [] and team.value_calls == ["RET-09"]
+    t.on_tick(clock(tick=TICK + 1, tick_seconds=15))
+    assert [s for s in team.sent if s[0] == "open_thread"] == [("open_thread", "abuela", {"buy": {"card": "LAV-02"}})]
+    assert "RET-09" not in team.value_calls[1:]
+
+
+def test_a_card_no_longer_on_sale_is_forgotten(tmp_path, monkeypatch):
+    from bazaar_agent.agents import taker as module
+    from bazaar_agent.strategy import Playbook
+
+    t, team, _ = ret_plan(tmp_path, monkeypatch, alternative=False)
+    t.on_tick(clock(tick_seconds=15))
+    book = module.build_playbook()
+    monkeypatch.setattr(module, "build_playbook", lambda *a, **kw: Playbook(TICK, 400, (), (), (), (), (), {}))
+    t.on_tick(clock(tick=TICK + 1, tick_seconds=15))
+    assert t._refused_opens == {}
+    monkeypatch.setattr(module, "build_playbook", lambda *a, **kw: book)  # on sale again: judged afresh, once
+    t.on_tick(clock(tick=TICK + 2, tick_seconds=15))
+    t.on_tick(clock(tick=TICK + 3, tick_seconds=15))
+    assert team.value_calls == ["RET-09", "RET-09"] and len(ret_refusals(tmp_path)) == 2
+
+
+def test_official_read_that_uses_the_tick_prevents_further_reads_or_an_open(tmp_path, monkeypatch):
+    t, team, _ = ret_plan(tmp_path, monkeypatch)
+    now = [1000.0]
+    t.now = lambda: now[0]
+    value = team.value
+
+    def slow(card):
+        result = value(card)
+        now[0] += 15
+        return result
+
+    team.value = slow
+    t.on_tick(clock(tick_seconds=15, next_tick_in=10))
+    assert team.sent == [] and team.value_calls == ["RET-09"]
 
 
 # ---------------------------------------------------------------- 3. maker: board bids
@@ -275,10 +449,11 @@ def test_selling_into_a_standing_bid_never_reads_the_official_value(tmp_path):
 def test_a_rung_above_our_cash_room_bids_the_room_and_the_walk_after_it_rests(tmp_path):
     # UB1: a rung refused only for cash bids the most we may still commit (a distinct step up), re-checked in full
     # (official value included); with nothing left above our last bid, the guardrail walk rests on the card.
-    team = ValuedTeam(me={**ME, "cash": 290})  # floor 270: room 20
+    team = ValuedTeam()  # Enough room when opening; another commitment reduces it before the next bid.
     t, _ = taker(tmp_path, team, FakePublic(), live=True, dealers=3, allow_venue_open=False)
     t.on_tick(clock())
     assert [s for s in team.sent if s[0] == "say"] == [("say", 5000, 18)]
+    team._me["cash"] = 290  # floor 270: room 20, now smaller than the planned next rung
     t.convs["abuela"].neg.plan = replace(t.convs["abuela"].neg.plan, step=4)  # the next rung is 22
     her_ask(team, 5000, 800, 30)
     t.on_tick(at(team, TICK + 1))
@@ -298,9 +473,10 @@ def test_a_rung_above_our_cash_room_bids_the_room_and_the_walk_after_it_rests(tm
 def test_a_failed_value_read_on_the_cash_room_bid_holds_and_never_walks(tmp_path):
     # #248 review r2 P1: the rung refused for cash never read the official value, so the substituted bid's re-check
     # is the first read; a failed read must hold the thread (#177 P1-2), never walk and rest.
-    team = ValuedTeam(me={**ME, "cash": 290})
+    team = ValuedTeam()
     t, _ = taker(tmp_path, team, FakePublic(), live=True, dealers=3, allow_venue_open=False)
     t.on_tick(clock())
+    team._me["cash"] = 290  # The continuation must re-check room after opening, even if value lookup fails.
     t.convs["abuela"].neg.plan = replace(t.convs["abuela"].neg.plan, step=4)
     her_ask(team, 5000, 800, 30)
     team.fail = True

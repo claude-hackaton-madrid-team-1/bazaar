@@ -145,6 +145,7 @@ class FakeTeam:
 
     def cancel(self, offer_id):
         self.sent.append(("cancel", offer_id))
+        self.offers = [o for o in self.offers if o.get("id") != offer_id]
         return {"id": offer_id, "status": "cancelled"}
 
     def duels(self, done=False):

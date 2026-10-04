@@ -167,7 +167,27 @@ def test_the_final_is_capped_by_what_we_may_still_commit_and_an_unaffordable_lif
     # the reason never carries the room, so the taker's once-per-reason skip row is not repeated every tick
     assert plan_dealer_buy(chato_move(), None, CURVE, LIFT, SURPLUS, room=20).skip == tight.skip
     assert plan_dealer_buy(chato_move(), skip_policy(), CURVE, LIFT, SURPLUS, room=27).skip.startswith("skip: 0 of 6")
-    assert plan_dealer_buy(chato_move(), None, CURVE, OFF, SURPLUS, room=0).move == chato_move()  # lift off: today
+    assert plan_dealer_buy(chato_move(), None, CURVE, OFF, SURPLUS, room=0).move is None
+
+
+def test_ordinary_ladder_skips_unpayable_fills_and_returns_when_hourly_room_recovers():
+    mv = replace(chato_move(ladder=(10, 29, 1)), price=24.0)
+    curve = replace(CURVE, fills=(24,), informative_fills=(24,))
+    # Live regression: 232 spent of 250. An affordable first bid must not start
+    # eight ticks of haggling for a known 24 P fill we cannot pay.
+    assert plan_dealer_buy(mv, None, curve, OFF, SURPLUS, room=250 - 232).move is None
+    assert plan_dealer_buy(mv, None, curve, OFF, SURPLUS, room=250).move == mv
+    cheaper = replace(mv, ref="LAV-02", rarity="common", price=12.0, ladder=(7, 16, 1))
+    cheap_curve = replace(curve, fills=(12,), informative_fills=(12,))
+    assert plan_dealer_buy(cheaper, None, cheap_curve, OFF, SURPLUS, room=18).move == cheaper
+
+
+def test_an_expensive_opening_is_not_proof_that_the_final_is_unaffordable():
+    mv = replace(chato_move(ladder=(10, 29, 1)), price=24.0)
+    curve = replace(CURVE, fills=(33,), informative_fills=())
+    plan = plan_dealer_buy(mv, None, curve, OFF, SURPLUS, room=18)
+    assert plan.move is not None and plan.move.ladder == (10, 18, 1)
+    assert "remaining cash/hourly budget" in plan.move.reason
 
 
 def test_no_price_history_means_no_lift_for_that_dealer():

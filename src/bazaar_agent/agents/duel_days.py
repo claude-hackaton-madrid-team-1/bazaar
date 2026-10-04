@@ -20,8 +20,16 @@ Both signals must come from the CURRENT session (#150 security r2 P2): `?done=tr
 and Saturday and Sunday bring rule variants, so an earlier session's deals never vouch for a later one. Each signal
 records its payload's `session`; the current session is the highest `session` among the live duels this process
 last read (never taken from the file), and none when any of them lacks an int one: then nothing is corroborated.
-A conflict stays for good, every session.
-It persists to a small JSON file, so a restart keeps the verdict; an unreadable file reads as a conflict.
+
+One latch per ROLE and per SESSION (Duels II post-mortem, Sun 4 Oct). The real game's rule is role-dependent: both
+roles get a positive weight, the seller's text says "each delivery day adds this much cash to your side" (a gain) and
+the buyer's "each delivery day costs you this much cash" (a cost). One global latch read the buyer's text as `cost`
+and the first scored seller deal as `signed`, called it a conflict, and kept it for good on the duels volume: 372 of
+372 Duels II offers went out at day 0. So `DaysLatch` keeps a seller switch and a buyer switch, each in its own file,
+and each verdict records the session it was formed in (`formed`): a verdict from another session (or a file without
+one) is dropped as soon as the live duels name the current session. A conflict stays for the rest of its session only.
+A switch persists to a small JSON file, so a restart mid-session keeps the verdict; an unreadable file reads as a
+conflict, which the next session's first live duel clears.
 The caller passes `real_game` (from
 `Settings.simulator`), and decides whether the latch may switch anything on (a guardrail, default off).
 
@@ -29,9 +37,10 @@ The rival's days. Whatever the sign convention, the days a rival puts in its own
 prefers. `rival_days` reads that preference.
 A rival that always sends 0 may simply not handle days, so a 0 preference counts for less than a 10.
 
-The latch is a local file. On Railway, `duel run` and the runtime are separate services: without a shared volume
-each keeps its own, and a redeploy re-arms it. There, set `duel_days_signed` by hand once a person has read the
-first real payload.
+The latch is a local file per role. On Railway, `duel run` and the runtime are separate services, each with its own
+volume and its own files; a redeploy keeps them (the volume stays), the next session clears them. A person who has
+read a real payload can value one role's days signed by hand (`duel_days_signed_roles`): real evidence against that
+role's sign still turns it off.
 
 Our days. Worst case: always 0, as #60 (every day may cost us). Signed: the end that maximises our weight plus
 the rival's estimated one, priced so OUR value stays where the policy put it (`reprice`), never outside our limit.
@@ -50,7 +59,10 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
 
+from bazaar_agent.guardrails import days_signed_for
+
 Verdict = Literal["signed", "reversed", "cost", "unknown", "conflict"]
+ROLES = ("seller", "buyer")
 DAYS_MAX = 10  # RULES.md: delivery day 0 to 10
 PRIOR_WEIGHT = 2.0  # E|weight| when weights are uniform on -4..4 (the simulator's draw): a rival's unknown magnitude
 _GAIN = r"\b(?:gain|gains|gained|earn|earns|earned)\b"
@@ -58,6 +70,8 @@ _LOSS = r"\b(?:lose|loses|lost|loss|losses|cost|costs)\b"
 _PLUS = r"\(\s*\+\s*\)"
 PLUS_GAIN = re.compile(rf"{_GAIN}\s*{_PLUS}|\bpositive\W+(?:\w+\W+){{0,3}}?{_GAIN}", re.IGNORECASE)
 PLUS_LOSS = re.compile(rf"{_LOSS}\s*{_PLUS}|\bpositive\W+(?:\w+\W+){{0,3}}?{_LOSS}", re.IGNORECASE)
+# The real game's seller text (Duels II): "each delivery day adds this much cash to your side", a gain to YOUR side.
+ADDS_TO_YOU = re.compile(r"\b(?:add|adds|added)\b(?:\W+\w+){0,4}?\W+to\s+your\b", re.IGNORECASE)
 LOSS = re.compile(_LOSS, re.IGNORECASE)
 GAIN = re.compile(_GAIN, re.IGNORECASE)
 YOU = re.compile(r"\b(?:you|your|yours)\b", re.IGNORECASE)  # it must speak of OUR weight
@@ -65,7 +79,7 @@ OTHER = re.compile(
     r"\b(?:buyer|buyers|seller|sellers|rival|rivals|counterparty|opponent|other side|other party|they|their|them)\b",
     re.IGNORECASE,
 )
-NEGATION = re.compile(r"\b(?:not|no|never|without|neither|nor)\b|n't\b", re.IGNORECASE)
+NEGATION = re.compile(r"\b(?:not|no|never|without|neither|nor|nothing|none|zero)\b|n't\b", re.I)
 # A direction or a comparative can invert "gain (+)" ("per day earlier", "earn less"): such a text is for a person to
 # read, never for the latch (#150 review P1). Both directions count, so only the plain "per delivery day" form latches.
 DIRECTION = re.compile(
@@ -113,7 +127,8 @@ def evidence(duel: Mapping[str, Any], real_game: bool) -> Verdict:
     """What one payload says about the sign of `your_days_weight`, in v2's convention (a positive weight is primas
     WE gain per day: `duel_v2.value_of`, the guard, the simulator's utility). Only a real two-issue payload counts.
 
-    signed    a gain is tied to "(+)" or "positive" ("gain (+) or lose (-)", the simulator's words)
+    signed    a gain is tied to "(+)" or "positive" ("gain (+) or lose (-)", the simulator's words), or a day
+              "adds ... to your" side (the real game's seller text, Duels II)
     reversed  a cost or loss is tied to "(+)" or "positive": the opposite convention, so the switch stays off
     cost      only a cost or loss, no gain: every day costs, the worst case is the truth
     unknown   anything else: a gain and a loss with no sign tied to either, a text that does not speak of "you",
@@ -125,7 +140,8 @@ def evidence(duel: Mapping[str, Any], real_game: bool) -> Verdict:
         return "unknown"
     if not YOU.search(text) or OTHER.search(text) or NEGATION.search(text) or DIRECTION.search(text):
         return "unknown"  # not about OUR weight, the other side's, negated or with a direction: never read a sign
-    plus_gain, plus_loss = bool(PLUS_GAIN.search(text)), bool(PLUS_LOSS.search(text))
+    plus_gain = bool(PLUS_GAIN.search(text) or ADDS_TO_YOU.search(text))
+    plus_loss = bool(PLUS_LOSS.search(text))
     if plus_gain != plus_loss:
         return "signed" if plus_gain else "reversed"
     if LOSS.search(text) and not GAIN.search(text):
@@ -204,6 +220,8 @@ class DaysSwitch:
     texts: list[int] = field(default_factory=list)  # sessions whose real `days_meaning` text said signed
     scored: list[list[int]] = field(default_factory=list)  # [session, duel, days] of real deals scored signed
     session: int | None = None  # the current session: from the live duels last read, never saved to the file
+    role: str | None = None  # "seller" or "buyer": only that role's payloads count; None reads every role
+    formed: int | None = None  # the session the verdict was formed in: another session's verdict is dropped
 
     @classmethod
     def load(cls, path: Path) -> DaysSwitch:
@@ -229,7 +247,17 @@ class DaysSwitch:
             if isinstance(entries, list)
             else []
         )
-        return cls(verdict, raw.get("duel"), raw.get("text"), path, _union(sessions, []), _union_scored(scored, []))
+        role, formed = raw.get("role"), _int(raw.get("formed"))
+        return cls(
+            verdict,
+            raw.get("duel"),
+            raw.get("text"),
+            path,
+            _union(sessions, []),
+            _union_scored(scored, []),
+            role=role if role in ROLES else None,
+            formed=formed,
+        )
 
     def observe(self, duels: Iterable[Mapping[str, Any]], real_game: bool) -> Verdict:
         """Read every payload, live or finished: its text and, for a finished deal, its score. The first real
@@ -243,18 +271,25 @@ class DaysSwitch:
         if live:
             sessions = [s for duel in live if (s := _int(duel.get("session"))) is not None]
             self.session = max(sessions) if len(sessions) == len(live) else None
+        self._expire()
         for duel in rows:
+            if self.role is not None and duel.get("role") != self.role:
+                continue  # the other role's days point the other way (Duels II): never merged with ours
             said, scored = evidence(duel, real_game), scored_evidence(duel, real_game)
             self._count(duel, said, scored)
+            if self.session is None or _int(duel.get("session")) != self.session:
+                continue  # only the current session's payloads move the verdict (an older deal never does)
             for seen in (said, scored):
                 if seen == "unknown":
                     continue
                 merged = _merge(self.verdict, seen)
                 if self.verdict == "unknown":
-                    self.duel, self.text = duel.get("duel"), duel.get("days_meaning")
+                    self.duel, self.text, self.formed = duel.get("duel"), duel.get("days_meaning"), self.session
                 self.verdict = merged
         disk = self._on_disk()
-        lagging = disk != self._record() and (disk is not None or self.verdict != "unknown")
+        lagging = disk != self._record() and (
+            disk is not None or self.verdict != "unknown" or self.texts or self.scored
+        )
         if (self.verdict, self.corroborated) != (before, before_corroborated) or lagging:
             self._save()  # also when the file lags what we merged (a conflict another process must see: #150 r2)
         return self.verdict
@@ -270,15 +305,33 @@ class DaysSwitch:
         if scored == "signed" and did is not None:
             self.scored = _union_scored(self.scored, [[session, did] if days is None else [session, did, days]])
 
+    def _expire(self) -> None:
+        """Once the live duels name the current session, a verdict formed in another one (or in none: a file from
+        before `formed` was recorded, or an unreadable one) is dropped: each session starts fresh (Duels II's
+        conflict sat on the volume for good)."""
+        if self.session is not None and self.verdict != "unknown" and self.formed != self.session:
+            self.verdict, self.duel, self.text, self.formed = "unknown", None, None, None
+
     def refresh(self) -> None:
         """Merge the verdict on disk (another process may have written it) into this one: the per-session signals
-        as unions. The current session is never read from the file: only this process's live duels set it."""
+        as unions. The current session is never read from the file: only this process's live duels set it.
+        Verdicts formed in different sessions never merge: the newer session's wins, and once the current session
+        is known, only a verdict formed in it counts."""
         if self.path is None:
             return
         disk = DaysSwitch.load(self.path)
-        if disk.verdict != "unknown" and self.verdict == "unknown":
-            self.duel, self.text = disk.duel, disk.text
-        self.verdict = _merge(self.verdict, disk.verdict)
+        disk_verdict = disk.verdict
+        if self.session is not None and disk.formed != self.session:
+            disk_verdict = "unknown"  # another session's verdict: stale
+        elif "unknown" not in (self.verdict, disk_verdict) and disk.formed != self.formed:
+            newer = (disk.formed if disk.formed is not None else -1) > (self.formed if self.formed is not None else -1)
+            if newer:
+                self.verdict, self.duel, self.text, self.formed = "unknown", None, None, None
+            else:
+                disk_verdict = "unknown"
+        if disk_verdict != "unknown" and self.verdict == "unknown":
+            self.duel, self.text, self.formed = disk.duel, disk.text, disk.formed
+        self.verdict = _merge(self.verdict, disk_verdict)
         self.texts = _union(self.texts, disk.texts)
         self.scored = _union_scored(self.scored, disk.scored)
 
@@ -326,7 +379,8 @@ class DaysSwitch:
         os.replace(tmp, self.path)
 
 
-LATCH_FILE = Path("duels") / "days_sign.json"  # under Settings.data_dir (.local, never committed)
+LATCH_FILE = Path("duels") / "days_sign.json"  # the global latch until Sun 4 Oct: no longer read (Duels II's conflict)
+LATCH_FILES = {role: Path("duels") / f"days_sign_{role}.json" for role in ROLES}  # under Settings.data_dir
 REAL_HOST = "bazaar.causaprima.ai"  # config.DEFAULT_URL: the official game
 
 
@@ -335,28 +389,86 @@ def real_game(base_url: str) -> bool:
     return urlparse(base_url).hostname == REAL_HOST
 
 
-def latch(data_dir: Path) -> DaysSwitch:
-    return DaysSwitch.load(data_dir / LATCH_FILE)
+@dataclass
+class DaysLatch:
+    """A seller switch and a buyer switch (the real rule is role-dependent), each with its own file. What `duel run`
+    and the runtime hold; `effective_rules` reads one switch per role."""
+
+    switches: dict[str, DaysSwitch]
+
+    def for_role(self, role: str) -> DaysSwitch:
+        return self.switches[role]
+
+    def observe(self, duels: Iterable[Mapping[str, Any]], real_game: bool) -> str:
+        rows = list(duels)
+        for switch in self.switches.values():
+            switch.observe(rows, real_game)
+        return self.verdict
+
+    @property
+    def verdict(self) -> str:
+        """One line for the logs: `seller=signed buyer=cost`."""
+        return " ".join(f"{role}={self.switches[role].verdict}" for role in ROLES)
+
+    def describe(self) -> str:
+        """Which payload decided each role's verdict, for the log line: `ascii()`, so a lone surrogate in a server's
+        text never fails the stdout write (#165 security P3-1)."""
+        return "; ".join(f"{role} duel {ascii(s.duel)}: {ascii(s.text)}" for role, s in self.switches.items() if s.duel)
+
+    @property
+    def session(self) -> int | None:
+        return self.switches[ROLES[0]].session
+
+    @session.setter
+    def session(self, value: int | None) -> None:
+        for switch in self.switches.values():
+            switch.session = value
+
+    def keep_safer(self, kept: DaysLatch) -> None:
+        """After a failed observe: each role keeps a safer verdict it found, else goes back to `kept`'s switch
+        (never a half-merged `signed` for the policy and the guard)."""
+        for role, switch in self.switches.items():
+            if switch.verdict not in ("cost", "reversed", "conflict"):
+                self.switches[role] = kept.switches[role]
 
 
-def effective_rules(rules: Any, switch: DaysSwitch) -> Any:
-    """The rules a duel tick runs with, one object for the policy and the guard alike:
-    - `duel_days_signed` on when `duel_days_auto` allows it AND two real signals of the current session confirmed
-      the sign (`observe` the live duels first: a switch that has read none knows no session and stays off);
-    - `duel_days_signed` OFF, even when set by hand, once real evidence says otherwise (reversed, cost, conflict);
-    - otherwise the very same rules."""
-    if switch.verdict in ("reversed", "cost", "conflict"):
-        return rules.model_copy(update={"duel_days_signed": False}) if rules.duel_days_signed else rules
-    if rules.duel_days_signed or not switch.signed(bool(getattr(rules, "duel_days_auto", False))):
+def latch(data_dir: Path) -> DaysLatch:
+    return DaysLatch({role: replace(DaysSwitch.load(data_dir / LATCH_FILES[role]), role=role) for role in ROLES})
+
+
+def _switch(latch: DaysLatch | DaysSwitch, role: str) -> DaysSwitch:
+    return latch.for_role(role) if isinstance(latch, DaysLatch) else latch  # a bare switch speaks for every role
+
+
+def effective_rules(rules: Any, latch: DaysLatch | DaysSwitch) -> Any:
+    """The rules a duel tick runs with, one object for the policy and the guard alike. Per role (seller, buyer):
+    - signed when set by hand (`duel_days_signed` for both roles, `duel_days_signed_roles` for one), or when
+      `duel_days_auto` allows it AND two real signals of the current session confirmed that role's sign (`observe`
+      the live duels first: a switch that has read none knows no session and stays off);
+    - NOT signed, even when set by hand, once real evidence of the current session says otherwise for that role
+      (reversed, cost, conflict);
+    - the very same rules object when nothing changes.
+    The result says it with `duel_days_signed` (both roles) and `duel_days_signed_roles` (`days_signed_for`)."""
+    auto = bool(getattr(rules, "duel_days_auto", False))
+    signed: set[str] = set()
+    for role in ROLES:
+        switch = _switch(latch, role)
+        if switch.verdict in ("reversed", "cost", "conflict"):
+            continue
+        if days_signed_for(rules, role) or switch.signed(auto):
+            signed.add(role)
+    if all(days_signed_for(rules, role) == (role in signed) for role in ROLES):
         return rules
-    return rules.model_copy(update={"duel_days_signed": True})
+    label = "both" if len(signed) == len(ROLES) else next(iter(signed), "none")
+    return rules.model_copy(update={"duel_days_signed": label == "both", "duel_days_signed_roles": label})
 
 
-def reads_done(rules: Any, switch: DaysSwitch, real: bool) -> bool:
+def reads_done(rules: Any, latch: DaysLatch | DaysSwitch, real: bool) -> bool:
     """Whether `duel run` reads `?done=true` for scored evidence: only on the real game, only for v2 with
-    `duel_days_auto`, and while the verdict can still change (unknown) or still needs its cross-check (signed)."""
+    `duel_days_auto`, and while a role's verdict can still change (unknown) or still needs its cross-check (signed)."""
     v2 = getattr(rules, "duel_policy", "v1") == "v2"
-    return real and v2 and bool(getattr(rules, "duel_days_auto", False)) and switch.verdict in ("unknown", "signed")
+    open_roles = any(_switch(latch, role).verdict in ("unknown", "signed") for role in ROLES)
+    return real and v2 and bool(getattr(rules, "duel_days_auto", False)) and open_roles
 
 
 # ---------------------------------------------------------------- the rival's days

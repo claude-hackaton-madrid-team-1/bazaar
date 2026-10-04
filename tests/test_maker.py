@@ -158,6 +158,14 @@ def test_best_venue_weighs_activity_against_the_fee_and_never_picks_ours():
     assert best_venue(venues_from({"venues": [OURS]}), "t01", 20) is None  # self_venue
 
 
+def test_best_venue_skips_an_avoided_owner_and_never_avoids_the_house():
+    busy_cheap = venues_from({"venues": [RASTRO, {**CHEAP, "trades": 60}, OURS]})
+    assert best_venue(busy_cheap, "t01", 20, avoid={"t12"}).id == "rastro"  # t12's busy free venue: a rival's
+    assert best_venue(busy_cheap, "t01", 20, avoid=frozenset()).id == "v02"  # nothing avoided: today's choice
+    assert best_venue(venues_from({"venues": [RASTRO]}), "t01", 20, avoid={"world"}).id == "rastro"  # the house
+    assert best_venue(venues_from({"venues": [{**CHEAP, "trades": 60}]}), "t01", 20, avoid={"t12"}) is None
+
+
 def test_a_maker_with_no_venue_posts_nothing(tmp_path):
     team = NoAccept()
     m, lines = maker(tmp_path, team, FakePublic(venues=(OURS,)), live=True)
@@ -229,3 +237,13 @@ def test_an_asset_without_your_value_is_never_listed(tmp_path):
     m, _ = maker(tmp_path, team, live=True)
     m.on_tick(clock())
     assert not [p for p in posted(team) if 5 in p[1].get("assets", [])]
+
+
+def test_best_venue_weighs_a_team_venue_down_without_ruling_it_out():
+    # El Rastro: 41 x (1 - 2/20) = 36.9; a free team venue with 60 trades: 61, or 30.5 at a 0.5 penalty
+    busy_cheap = venues_from({"venues": [RASTRO, {**CHEAP, "trades": 60}, OURS]})
+    assert best_venue(busy_cheap, "t01", 20).id == "v02"  # 0: activity and fee only (today)
+    assert best_venue(busy_cheap, "t01", 20, team_penalty=0.5).id == "rastro"  # its owner would score our trade
+    much_busier = venues_from({"venues": [RASTRO, {**CHEAP, "trades": 120}, OURS]})
+    assert best_venue(much_busier, "t01", 20, team_penalty=0.5).id == "v02"  # weighed, not forbidden: 60.5 > 36.9
+    assert best_venue(venues_from({"venues": [{**CHEAP, "trades": 60}]}), "t01", 20, team_penalty=1.0).id == "v02"

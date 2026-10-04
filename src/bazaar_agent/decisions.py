@@ -15,7 +15,7 @@ import os
 import socket
 import uuid
 from collections.abc import Callable, Iterable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -69,7 +69,19 @@ class DecisionLog:
         data_dir: Path,
         connect: Callable[[], psycopg.Connection] | None = None,
         log: Callable[[str], None] = lambda message: None,
+        *,
+        game_url: str | None = None,
     ) -> None:
+        from bazaar_agent.ledger_pg import official_game
+
+        endpoint = game_url or os.environ.get("BAZAAR_URL")
+        self.context: dict[str, Any] = {
+            "world": ("real" if official_game(endpoint) else "simulator") if endpoint else None,
+            "target": hashlib.sha256(endpoint.rstrip("/").encode()).hexdigest()[:16] if endpoint else None,
+            "service": os.environ.get("RAILWAY_SERVICE_NAME"),
+            "deploy": os.environ.get("RAILWAY_DEPLOYMENT_ID"),
+            "round": None,
+        }
         self.dir = data_dir / "agents"
         self._connect, self._log = connect, log
         self._conn: psycopg.Connection | None = None
@@ -78,9 +90,10 @@ class DecisionLog:
         self._tried_tick: int | None = None
         self._local_ids = itertools.count(1)
 
-    def begin_tick(self, tick: int) -> None:
+    def begin_tick(self, tick: int, round: int | None = None) -> None:
         """While Postgres is down, try it again at most once per tick (a connect can take 10 s)."""
         self._tick = tick
+        self.context["round"] = round
 
     def writer(self) -> str:
         """This log's writer token (`writer`): one per Railway service, else one per data directory."""
@@ -128,6 +141,7 @@ class DecisionLog:
 
     def decide(self, d: Decision) -> int:
         """The decision's id: a `decisions.id` in Postgres, or a negative local id in the JSONL file."""
+        d = replace(d, inputs={**d.inputs, "evidence_context": dict(self.context)})
         conn = self._db()
         policy = {"guardrail": d.guardrail, "allowed": d.guardrail == "allowed"}
         if conn is not None:

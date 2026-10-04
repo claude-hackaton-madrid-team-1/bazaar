@@ -202,7 +202,7 @@ def test_a_down_database_is_retried_every_five_ticks_not_every_tick():
     assert len(tries) == 3  # ticks 1, 6, 11
 
 
-def test_the_live_learner_reads_memory_before_sends_and_pulls_postgres_after():
+def test_live_learner_bootstraps_once_then_reads_memory_before_sends():
     calls: list[bool] = []
 
     class Spy(LearningStore):
@@ -212,10 +212,12 @@ def test_the_live_learner_reads_memory_before_sends_and_pulls_postgres_after():
 
     learner = LiveLearner(Spy())
     learner.blocks(FEED, US, CLOCK)
-    assert calls == [False]  # before the sends: memory only
+    assert calls == [True, False]  # bootstrap persisted blockers before the first send
     learner.flush()
     # after the sends: Postgres, for the next tick (the blockers, then the dealers' memory: agents.dealer_memory)
-    assert calls == [False, True, True]
+    assert calls == [True, False, True, True]
+    learner.blocks(FEED, US, CLOCK)
+    assert calls == [True, False, True, True, False]
 
 
 def test_the_blocker_recall_asks_for_blocker_kinds_only():
@@ -229,7 +231,12 @@ def test_the_blocker_recall_asks_for_blocker_kinds_only():
     learner = LiveLearner(Spy())
     learner.blocks(FEED, US, CLOCK)
     learner.flush()
-    assert seen == [BLOCKER_RECALL_KINDS, BLOCKER_RECALL_KINDS, MEMORY_KINDS]  # the memory pull is its own recall
+    assert seen == [
+        BLOCKER_RECALL_KINDS,
+        BLOCKER_RECALL_KINDS,
+        BLOCKER_RECALL_KINDS,
+        MEMORY_KINDS,
+    ]  # the memory pull is its own recall
     assert "lesson" not in BLOCKER_RECALL_KINDS and "cooloff" in BLOCKER_RECALL_KINDS
 
 

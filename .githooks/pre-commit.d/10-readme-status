@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Keep README.md's live status block and docs/architecture.html current for teammates and agents
+# Keep README.md's project metadata and docs/architecture.html current for teammates and agents
 # (Python stdlib only). Only stages a file when it had no unstaged edits of its own, so a
 # half-staged file is never swept into the commit; otherwise it regenerates in place and asks you
 # to stage it yourself.

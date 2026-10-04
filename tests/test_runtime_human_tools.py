@@ -21,7 +21,7 @@ from tests.test_runtime_hooks import denied, models_of, pre
 from tests.test_runtime_mcp_server import HEADERS, MCP_TOKEN, Clock
 
 APPROVER = "appr-0123456789abcdefghijklmnopqrstuv-XYZ"
-HUMAN = {"approvals", "approve", "revoke"}
+HUMAN = {"approvals", "approve", "revoke", "operator_review", "operator_approve", "operator_execute"}
 RULES = Guardrails(protect_page_sets="LAV,LAT,RET", max_price_rare=95, max_spend_per_game_hour=150)
 TICK = 100  # tests.agent_fakes.clock()
 
@@ -561,3 +561,8 @@ def test_each_human_tool_publishes_a_strict_schema():
     approve = {s.name: s for s in ht.human_specs(Store())}["approve"].schema()["properties"]
     assert (approve["price"]["minimum"], approve["price"]["maximum"]) == (1, 1000)
     assert (approve["ttl_ticks"]["minimum"], approve["ttl_ticks"]["maximum"]) == (1, 480)
+
+
+def test_disabled_hourly_cap_does_not_report_a_false_buy_refusal(tmp_path):
+    b = human_backend(tmp_path, rules=RULES.model_copy(update={"max_spend_per_game_hour": 0}))
+    assert ht.buy_refusals(b, "LAV-09", 90, "rare", TICK, {"assets": []}) == []

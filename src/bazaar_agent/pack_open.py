@@ -2,9 +2,9 @@
 
 A sealed pack is worth what a team would pay for it sealed; opened, it is worth its cards to us (the pack
 EV, `strategy.pack_ev`: our album need from `/api/me`, page-bonus shares, only cards still mintable).
-What we pull never scores by itself (RULES.md: luck); its cards score when they complete a page's value or
-sell to a team that needs them (Marius's B9, #109: "open the free packs, list the duplicates"). So we open
-unless a team has paid more for that pack sealed than it is worth to us opened. Pure: no network.
+What we pull and completing a page never score by themselves (RULES.md: luck); a later team trade
+can score the surplus. Explicit restocking opens for resale inventory; otherwise we keep a pack sealed
+when a team has paid more than its holding EV. Pure: no network.
 """
 
 from __future__ import annotations
@@ -47,11 +47,15 @@ def sealed_price(prints: Sequence[intel.Print], pack: str) -> float | None:
     return float(median(paid)) if paid else None
 
 
-def choose(m: Market, sealed: SealedPack, params: StrategyParams) -> PackChoice:
+def choose(m: Market, sealed: SealedPack, params: StrategyParams, *, restock: bool = False) -> PackChoice:
     if sealed.pack not in m.packs:
         return PackChoice(sealed, "keep", 0.0, None, f"{sealed.pack} is not in the catalog: kept sealed")
     ev, how = pack_ev(m, m.packs[sealed.pack], params.model_copy(update={"pack_ev_album": True}))  # its cards
     resale = sealed_price(m.prints, sealed.pack)
+    if restock and m.packs[sealed.pack]:
+        return PackChoice(
+            sealed, "open", ev, resale, "inventory restock: open for guarded resale; score requires a trade"
+        )
     if resale is not None and resale > ev:
         return PackChoice(sealed, "keep", ev, resale, f"teams pay {resale:g} for it sealed, above its EV {ev:.1f}")
     seen = f"teams paid {resale:g} sealed" if resale is not None else "no team ever bought one sealed"

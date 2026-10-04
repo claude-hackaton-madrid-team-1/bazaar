@@ -14,6 +14,8 @@ listings (counted team-wide in the shared ledger), `max_open_offers_per_team`, o
 
 from __future__ import annotations
 
+import contextlib
+import json
 import sys
 import time
 from collections.abc import Callable, Mapping
@@ -23,7 +25,9 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from bazaar_agent import guardrails as gr
+from bazaar_agent.agents import publication
 from bazaar_agent.agents.dealer import BidPlan, bid_schedule
+from bazaar_agent.agents.market import venues_from
 from bazaar_agent.agents.seller import (
     Listing,
     OfferError,
@@ -36,6 +40,7 @@ from bazaar_agent.agents.seller import (
 from bazaar_agent.config import REPO_ROOT
 from bazaar_agent.guardrails import Action, Context, Verdict, check, context_from
 from bazaar_agent.intel import book_values
+from bazaar_agent.ledger_pg import trade_lock
 from bazaar_agent.llm.steering import SteerDelta
 from bazaar_agent.runtime.backend import Backend
 from bazaar_agent.ticks import Clock, action_budget_s
@@ -135,6 +140,7 @@ class Base:
 
 def _base(b: Backend, clock: Clock, read_at: float) -> Base:
     me, offers = b.holdings.me(clock, clock_read_at=read_at).me, b.my_offers()
+    offers = publication.with_pending(b.ledger, me, offers, str(me.get("id")), clock.tick, clock.t_hours)
     ctx = context_from(me, clock.tick, clock.t_hours, b.ledger, b.rules, b.values)
     if b.rules.max_counterparty_share < 1:  # the share counts what we settled with each team and still offer
         us = str(me.get("id") or "")
@@ -151,6 +157,9 @@ def _plan_listing(
         listing = build(base.me)
     except OfferError as e:
         return Planned(name, _denied(str(e)), clock, read_at)
+    venue = next((v for v in venues_from(b.public.venues(), clock.tick) if v.id == listing.venue), None)
+    if venue is None or venue.status != "open" or venue.owner == str(base.me.get("id")):
+        return Planned(name, _denied("venue is unavailable or owned by us"), clock, read_at)
     if listing.asset_id is not None and listing.asset_id in base.commitments.listed:
         refused = _denied(f"asset {listing.asset_id} is already in one of our open offers")
         return Planned(name, refused, clock, read_at)
@@ -327,6 +336,11 @@ def _listing(b: Backend, args: SellListArgs | SellBidArgs, planned: Planned, clo
         return outcome(planned, "rejected", reason=cap, request=request)
     from bazaar_agent.sdk import BazaarError
 
+    reservation = None
+    if clock is not None:
+        reservation = publication.reserve(
+            b.ledger, clock.tick, clock.t_hours, str(base.me.get("id")), listing.give, listing.want, to=listing.to
+        )
     try:  # no ledger handed to `post`: its spend row is written below, where a failure cannot hide the send
         posted = post(
             b.team,
@@ -338,7 +352,14 @@ def _listing(b: Backend, args: SellListArgs | SellBidArgs, planned: Planned, clo
             commitments=base.commitments,
         )
     except BazaarError as e:
-        return outcome(planned, "failed", method="list_offer", request=request, error_code=e.code)
+        refused = 400 <= e.status < 500 and e.status != 408
+        if reservation is not None and clock is not None and refused:
+            publication.release(b.ledger, reservation, clock.tick, clock.t_hours)
+        return outcome(
+            planned, "rejected" if refused else "failed", method="list_offer", request=request, error_code=e.code
+        )
+    if not posted.verdict.allowed and reservation is not None and clock is not None:
+        publication.release(b.ledger, reservation, clock.tick, clock.t_hours)
     if not posted.verdict.allowed:  # `post` re-checked the guardrails and refused
         return outcome(planned, "rejected", reason=posted.message, request=request)
     if clock is None:
@@ -346,6 +367,10 @@ def _listing(b: Backend, args: SellListArgs | SellBidArgs, planned: Planned, clo
     rows = [("listing", clock.tick, clock.t_hours, listing.price, listing.ref)]
     if listing.kind == "bid":  # an open bid can fill on any later tick: its cash counts as spent now
         rows.append(("spend", clock.tick, clock.t_hours, listing.price, listing.ref))
+    if reservation is not None and posted.offer is not None and isinstance(posted.offer.get("id"), int):
+        rows.append(
+            ("publication_confirm", clock.tick, clock.t_hours, 0, json.dumps([reservation, posted.offer["id"]]))
+        )
     booked = _book(b, rows)
     return outcome(planned, "done", sent=True, method="list_offer", request=request, response=posted.offer, **booked)
 
@@ -475,7 +500,12 @@ EXECUTORS: dict[type[BaseModel], Callable[..., dict[str, Any]]] = {
 def run_write(b: Backend, tool: str, args: BaseModel) -> dict[str, Any]:
     """Check, then act: a dry run says what would be sent; a live write sends only inside this tick's
     action budget, counted from the clock read of the check. One write at a time per process."""
-    with b.write_lock:
+    publication_lock = (
+        trade_lock(b.ledger)
+        if isinstance(args, SellListArgs | SellBidArgs | SellCancelArgs)
+        else contextlib.nullcontext()
+    )
+    with b.write_lock, publication_lock:
         planned = check_write(b, tool, args)
         if not planned.verdict.allowed:
             return outcome(planned, "rejected", reason=str(planned.verdict))

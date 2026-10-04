@@ -74,9 +74,10 @@ negotiates well.
 
 ### Phase 3 — Sunday (15 s ticks, doors close at 15:00): finish and present
 
-- Chamberí is released and round 3 starts at game hour 16.65 (about Sun 11:34). Duels III are about Sun 13:34. All four
-  dealer stalls close and the Grand Final runs at game hour 21.65, scheduled after the doors close; keep every runner
-  up after 15:00 (`docs/briefing.md`, "Windows this weekend").
+- Chamberí is released and round 3 starts at h16.65, Sun 09:00 CEST, with opening and the ladder restart.
+  One game hour is one real hour on Sunday. Duels III is h18.65, about 11:00; all dealer stalls close and
+  Grand Final duels start at h21.65, about 14:00. Scores freeze and doors close at h22.65, 15:00.
+  Pre-opening tests at h14.65/h15 have UNVERIFIED execution; see `docs/briefing.md`, "Windows this weekend".
 - Pitch (#16, 40 %): replay real decisions from `decisions` + Jev logs. Show the order-book view of
   the competition, the learning curve against Abuela, and the executor firewall. Frame it all as
   agent-to-agent invoice negotiation for Causa Prima.
@@ -141,6 +142,7 @@ negotiates well.
 | [RV1](RV1-spec.md) (new) | Rival board: `rival_board` view, one row per other team (trend, strengths and weaknesses against us, what it wants vs what we hold, a deterministic move that never helps a top-5 or near rival unless we gain twice as much); bazaar-live's Rivals screen reads it | 2 | 🔵 v2 merged (#224); v4 in the follow-up PR (feat/rival-board); screen bazaar-live #46 |
 | [MM2](MM2-spec.md) (new) | Venue notice that names the page cards the most other teams miss (team matrix, never a team or a number, only cards we hold, ≤ 240 chars, generic fallback), t10-style positioning with 4 rotating cards, one every 10 ticks (server window) and ≤ 24 per game hour, addressed offers matched only with their addressee, the feed's last `venue.announcement` remembered across restarts, a `wait` refusal honoured; SDK parity audit of the broker vs `starter_broker.py` in the PR body | 1 | 🔵 PR #238 |
 | [TL1](TL1-spec.md) (new) | The Workshop hardened on SA1: /me and offers read again before a craft, a hold on an unnamed settling accept, one shared hourly cap (ledger `taller:` rows, CLI included), the duel/bench guard, the received card credited in the score impact | 2 | 🔵 PR #259 (feat/taller-harden) |
+| [IJ1](IJ1-spec.md) (new) | Prompt-injection attempts recorded with proofs: `injection_attempts` (raw words verbatim, tags, severity, the endpoint that proves it), written after the sends by the taker (feed window, team and dealer threads) and the duel runner; `bazaar injections [--backfill] [--json]`; records only, never reports | 1 | 🔵 PR (feat/injection-log) |
 
 Status legend: ⬜ todo · 🔵 in progress · ✅ done (impl + passing test, evidence pasted) · 🚫 blocked.
 
@@ -638,6 +640,11 @@ snapshots, the chasers per set, the tape. Files: `team_matrix.py`, `team_matrix_
   `max_taller_per_game_hour`, keep one free copy, score impact), the taker step and `bazaar taller` ·
   **Acceptance:** tests/test_taller.py; full gate + sim smoke.
 
+- Step 4 (#244 review follow-up) — merge current main, preserve TL1 shared accounting and fresh/busy checks;
+  reserve craft assets before sending, release only on definite refusal, interlock dealer sells, and validate
+  duplicate/unread copies and dealer-thread inputs. **Acceptance:** tests/test_taller.py, tests/test_taller_harden.py,
+  and the full gate, with the Postgres suite run once serially.
+
 ### SX1 — One sell exception to the last-copy rule: LAT-10 (Omar, Sat 3 Oct ~20:20) ([spec](SX1-spec.md))
 - Step 1 — `protect_page_exceptions` in `guardrails.py` (validator, `protects()`, `ENFORCED_BY`) and GUARDRAILS.md
   · **Acceptance:** tests/test_page_exceptions.py, committed-file tests in tests/test_new_pages.py and
@@ -693,3 +700,167 @@ time-critical: do them directly, no team fan-out.
   `Success: no issues found in 206 source files`. All gates unset DATABASE_URL, BAZAAR_SIM and BAZAAR_ENV_FILE.
   Coverage measured 92%; its approvals setup lock timeout passed on isolated retry, as recorded in memory.
   Unverified: the full suite's skipped test and expected failures. Could-not-do: none for this fix.
+
+### SU1 — Sunday guardrails ([spec](SU1-spec.md))
+- Keep the uncommon ceiling at 30 and rare ceiling at 105, with independent official-value enforcement.
+- Keep the dealer-sell watchdog breaker's 40-game-tick expiry and fresh-evidence tests.
+- Restore duel sending, its tests and request budgets to origin/main.
+- Review the retained changes in parallel, regenerate docs, run the final-head gate and private simulator
+  smoke, push only the feature branch, and update PR #265 with the Honest Implementation Report.
+
+## IJ1 review repair (PR #234, 2026-10-04)
+
+Spec: `IJ1-spec.md`; latest PR review requires a current-main merge and bounded, separate index setup.
+
+1. Merge `origin/main`, retain its trading behavior and task history, regenerate derived docs.
+2. Bound schema setup and skip existing-index DDL; prepare before backfill reads and keep `store()` DDL-free.
+3. Prove startup/backfill concurrency and lock timeout on local Postgres; run the full suite once, the static gate and simulator smoke.
+4. Review code and security independently in parallel, record evidence, commit and push the feature branch.
+
+### IJ1 final review repair (PR #234, 2026-10-04)
+- Merge current `origin/main`, preserve both histories, and regenerate README and architecture output.
+- Keep extraction inside `note_thread`/`note_duels` guards; prove malformed payloads preserve taker sends and duel processing.
+- Derive recorder source from thread kind so inline team messages are recorded once with correct attribution.
+- Retain DDL-free reads, prove a SELECT-only role can list, cover every `HIDING_MARKS` character, and document the unchanged deployed key.
+- Review code/security in parallel; run the full pytest once alone, then the requested gate and isolated smoke; update the PR report and push only the feature branch.
+
+### ST1 — Correct Sunday schedule documentation
+
+- Spec source: local, `01-spec.md` section 7.2 and the quoted live schedule in `docs/briefing.md`.
+- Plan: read the keyless schedule once; correct operator docs and independently review pitch charts;
+  append the finding, regenerate docs/status, run `bazaar rules` and Ruff, then commit and open a PR.
+- Acceptance: Sunday anchor/times match the schedule; pre-opening tests remain UNVERIFIED; generated docs
+  are current; requested checks pass. Evidence and Honest Implementation Report are in the PR body.
+- Architecture follow-up: refresh the JSON status, Sunday events and readiness lists; move the template's
+  eyebrow and clock note into the JSON; regenerate, check rendering/escaping and Ruff, then open a PR.
+
+### SS1 — Sunday simulator and PR #269 corrections ([spec](SS1-spec.md))
+- Merge current `origin/main`, preserving both memory append histories and regenerating README status.
+- Isolate runner and child database targets; validate local administration before connecting.
+- Align schedule clock origins, support the scenario's advertised dealer rarities, and pin the bluff test seed.
+- Review independent slices, run the final integrated gate once with pytest alone, then push `feat/sim-sunday`.
+
+### CI1 — four Depot checks ([spec](CI1-spec.md))
+
+- Scope: unit tests, integration tests, Black formatter and Ruff linter in Depot; remove automated
+  sim smoke and duplicate GitHub test workflows. Keep the simulator script for optional manual use.
+- Step 1: split pytest suites with the `integration` marker and an isolated Postgres 17 + pgvector service.
+- Step 2: update the workflow and documentation in parallel, then regenerate agent docs.
+- Step 3: run the four checks, verify the workflow configuration and complete the CI1 evidence report.
+- Older sim-smoke acceptance entries above are historical; CI1 removes sim smoke as a merge requirement.
+- Status: merged through SR1/PR #272; four-category Depot CI passed before the 4 October rollout. Evidence in CI1-spec.md and SR1-report.md.
+
+### DOC1 — repository documentation cleanup ([spec](DOC1-spec.md))
+
+- Replace the sprawling README with setup and navigation; keep practical operations in the docs.
+- Replace the architecture roadmap with an implementation map, checked against current source.
+- Simplify generated metadata, repair references, verify links and desktop/mobile rendering.
+- Parallel slices: README and its generator; architecture and its generator; independent source audit.
+- Status: merged through SR1/PR #272; evidence in DOC1-spec.md. The separate Claude artifact remains read-only in the available account and requires its owner to republish.
+
+### SR1 — Sunday scoring and operator control ([spec](SR1-spec.md))
+
+- Build gameplay/bench, backend control/evidence, and Live interaction in parallel with disjoint ownership.
+- Integrate runtime/UI contracts. Presentation work was withdrawn by Omar and is excluded from this PR.
+- Run focused checks, integrated gates and independent review; record evidence and push feature branches.
+- Preserve current duel policy, model/auth, shared budgets and coordinator-only safe deployment.
+- Status: merged and deployed on 4 October; final backend gate 5538 passed, 95% coverage previously measured. Live PR #58 has green Depot CI. All four writers resumed and advanced ticks with shared ledgers. Evidence and remaining verification gaps are in [SR1-report.md](SR1-report.md).
+
+### LF1 — Close live-readiness gaps ([spec](LF1-spec.md))
+
+- Audit live score conversion, runtime errors and production voice in parallel.
+- Fix confirmed dealer budget waste and restart-safe, once-only bid refunds without changing hard limits or duel strategy.
+- Correct stale operational guidance and record actual deployment/validation evidence.
+- Run focused regressions and the final gate, obtain independent review, and use a safe live rollout if code changes are required.
+
+### AT1 — Remove amount approval and hourly trading ceilings ([spec](AT1-spec.md))
+
+- Apply Omar's explicit override: disable the amount threshold and global hourly cap with zero values.
+- Keep zero-cap planning bounded by available uncommitted cash; preserve positive-cap behavior.
+- Audit runtime call paths and review safety in parallel; validate disabled approval-service access.
+- Update operating guidance, run the full gate and create a separate PR.
+
+### TT1 — Trading throughput on 15-second ticks ([spec](TT1-spec.md))
+
+- Repair incoming-team inactivity, structured cash negotiation and dealer slot accounting.
+- Apply fresh official value before dealer openings; skip known infeasible final prices.
+- Refresh strategy decisions on state change/failure; honor20tick announcement cooldown.
+- Integrate and test real agent paths, obtain independent reviews and run the full gate once frozen.
+- Use guarded rollout and verify live timing without claiming unobserved trades or score gains.
+
+### MM1 — Profitable market routing and trade visibility ([spec](MM1-spec.md))
+
+- Audit current markets and routing, including Team10, without placing manual trades.
+- Improve autonomous venue selection where current code misses net-profitable opportunities.
+- Show counterparty, venue, terms and precise operation status in Live UI.
+- Validate independently, run integrated checks, safely deploy and verify real data.
+
+### PL1 — Pack inventory replenishment ([spec](PL1-spec.md))
+
+- Enable explicit inventory acquisition within the observed22P pack ceiling and existing quotas.
+- Keep holding EV diagnostic, open packs for guarded resale and rank expected tradable pulls.
+- Verify buy→settle→open→fresh holdings→duplicate listing; obtain independent reviews and final main+PR gate.
+
+### TT2 — Executable asks over unfilled bids ([spec](TT2-spec.md))
+
+- Stop treating an unfilled cheaper bid as an executable alternative to a profitable ask.
+- Retain full pending cash/exposure and settling-card protection until confirmed cancellation.
+- Verify actual public/addressed taker paths, independent review and CI before guarded rollout.
+
+## TR1 — Team negotiation surplus first
+
+- Spec: [TR1-spec.md](TR1-spec.md).
+- One all-page swap search; expected gain before album/rival-rank ties. Existing dealer/team message ordering and commitment safety remain unchanged.
+- Focused 107 ranking/team tests passed after withdrawing message reordering; independent review/full gate and rollout pending coordinator.
+
+- TR1 pack follow-up: cap30 permits observed final24; pack snapshot reads promised asset IDs without reconciling durable reservations. Pack/supply50 and config12 tests pass.
+
+## SI1 — Proactive supply follows complete-page protection
+
+- Spec: [SI1-spec.md](SI1-spec.md).
+- Reuse the existing album protection context in strategy and maker supply filters; preserve fresh guards, prices, reservations and listing budgets.
+- Focused79 tests pass; independent review, full gate and guarded rollout remain coordinator stages.
+## Q1 — Persist dealer quota through the actual game hour
+
+- Spec: [Q1-spec.md](Q1-spec.md).
+- Trusted server refusal uses game-hour expiry, records the observed dealer-wide10-conversation limit, and loads shared blockers before first opening after restart. Pack purchase quota remains separate.
+- Focused51 tests passed; independent review/full gate and coordinator rollout pending.
+
+## MR1 — Move standing asks toward crossing demand
+
+- [Spec and local evidence](MR1-spec.md): route an existing public ask only on strictly better crossing demand, after confirmed cancel and through existing fresh locked publication guards.
+- Actor regression red on main; targeted maker/routing suite and static checks; coordinator owns independent review, integrated gate and guarded rollout.
+
+## PM1 — Sustained preferred-market supply
+
+- [Spec](PM1-spec.md): validated Team4/Team15/Team18 public-ask fallback, crossing demand first, deterministic distribution and sticky one-time migration from nonpreferred markets.
+- 178 focused tests pass; independent reviews and coordinator's integrated gate/guarded deployment required.
+
+### SALES1 — autonomous sales worker and live voice
+
+See [SALES1](SALES1-spec.md). In progress: team outreach ownership, Opus 5.5, OTel, Railway service, live conversations and alliance announcements.
+
+## SC1 — score-first strategy guidance
+- Spec: [SC1-spec.md](SC1-spec.md).
+- Runtime advisers and strategy docs distinguish team surplus, ladder, duels and market points from album inventory estimates.
+- Live strategy shows these scoring mechanisms before album context. Focused backend and frontend checks pass; coordinator review/deployment pending.
+
+## SALES2 — Target real market offers and introduce buyers to existing supply
+
+- [Spec](SALES2-spec.md): structured sale outreach first on eligible low-fee alliance venues; shared reservations coordinate with Maker.
+- When inventory is already listed, introduce matching buyers to exact fresh public quotes without making a second financial promise.
+- Fake actor checks, independent review, integrated gate and guarded coordinator rollout.
+
+## SALES3 — truthful market-focused Sales wording
+- [Spec and evidence](SALES3-spec.md): apply the installed influence skill to Sales prompt/fallback and the actual deterministic public-offer contact; preserve all terms, guards and quote authentication.
+- 60 focused tests pass; independent review and coordinator rollout pending.
+
+## SALES4 — alliance buyer hunting
+- [Spec](SALES4-spec.md): rotate buyer/card outreach, state exact terms, and counter safely on allied markets including v07.
+- Focused tests passed; independent review, CI and runtime verification pending.
+## PACK1 — sales before further packs
+- [Spec](PACK1-spec.md): disable inventory restocking; preserve dealer desk off and prioritize existing Sales team market activity.
+- Existing focused checks, independent review and safe coordinator rollout.
+
+## PACK2 — no further pack purchases
+- [Spec](PACK2-spec.md): zero shared pack quota; regression proves all guarded purchase paths blocked while card buys stay eligible.

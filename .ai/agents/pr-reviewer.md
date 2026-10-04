@@ -34,17 +34,19 @@ call a write endpoint of the game, or run `railway` commands that change anythin
    when you finish.
 2. **Run the gate there** and keep the last line of each: `uv sync`, `uv run black --check src tests scripts`,
    `uv run ruff check src tests scripts`, `uv run ruff format --check src tests scripts`, `uv run mypy src`,
-   `uv run pytest tests -q`, plus any CI job the repo defines (e.g. the simulator smoke job). A red gate on
-   main+PR is P0 even when the PR's own CI was green on an older base.
+   `uv run pytest tests -q`. Verify the four Depot checks in `.depot/workflows/tests.yml`: unit tests,
+   integration tests, Black formatter and Ruff linter. Simulator smoke is optional, not a merge gate.
+   A red required gate on main+PR is P0 even when the PR's own CI was green on an older base.
 3. **Read the diff** (`git diff origin/main...pr<n>-review`) and every caller of a changed function on main.
 4. **Check these areas** (skip the ones the diff cannot touch):
    - Live trading safety: cash floor, hourly spend cap, price caps, 1 accept per tick through the shared
      Postgres ledger, the kill switch (`trading_enabled`, `.local/PAUSE`), dry run unless `BAZAAR_LIVE=1`.
      Nothing may SET `BAZAAR_LIVE` in code or in `.railway/railway.py` (only `preserve()`).
    - Omar's HARD RULES (Sat 3 Oct incident: our only SAL-07 was sold, score 28.25 to 23.98): any diff that sells or swaps
-     away a page's last copy (`protect_page_sets`), sells below the floor (`sell_min_value_ratio` x `your_value`), skips
-     human approval at 60 P or more (`human_approval_above`), or adds an override flag, breaker reset or kill-switch
-     bypass path is a P0.
+     away a page's last copy (`protect_page_sets`), sells below the floor (`sell_min_value_ratio` x `your_value`), or adds
+     an override flag, breaker reset or kill-switch bypass path is a P0. Omar explicitly disabled the amount-based
+     approval threshold and global hourly spend cap on Sun 4 Oct; their zero settings are intentional. Positive
+     configured caps must still work, and disabling these gates must preserve cash and pending commitments.
    - Tick discipline and budget: loops driven by `/api/clock`; at most 5 req/s (bursts 20) and 6 live
      streams for ALL our processes together; a `429` waits for the named tick, never a retry loop.
    - Secrets: no key, token, password or URL with credentials printed, logged, committed, sent to a span,

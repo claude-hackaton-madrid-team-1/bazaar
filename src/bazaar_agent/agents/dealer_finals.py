@@ -49,8 +49,10 @@ class FinalsRow:
     def prices(self) -> list[int]:
         return [p for _, p in self.deals]
 
-    def per_hour(self, max_spend: int) -> int:
+    def per_hour(self, max_spend: int) -> int | None:
         """How many of these deals fit in one game hour's spend cap, at their mean price."""
+        if max_spend == 0:
+            return None
         return math.floor(max_spend / mean(self.prices)) if self.deals else 0
 
 
@@ -159,7 +161,11 @@ def finals(
             f"{mean(prices):.1f}" if prices else "-",
             f"{r.share:.3f}",
             f"{r.real_share:.3f}",
-            str(r.per_hour(settings_rules.max_spend_per_game_hour)),
+            (
+                str(r.per_hour(settings_rules.max_spend_per_game_hour))
+                if settings_rules.max_spend_per_game_hour
+                else "no hourly cap"
+            ),
         )
     console.print(table)
     if show_threads:

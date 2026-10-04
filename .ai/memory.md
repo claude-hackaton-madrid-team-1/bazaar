@@ -1232,3 +1232,357 @@ Both affected tests passed alone (`2 passed in 2.89s`); the final full gate with
 ### [2026-10-04] build-error: PR #263 merge verification separator
 The ad hoc memory-preservation check expected an extra blank line and failed despite retaining both parents' entries.
 The corrected check verifies the exact main prefix and PR-only entry, ignoring only separator newlines; both pass.
+
+### [2026-10-04] finding — Sunday guardrails for 15 s ticks (Omar approved): caps 30/105, dealer_sell auto re-arm
+`max_price_uncommon` 26 -> 30 and `max_price_rare` 95 -> 105 are only ceilings: `official_value_margin` and the server's
+`/api/me/value` still refuse any buy above our value (test_raising_the_card_caps_never_lifts_the_official_value_cap). The
+`dealer_sell` breaker tripped by the watchdog now lapses after `dealer_sell_breaker_reset_ticks` = 40 game ticks via its
+`until_tick` in `guard_breakers` (shared, never wall clock); evidence older than the trip is spent, so only a NEW below-value
+sale re-trips it. Existing sell guards remain binding. Two replay tests pin their historical cap to 26.
+PR #265 is limited to these three guardrail changes; duel sending and request budgets match origin/main.
+
+### [2026-10-04] build-error — PR #265 local test gate stalled in psycopg (SU1)
+The first full gate stopped progressing after 1,838 passed tests and was interrupted after 153.45 s.
+The interrupt trace ended in `psycopg_binary/_psycopg/waiting.pyx:236`; a local PostgreSQL diagnostic
+showed no blocked sessions. Cause unconfirmed; rerun the isolated suite with a 60 s traceback diagnostic.
+
+### [2026-10-03] finding — no team has tried prompt injection on us yet; "pretend" alone is a dealer habit (IJ1)
+`bazaar injections --backfill` over the shared archive (23,548 feed events to tick 1171, 193 stored thread
+messages, 68 duels): 50 tagged texts, 0 attempts. 42 are venue announcements (v05, v07, v04, v20, v21, v24, v02)
+describing their JSON offer format or a priced match (`code_or_json`, `money_command`); 8 are dealer lines, 7 of
+them Pilar or Chato saying "I never pretend otherwise", which `role_play` reads as a role cast. Severity now needs a
+cast ("pretend to be", "act as", "you are now"), so those are weak. Team-thread words were never stored before IJ1
+(the feed carries a team's text as null; ThreadStore keeps only our dealer threads): the taker records them from now.
+
+### [2026-10-04] build-error — existing-index DDL blocks injection recorder startup and backfill (#234)
+`CREATE INDEX IF NOT EXISTS` still takes a ShareLock, so startup can wait behind a writer and a backfill can
+block live inserts until its transaction ends. Check `to_regclass` first, bound setup lock/statement waits
+to 1.5 s, and commit schema setup before backfill reads; `store()` now does no DDL. Local Postgres regression
+tests cover the held-write transaction, missing-index timeout and released setup locks.
+
+### [2026-10-04] build-error — injection setup test shadows the imported conn fixture (#234)
+Ruff F811 on a local connection named `conn` → the module imports that name as a fixture → renamed the local
+connection to `fresh`; the fixture and its callers are unchanged.
+
+### [2026-10-04] build-error — inline team messages were recorded as dealer proofs (IJ1, #234)
+`Taker._keep()` sees every listed thread but labeled each `dealer_thread`; the later team-desk pass then
+recorded the same message under `team_thread`. Derive the source from thread kind and test both passes
+against one buffer. Keep extraction inside the recorder's never-raises guards; malformed metadata must not
+cost a taker move or stop the duel runner's post-send processing.
+
+### [2026-10-04] gotcha — duel exit status does not prove post-send completion (#234)
+`run_per_tick` catches tick exceptions, so a sent move plus CLI exit 0 can hide a failed recorder. The wiring
+regression now checks the final `evals.after_tick` call as well, including an injected extractor TypeError.
+The new test also hit Ruff F811 on the imported `duel_cli` fixture parameter; mark that intentional fixture reuse.
+
+### [2026-10-04] build-error — motion pitch browser and check tooling
+Computer-use and graph reads required unavailable approval; local Chrome failed its sandbox handshake → used the web-access cloud Chrome fallback, muted public reads only. Re-injecting HTML into one document retained its script context and broke the QA harness → navigate to a fresh blank page before each injection. A quoting edit broke the capture self-check → fixed with a triple-quoted JavaScript string. PPTX finalizer lacked RUNTIME_NODE_MODULES → passed the supplied runtime path. No game or Railway writes.
+
+### [2026-10-04] build-error — pitch recording fallback
+WebM capture could not encode without ffmpeg and the system Python lacked Pillow → captured checked real board frames and encoded a GIF with the bundled presentation Python runtime. The source is the muted idle board while doors are closed, not a trade recording.
+
+### [2026-10-04] build-error — PR #268 merge gate caught pitch checker lint
+The full Ruff gate rejected `docs/pitch/motion/check.py` for a missing explicit `zip` strictness and long lines;
+its format check also failed. Added `strict=True` for the two script languages, wrapped the embedded JavaScript,
+and formatted the checker. Its offline self-check passed: 7 slides, 165 seconds, embedded images and source comments.
+### [2026-10-04] finding
+Sunday schedule correction: one keyless GET https://bazaar.causaprima.ai/api/schedule returned
+`now_hours: 13.367`, "Sunday opens" at h16.65 with wall `2026-10-04T09:00:00+02:00` and 15 s ticks,
+and "The Bazaar closes" at h22.65 with wall `2026-10-04T15:00:00+02:00`. One game hour is one real hour.
+"Round 3 starts" and "Chamberí released" are h16.65, 09:00 CEST, with the ladder restart;
+150 P grant h16.7 ~09:03; Market Tests h17/h19/h21 ~09:21/11:21/13:21; Duels III h18.65 ~11:00
+(two issues, 12-tick duels, decay 0.10); finale warning h21.45 ~13:48; all five dealer stalls close
+and Grand Final duels start h21.65 ~14:00; "Scores freeze" h22.65, 15:00. Intermediate wall times
+assume no further pause or schedule change. The hard Market Test h14.65 and Market Test h15 precede
+the opening anchor: whether they fire at opening or are skipped, and their round attribution if fired,
+are UNVERIFIED. The previous Sunday wall-time estimates are superseded; full entries: `docs/briefing.md`.
+
+### [2026-10-04] finding — the schedule's Sunday is h16.65-h22.65 = exactly 1440 ticks of 15 s; /api/clock says t = 13.37
+`/api/schedule` has `day_opens sun` at h16.65 and `day_closes sun` at h22.65 (6 h = 1440 ticks of 15 s), Duels III at h18.65
+(tick 480), Market Tests h17/h19/h21 (ticks 84/564/1044), the finale at h21.65 (tick 1200), the Sunday allowance at h16.7
+(tick 12). But `/api/clock` shows t = 13.367 (Saturday ended early), and the hard Market Test (h14.65) and the h15 one are
+dated BEFORE the doors open: the organisers must jump the clock or fire them at the open (the `sunday` scenario fires them
+at ticks 2 and 19, then continues). If t stays 13.37 at the open, every entry shifts by 3.28 h (787 ticks).
+
+### [2026-10-04] finding — the calibrated Sunday scenario (SIM_SCENARIO=sunday): what it models and how
+`src/bazaar_sim/scenario.py` + `data/sunday.json` (written by `scripts/sim_calibrate.py` from feed_events, dealer_curves,
+duels, competitor_profiles and the keyless API): five dealers (Picaros and Don Ernesto exist only here), measured openings/
+floors/patience per dealer, Picaros repeat a final 18 % of the time (text only: no dealer ever re-priced after a final in
+2 days of data), Pilar's Salamanca +25 % and Abuela's uncommon fever (the size is ASSUMED 1.15: the feed has none), Radio
+Rastro news at the 0.7 h cadence, the Workshop (`POST /api/taller`, three of a rarity -> one of the next), 16 rivals fitted to
+Saturday (5.8 listings/tick, 20-tick lifetime, 38 % cancelled, 0.1 trades/tick, 6 reciprocal pairs) and ~32 assets a team.
+Unmodelled: Pilar/Ernesto buying epics (the sim's dealer sell topics need a page card), bench efficiency per trader (the
+feed has none), real duel rival styles. `SIM_TICK_SECONDS=2` compresses the pace: the game clock still adds 15 s a tick, the
+per-second limits scale x7.5 and latency /7.5 (`SimConfig.compression`), so per-tick budgets compare with the real pace.
+
+### [2026-10-04] gotcha — `catalog.configure()` is process-wide: a scenario world sets released sets and the dealer list
+`World.__init__` calls `catalog.configure(extra_released=..., scenario_dealers=...)`, so two worlds with different scenarios in
+one process step on each other (the simulator runs one). Tests that build a scenario world reset it with `catalog.configure()`.
+
+### [2026-10-04] gotcha — `scripts/tick_profile.py` was stale: `traces.per_tick` gained `agent=`
+`TypeError: per_tick() got an unexpected keyword argument 'agent'` on every profiled agent; the wrapper now forwards kwargs.
+
+### [2026-10-04] finding — our agents on a compressed Sunday (620 ticks at 2 s, Jev OFF, local sim, one key): ticks are not the limit
+`scripts/sim_sunday.py --ticks 620 --tick-seconds 2` and a real-pace sample (90 ticks of 15 s): taker wall p50 0.15 / p95 0.27 s
+of a 1.4 s budget (real pace: 0.55 / 1.05 s of 12.7 s), maker 0.05 s, duels 0.01 s; 0 x 429, 0 dropped, key at 0.74 req/s of
+5. The blockers are ours: the taker sent a write in only 45 of 620 ticks (49 messages, 16 threads, 3 accepts), refusals
+`spend > max_spend_per_game_hour` (182), cash floor (98), `price > official value` (32), `jev undecided` (436: with Jev off the
+taker takes no board ask); the maker posted ONE ask in 620 ticks (few spare copies, `protect_page_sets` all sets), and with no
+venue (`allow_venue_open = false`) mm_points and bench_points stay 0 through all four Market Tests. Score 0 -> 39.6
+(ladder 26.7, duels 11.6 from Duels III at tick 480, negotiating 1.4). The real taker has Jev on: the run could not test that.
+
+### [2026-10-04] build-error — PR #269 Sunday runner isolation and integrated review (SS1)
+Remote admin DSNs reached DROP/CREATE before child socket guards applied; a child also carried DATABASE_URL.
+Validate libpq parameters and loopback hosts before connecting, reject PG environment overrides and real-game
+names, strip DATABASE_URL from children, and force an explicit sim/dead database plus empty env files.
+The main merge conflicted in appended memory and generated README status: retain both histories and regenerate.
+The bluff wiring test randomly chose the valid plain arm; pin its seed, preserving production selection.
+Schedule elapsed now_hours disagreed with absolute at_hours; add the scenario opening origin.
+Scenario dealer menus advertised epic/legendary cards rejected by page-only validation; allow scenario rarities
+while retaining release/menu checks and ordinary simulator behavior.
+Review also caught that `/dev/null` fails the settings loader's regular-file check; all runner children now
+receive the run's actual empty environment file, including the simulator server.
+The runner's advertised `--jev` could not work with stripped credentials and loopback guards; remove that
+unsupported flag and always run these offline profiles with `--no-jev`.
+
+### [2026-10-04] gotcha — CI1 integration tests were skipped or misclassified
+The old CI ran without Postgres; six approvals/watchdog DB tests also lacked the integration marker.
+CI1 marks those six and gives Depot an ephemeral pgvector/Postgres 17 service on loopback port 5433,
+with a failing connection preflight before the integration suite. The localhost hostname matters:
+local-only integration tests compare the database target to DEFAULT_DATABASE_URL or use it directly.
+CI now runs unit tests, integration tests, Black and Ruff only; simulator smoke remains manual.
+GitHub workflow duplicates are removed, and the Depot README writer runs only after main pushes or
+manual dispatch, so opening a PR no longer runs the writer or queues Blacksmith.
+
+### [2026-10-04] build-error — CI1 exposed three integration failures
+Depot run 81tld9gxwq: 143 integration tests passed, three failed. Trust authentication prevented
+the read-only user's old password from being rejected; use the disposable database's normal password
+authentication. Rich wrapped the CLI import message at CI temp-path lengths; normalize whitespace
+in that assertion. Holdings answers before its asynchronous save commits; the snapshot assertion now
+uses the writer's own locked session to wait for the commit. No production code or assertions removed.
+Local isolation harness: BAZAAR_ENV_FILE=/dev/null was rejected because the setting requires a
+regular file; replacing it with an empty temporary file fixed setup. The four holdings synchronization
+fixes passed all 26 holdings DB tests against a private ephemeral Postgres (12.07 s).
+
+### [2026-10-04] gotcha — DOC1 generated documentation drift
+The README refresh copied backlog, memory and activity into a roughly 1,500-line entry point, while the
+architecture generator retained a Saturday roadmap and old worker state. DOC1 keeps only bounded
+project metadata in the README and generates a source-linked implementation overview; operations
+live in `docs/operations.md`. Historical reports stay in their original sources. During validation,
+Ruff disagreed with Black on f-string quote choices; Ruff's formatting passes both tools.
+Review also caught a bare coverage command that could inherit the shared game database: the
+documented command now explicitly selects the local development database. No runtime policy changed.
+### [2026-10-04] gotcha — ST1 architecture Sunday refresh
+The generated architecture still used Saturday's eyebrow and a wrong Sunday hour anchor in its template.
+Move both texts into the status JSON; the single keyless schedule read confirms h16.65 = Sunday 09:00 CEST.
+Keep h14.65/h15 tests explicitly UNVERIFIED at opening. A Sunday-focused axis avoids overlapping event labels.
+
+### [2026-10-04] build-error — operator dispatch and shared publication ledger
+- Shared publication promises initially failed the existing `ledger_kind_check` (only spend/accept/listing). Added an idempotent migration for pending/confirm/release and operator message slots; verified migration twice in disposable local PostgreSQL schemas. No production migration or game write performed.
+- Adding pre-send reservations changed the late-bookkeeping failure tests: their fake failed before dispatch. Fakes now distinguish the pre-send reservation from post-send accounting, preserving both fail-closed dispatch and accurate sent outcomes.
+- Operator proposals bind exact terms, actual `/me` team, endpoint hash and round. Human-only confirmation cannot bypass page-copy/floor guards; ambiguous responses remain claimed and block new operator sends until a unique new exact offer proves publication. Missing offers never prove failure. New decision provenance records unknowns explicitly; legacy rows are not retroactively labelled.
+
+### [2026-10-04] build-error — SR1 integration and presentation
+- Fresh-read reservation tests exposed fake clients retaining cancelled offers; fixed the fakes to mirror confirmed cancellation. Human-approval regressions need the `human_approval` marker because unrelated tests disable that guard.
+- Independent review found operator accepts could reuse a listed asset, own-venue listings lacked a shared check, and definitive HTTP rejection became permanent uncertainty. Added pre-send accept promises, venue validation and separate refusal/unknown outcomes; unknown writes still never retry blindly.
+- Live operator integration initially sent the human credential to read-only tools, dropped monetary preview terms, and rejected successful responses without `reason`. Corrected the credential boundary, displayed/bound full terms, and preserved a neutral submitted status (not settlement).
+- Presentation export needed the bundled runtime module path and explicit local fontconfig; otherwise PDF substituted a serif font. Native PDF renders now match the editable sans-serif slides. Finalizer receipts need unique paths; a local `html.py` shadowed the stdlib and was renamed. Browser QA found one undersized text box; increased its height.
+- Black and Ruff disagreed on nested conditional formatting; replaced the nested expressions with small explicit assignments. A requested runtime test filename did not exist; reran the actual runtime test modules.
+
+### [2026-10-04] build-error — fresh safety reads and Sunday request budget
+- Mandatory fresh holdings/offers under publication locks add two reads per maker attempt and taker accept. The old 71-call ceiling was stale: the base paths need 97 requests with twelve maker posts. Derive the maker attempt cap from the existing 5 req/s budget and clock tick duration: four at 15 seconds, twelve at 30 seconds. Count rejected attempts too; optional desk, Workshop, dealer-sale and operator calls still depend on the shared limiter and tick deadline, not this partial capacity estimate.
+- Flatten reruns now leave confirmed cancellations alone; private decision assertions include explicit provenance. Operator snapshots expose unresolved publication promises before ordinary offers, using fresh holdings under the same lock and never sending a game write. Focused runtime/integration validation: 103 passed; Ruff, Black and mypy passed for the touched runtime modules.
+
+### [2026-10-04] build-error — SR1 final publication regressions
+- Definitive HTTP refusals can release a promise, but HTTP 408 remains uncertain. Maker, team desk, taker and CLI now retain those reservations; tests cover 400/408/503 and unknown outcomes.
+- A private cash acceptance previously reserved spend for only two ticks. It now reserves the gross debit until the exact incoming asset is observed; held dealer conversations retain their promised copy too.
+- Final integration exposed an outdated ledger assertion expecting only accept/spend. The new pre-send publication row is intentional; the test now verifies all three and still proves no repeated accept after recovery.
+- Automatic Workshop crafting now holds the shared publication lock, merges pending copies, and reserves all three inputs before dispatch. Definitive rejection releases them; uncertain results keep them until holdings prove consumption. The existing craft accounting event is zero-value spend, not listing.
+- Black/Ruff disagreed on a multiline pytest fixture parameter's noqa placement; moved the suppression to the actual parameter. Legacy manual Workshop commands still require autonomous writers paused.
+
+### [2026-10-04] build-error — Market Test timeout evidence
+- Final review found HTTP 408 labelled as a refused bench match in the new evidence stream. A timeout does not prove refusal; classify it as unknown consistently with publication safety. A 400/408/503 regression passes with the broker tests (33 passed).
+
+### [2026-10-04] build-error
+LF1 live audit: dealer conversations at ticks 1522–1537 reached 24/23 P finals with only 18 P hourly room → ordinary plans bypassed the room cap when final-lift/policies were absent → apply room to every dealer plan and skip known negotiated fills above it. Independent focused regression: 79 passed. The 160 P MAL-11 bid was verified open, not a stale reservation; do not refund it or raise the cap.
+
+### [2026-10-04] finding
+At tick 1539 rank 9, score 23.63, cash 561; only LAV-04 was a spare. Current-round raw duel/team points were 0 at 1540. Six bench evidence rows at 1516 were historical start replays, not live Sunday books. `book_levels` empty means missing stored evidence, not an empty market. Production Live tick updates and two actual TTS/browser playback samples passed; physical mic/speakers remain untested. LF1-report.md has bounded evidence and limitations.
+
+### [2026-10-04] gotcha
+Sunday schedule changed after the pre-opening audit: round 3 actually started tick 1446. The live schedule read at now_hours 14.037 gives hard bench14.65, bench15, DuelsIII15.367, final duels18.367 and freeze19.367. Replace the obsolete h16.65 opening anchor in active operating guidance; always use current clock/schedule and deploy guard.
+
+### [2026-10-04] build-error
+LF1 documentation update initially searched for a section after the final schedule section → substring lookup failed before saving briefing changes → use the verified end of the file, rerun and regenerate agent docs. Focused regression initially retained an obsolete zero-room expectation and changed denied-plan skip logging → correct the expectation and preserve the existing aggregate skip row; 79 tests pass.
+
+### [2026-10-04] build-error
+LF1 diff check flagged a trailing blank line in briefing.md → documentation replacement retained a second terminal newline → normalize to one newline and rerun diff check.
+
+### [2026-10-04] build-error
+LF1 expiry refund: restart lost the original timestamp; max_tick_seconds=60 backdated a Sunday15s bid's -160 refund outside the hour → recover unique persisted listing/spend timestamp and atomically refuse prior credits. Independent review caught a race in the first lookup-only patch → replace it with transactional/flock check-and-insert; concurrent PG regression proves one credit. Existing wrong-date credit blocks another.
+
+### [2026-10-04] finding
+LF1 coordinator correction tick1592: ledger431 kept price-160 and adopted ledger422 timestamp13.7208; exact three-row predicates/table lock/count checks, fresh real offers/holdings and zero captured matching settlements preceded the update. Hourly spend250→90, row count unchanged; independent reconnect verified paired +/-160. No game action or guardrail change. Taker/maker ordinary15s ticks1552–1582 had no gaps, minimum4.4s/4.8s left; future peak-event load remains unverified.
+
+### [2026-10-04] build-error
+LF1 full gate: two continuation fixtures expected18P opening despite new planner correctly choosing8P common → open with adequate cash, then lower cash for the continuation assertion;19passed. Local PG fixture connection timed out before test body → isolated holdings rerun26passed. Refund integration initially used /dev/null as envfile → use regular emptyfile;5PGpassed. Read-only audit queried nonexistent snapshot.ts → use actual schema. Repair runner passed SecretStr to psycopg before connecting → unwrap in memory without logging; guarded correction then verified. Railway query from unlinked worktree → use linked original checkout and explicit environment/service.
+
+### [2026-10-04] finding
+AT1: Omar explicitly removed amount-based human approval and the global250P/hour purchase cap so automatic trading does not wait for humans. Set human_approval_above=0 and max_spend_per_game_hour=0; use finite available-cash planning when capdisabled. Preserve commitments, solecopies, sell/value/impact protections and game tick/requestlimits. This replaces prior60P amountapproval requirement; it does not authorize unreviewed operator proposals or remove separate team-swap budgets. Independent changedmodule run318passed; finalfullgate inPR.
+
+### [2026-10-04] build-error
+AT1: legacy restart fixtures used hourlycap0 as 'disable trading', conflicting with requested zero/off semantics → use an empty dealer catalog to preserve their no-new-thread scenario. Initial focused tests had two expected config assertion failures until GUARDRAILS0/0 landed; final318passed. Review caught an overbroad comment replacement on three unrelated rules → restore their original zero/off notes.
+
+### [2026-10-04] build-error — TT1 trading throughput
+
+- Cash-counter test initially constructed `BazaarError` with the wrong argument order; corrected the fixture to the SDK signature.
+- `BAZAAR_ENV_FILE=.local/empty-test.env` was rejected because the override requires an absolute regular-file path; reran the rules check with the absolute path successfully.
+- Independent cash-counter review reproduced a late send after slow ledger writes (`expired_before_send=True`, `say_calls=1`). Added a final deadline check after reservations, releasing only a proven unsent promise; `test_cash_counter_drops_tick_expiring_during_reservation` covers it.
+- Dealer continuation tests previously set a low value before opening; now they lower it after opening so they still exercise mid-conversation revalidation. The new opening fixture initially lost its feed through `parts()`; binding `MarketFeed` made the regression exercise the intended negotiated fills.
+- Depot caught one more pre-opening low-value fixture in `test_ladder_tolerance`: it expected a now-infeasible dealer opening. Reproduced locally (`1 failed, 6 passed`), then lowered the value after opening to preserve the mid-thread tolerance assertion.
+
+### [2026-10-04] build-error — #244 conflicts with the Workshop hardening on main
+The merge conflicted in GUARDRAILS.md, taker, CLI and guardrails because TL1 replaced process-local craft counts
+with shared ledger rows and strengthened busy checks. Keep main's shared accounting, enabled Workshop, fresh
+holdings, settling and event guards; reserve consumed copies before the POST and release them only on definite
+refusal. Refusals still count in the shared hourly cap, as on main.
+
+### [2026-10-04] build-error — #244 full test gate aborted in native psycopg
+The single full pytest run exited 134 at about 33% with `Fatal Python error: Aborted`; the active thread was
+in psycopg transaction entry from `holdings._read_and_store`, while the main thread initialized a test schema.
+This resembles the earlier heavy-load faulthandler incident; the native cause is unconfirmed. The user required
+one full run, so it was not repeated. The focused Workshop tests passed (43); the simulator smoke passed.
+A remaining local `bazaar-pytest` backend was idle in transaction with no live client-port owner; it was
+terminated only after checking its port with lsof. Full-suite completion and coverage remain unverified.
+
+### [2026-10-04] finding — MM1 market routing and trade visibility
+- Tick1774: Team10's v07 was open with zero fees and an empty direct book. Its LAT04 offer22486 was on Rastro, not v07. Venue owner must never be displayed as the buyer without settlement/offer evidence.
+- `show.agent_decisions` dropped the recipient of our RET07 bid22565 despite the recorded offer naming t02. Explicit destination/context must survive the private Live projection; a posted offer is not a settled sale.
+
+### [2026-10-04] build-error — MM1
+- Adding a JSON import with an unbounded replacement also changed a function-local import and caused an indentation error; restricted the edit and reused the module import. Cash-counter metadata suite:20passed.
+- MM1 routing tests initially indexed decision status-update rows as if every row had a kind; use `row.get('kind')` when selecting the actual decision. Black/Ruff disagreed on an inline annotation comment; moved the comment above the field.
+
+### [2026-10-04] finding — PL1 pack inventory replenishment
+Omar explicitly prioritised buying/opening packs for team resale over private holding EV. Add pack_restock_enabled with observed22P cap (Abuela thread2670), preserve3/hour, cash, tick and all sale guards. Expected immediately sale-eligible pulls rank inventory; holding EV13.3 versus price22 stays diagnostic and does not claim score. Full fake buy/open/list cycle verifies capability; live conversion remains unverified.
+
+### [2026-10-04] build-error — PL1 fixtures
+Initial regressions used a tuple for string-config protect_page_sets and omitted settle.tick → corrected fixtures to typed contract. Accept test showed only final22, correctly rejected as unchanged opening → supply initial30 then final22 on increasing ticks. Ruff found a long diagnostic string and unordered test import → split literal and sort imports.
+
+### [2026-10-04] finding — TT2 unfilled bids blocked executable asks
+
+At ticks 1813–1814, live taker skipped RET-07 asks at 14 P because our own unfilled bid was 11–12 P. `ask_candidates` treated our proposed price as an executable alternative. TT2 removes that veto, keeps all cash/exposure commitments until cancellation, and excludes only the exact still-open replacement bid's hoped-for card from synthetic holdings. Accepted/queued bids and actual holdings still block another copy.
+
+### [2026-10-04] gotcha — pack replenishment is not holding-value investment
+
+Coordinator's guarded pack negotiation 2670 at ticks 1804–1809 offered 17→20 P; Abuela stayed at 22 P, so no pack was bought. Another CLI attempt around tick 1820 failed `thread_exists` because the live taker owned Abuela's conversation; do not race it. Tick1810 private pack EV was13.3 P. Tick1820 public bid hints covered8/30 mintable commons and9/18uncommons, with gross quoted mean1.30 and5.611 P respectively: Barrio's quoted immediate resale expectation was4.98 P before fees/expiry/protection, not a fill guarantee. Omar clarified that packs replenish inventory for positive-score team sales, not private holding EV or cash ROI; PL1 owns that changed acquisition objective under explicit pack/cash limits.
+
+### [2026-10-04] build-error — TT2 focused test selection and pending holdings
+
+Initial focused commands named nonexistent test_taker_targets.py (and earlier review test_taller_publication.py); no tests ran in those commands. Re-ran actual tracked test files. Keeping the full bid commitment initially also counted its hoped-for card as already held; exclude only that exact still-open bid's expected card while retaining cash/exposure and all real/settling holdings.
+
+### [2026-10-04] finding — TR1: actual team-trade points, not album proximity
+Real snapshots show neg_points 0→3.5 at tick1824, matching settlement1301: RET-07 bought from t02 for14 versus card value17.5. Outcome `score=.2` is the evaluator's surplus ratio, not the official scoreboard delta. The observed -100.2 at1466 follows the round3 reset and must not be called a trade loss. TeamDesk previously searched nearest-page swaps separately and merged the unrestricted plan, then ranked replies/rival rank/page proximity before expected gain (it did not discard every other page). TR1 uses one all-page search and expected exchange surplus first; safeguards and equal-gain ties remain. Team negotiation messages now precede dealer messages after accepts and Workshop reservations; expired dealer work is dropped.
+
+### [2026-10-04] build-error — TR1 planner container type
+Mypy rejected the post-blocklist assignment after simplifying to one plan: its threads are a tuple while the filtered value is a list. Materialize the plan as a list before the existing filter; no strategy change.
+
+### [2026-10-04] build-error — TR1 review caught stale commitments after reordered messages
+Independent review reproduced a dealer bid after a new team cash promise using the tick's old offer list; hourly cap0 does not reserve cash. Before dealer messages, merge durable publication promises into the retained offer view under the shared trade lock, with no extra API calls. Exclude synthetic pending rows from observed-offer evidence so an unknown write cannot reconcile itself. Actor regression reserves30 then refuses dealer20 with only40 cash above the floor.
+
+### [2026-10-04] gotcha — TR1 message-order change withdrawn after review
+The attempted team-before-dealer ordering needs more than merging pending rows: existing local accept commitments can be double-counted, and stale holdings can incorrectly release a new asset+cash promise. Coordinator chose the smaller safe scope: restore original dealer/team ordering and remove its new reconciliation. TR1 ships only one all-page swap plan and expected-gain-first ranking; prior text describing reordered messages is superseded by this entry.
+
+### [2026-10-04] finding — replenishment ran; old 22 P cap blocked the new final
+Coordinator observed autonomous thread2712 opened at tick1878, progressed17→21, then walked at tick1883 because Abuela's final24 exceeded max_price_pack22. No pack purchase was proven. User's explicit replenish-to-trade objective authorizes cap30 (the observed opening), with the existing never-accept-opening behavior, three/hour quota and cash protections retained. TR1 updates the cap; it does not assume the earlier22 quote is permanent or claim packs immediately score.
+
+### [2026-10-04] build-error — pack promise snapshot is read-only
+Review found pack opening passed a stale snapshot to publication reconciliation, which could release a promise for a newly held card or treat a synthetic promise as its own observed offer. The pack filter now reads durable pending asset IDs without reconciling or releasing anything; explicit release rows alone clear those exclusions. First regression caught attempted update of a frozenset; materializing a set fixes the local merge. No game read or write added.
+
+### [2026-10-04] build-error — TR1 local Postgres setup timeout
+Full gate at00ceb581 ran5715passing tests with95%coverage but one holdings fixture could not connect to localhost5433 before its10s timeout. No product assertion failed. Reran the entire holdings DB module against127.0.0.1: `26 passed in15.03s`; Depot full CI passed at the same code head. No runtime code change for this transient local connection failure.
+
+### [2026-10-04] finding — SI1: duplicate count is not sellable inventory
+Tick1943 real inventory contained49 copies, four complete pages (40 retained copies), eight incomplete-page singletons and one spare LAV04 already offered. With protect_complete_pages_only=true, the eight singles can be eligible at safe prices; saying only the duplicate was sellable was wrong. Strategy.sell_moves and maker._leave_desk_copy omitted album context and blocked these proactive listings. They now use the guard's existing complete-page context. No price/floor/protection/rate changes; production fills unverified.
+
+### [2026-10-04] build-error — SI1 fixture API and formatting
+New tests initially referenced nonexistent Target.your_value and Ledger.mark_hands_off; corrected to Target.value and the existing hands-off listing row. Ruff found import order and a long docstring; sorted imports and wrapped prose. Focused79 tests and changed-source mypy then passed.
+### [2026-10-04] finding — Abuela limits conversations separately from pack purchases
+Railway open_thread1884 returned `persona_quota` with “at most 10 conversations per hour with abuela”. This is dealer-wide, not the3-pack purchase quota. Shared learning was present but scoped to sobre_barrio and shortened by60-tick retry cap to1944; at15s the actual next game hour was about2014. Q1 preserves trusted server/game-clock expiry and records10 from the fixed server message; generic legacy/LLM caps remain. It preloads persisted blockers before the first opening after restart. The original database evidence remains intact; coordinator may record a separate corrected typed fact after code rollout.
+
+### [2026-10-04] gotcha — quota audit queries
+The learnings timestamp is created_tick, not tick; qualifying public.learnings avoids duplicate information_schema results from temporary test schemas. Read-only audit queries corrected these assumptions; no production mutation occurred.
+
+### [2026-10-04] finding — MR1 standing asks stranded on their original market
+
+`maker.plan_offers` compared price/floor but never venue, while taker correctly excluded the committed copy. A new crossing bid elsewhere could route a NEW ask but could not move the existing unchanged ask. MR1 reuses cancel-confirm/repost only for strictly better observed crossing net demand, keeping price and guards; no activity-only rotation or forced partner market. Actor regression red on main (`1 failed in 0.25s`), focused final checks in MR1 report. Live conversion remains unverified.
+
+### [2026-10-04] build-error — MR1 fixtures
+
+Initial no-demand fixture removed all buyer evidence, triggering the pre-existing no-longer-target cancellation; retain baseline market events to isolate relocation. Cancellation fakes initially used incorrect SDK exception arguments and raw TimeoutError; use BazaarError(code, message, status), matching the wrapped SDK transport boundary. No production exception handling changed.
+
+### [2026-10-04] finding — PM1 requested partner markets need an explicit fallback
+
+MR1 moves asks only on observed crossing demand; absent bids, lifetime activity still selects Rastro after partner listings expire. Omar explicitly requested sustained Team15/Team18 market presence. PM1 adds validated STRATEGY owner preference `t15,t18`: eligible zero-fee public fallback, stable asset-ID distribution, confirmed-cancel migration from nonpreferred markets. Crossing net demand remains first; already-preferred asks stay put. No new API reads or live fills claimed. `177 passed in 1.79s`; mypy3files and Black/Ruff clean. Initial Ruff import-order error corrected by sorting the existing guardrails import.
+
+### [2026-10-04] finding — PM1 third alliance market verified
+
+Omar added v05; coordinator's fresh SDK venue read verified owner t04, open board, fees0/0. Runtime preference is now t04,t15,t18 (v05/v15/v28); the routing code is unchanged. Added actual15s maker actor regression: three eligible copies yield three public asks, one per alliance venue, every ask above its copy value. Final focused suite `178 passed in 2.18s`. Venue name and explicit live MCP operations belong to coordinator, not this code slice.
+
+### [2026-10-04] gotcha
+Manual alliance announcement through SDK broker.announce was refused with `429 wait` at ticks 2085 and 2096: the keeper occupied the 20-tick announcement slot (public notice 95708 at tick 2095). No alliance notice sent manually; route the campaign through the existing scheduled keeper instead of racing it or pausing trading.
+
+### [2026-10-04] finding
+Sales model smoke test: standard `claude-opus-5-5` returned OK; fast request returned `usage_limit`. Omar explicitly requested standard speed afterward; fast integration removed.
+
+### [2026-10-04] build-error
+Sales review reproduced PAUSE during LLM wording followed by send → cached guard context → recheck pause/deadline immediately before publication and release only proven-unsent reservations. Initial outreach protected-page test used a non-server album shape → corrected fixture and regression.
+
+### [2026-10-04] build-error — SC1 strategy guidance
+Backend rebase conflicted with SALES1 backlog append; retained both task entries. Adviser wording was too restrictive for approved complete-page-only protection; aligned it with current GUARDRAILS. Commit hook caught E501 in the revised shared prompt; wrapped the prompt line, keeping its content.
+
+### [2026-10-04] finding — Sales needs a path for already-listed inventory
+
+Coordinator observed all8 eligible low-value copies already listed, so the guarded free-copy outreach correctly returned no lead. SALES2 preserves those commitments and adds text-only introductions to fresh existing public asks; structured uncommitted sales remain first and now select eligible alliance markets via the shared venue helper. Older own-market asks can fall outside finite feed replay, so promotion reads its public book once rather than claiming absent events mean no supply. No promotion message or inventory holding is itself a scored trade.
+
+### [2026-10-04] build-error — Promotion fixtures and existing commitments
+
+Initial fixture treated StrategyParams as a dataclass → use Pydantic model_copy. Full Sales actor fixture omitted the owned venue from public.venues → include the actual venue snapshot. Independent review reproduced legitimate partner promotion denied because its own existing ask was counted twice → evaluate only that exact ask's copy back into sellable context, retaining every other commitment and all floor/page guards; realistic committed-context regression now passes. Quotes expiring on the current tick are skipped. Coordinator's diagnostic /board route returned404; SDK board uses /api/venues/{id}/offers, no manual route added.
+
+### [2026-10-04] build-error — SALES2 integration checks
+
+New task initially reused historical SP1 spec ID → restored SP1 byte-for-byte and used unused SALES2. Focused command referenced nonexistent test_team_desk_cash.py → actual module is test_team_cash.py. Outreach fixture initially read DecisionLog from root tmp directory → use rec.decisions.dir. Independent review identified separate unknown-open namespaces could retry the same buyer through promotion → share the existing sales_open claim across both paths, with regression. Feed offer IDs resolve known real sellers behind board pseudonyms; unknown identity is never described as verified. Final focused163 tests pass; no live sends performed.
+
+### [2026-10-04] build-error — SALES3 wording format gate
+Ruff and Black disagreed on a multiline string concatenation in the new Sales prompt; use an f-string retaining the shared WORDS_SYSTEM, then verify both formatters. An initial I001 import-order finding was fixed by Ruff. Final focused tests:60pass; guards and deterministic terms unchanged.
+
+### [2026-10-04] build-error — Sunday pack policy left two stale test expectations
+
+PR304 CI deterministically failed two assertions pinning runtime max_price_pack to30 after main's authorized policy changed it to430. Reproduced locally:2failed. Tests now verify the loaded ceiling's exact allowed/denied boundary, pack quota and cash floor, while separately proving conservative constructor defaults remain20/off. Runtime/config unchanged. Focused pack/Pilar suite:26passed0.54s. This was stale expected data, not CI flakiness. Pre-commit caught an overlong updated test docstring; wrapped it before committing.
+
+### [2026-10-04] finding — Sales alliance negotiation gaps
+At ticks2300–2373 Sales recorded26 openings,21 cash offers,6 swaps and21 walks. Repeated RET-07@23 to t18 at2356/2361/2366/2370 and RET-10@54 to t16 at2364/2368 showed outreach bypassed the desk rest window. Cash counters only considered El Rastro even when outreach opened on allied markets. SALES4 persists the existing rest window and retains validated allied venues for cash counters. Public SDK verification: v07 belongs to t10 and is open/zero-fee; t18 venues v18 and v28 are closed.
+
+### [2026-10-04] build-error — alliance slice integration
+StrategyParams is Pydantic, not a dataclass: use model_copy. A sent-words fixture expected seven arguments but actual ACK persistence now includes venue as the eighth: update the fixture. Parallel cooldown code required DeskView.tick_seconds before its focused tests could run; integrated field now uses the live clock.
+
+### [2026-10-04] gotcha — operator sale reconciliation and announcement limits
+Pilar thread3670 settled LAV-09 at56 and Chato3702 settled LAV-06 at15; cash326→397, ladder.193→.256. Picaros3672 closed without a sale, then CLI reservation cleanup lost the publication mutex. After confirming the thread closed, no standing offer and both RET-04 copies still held, released only that operation's pending reservation at2373. A diagnostic Clock import used nonexistent bazaar_agent.clock; corrected to bazaar_agent.ticks. Broker credentials live in KeyVault Postgres, not Maker env; the guarded alliance announcement was refused by the server's20-tick notice limit and was not published. Existing automatic notices continue.
+
+
+### [2026-10-04] build-error — late cash-counter pause and stale alliance assertion
+Independent review reproduced PAUSE created during reservation still allowing a cash counter. Final pre-send check now includes the kill switch; proven-unsent promises are released and cash refunded, while unknown sends stay reserved. Deadline/pause regression passes. Adding t10 exposed one test pinning the previous owner list; updated only its expected configured list. Final focused gate:284 passed in1.97s; Ruff/Black/mypy clean.
+### [2026-10-04] gotcha
+Manual guarded dealer sales initially refused the shared publication mutex: read-only pg_locks identified bazaar-sales holding the session lock while outreach generated words. Coordinated service-local Taker/Maker/Sales pauses let the coordinator reserve dealer threads 3670 and 3672 without bypassing a lock. Maker/Sales resumed; Taker remains paused pending the pack-restock policy rollout. GET /api/clock timed out at ticks 2354–2356 and recovered on the next tick; this policy change adds no SDK/network fix. A diagnostic import of nonexistent card_hunt.enabled failed; corrected to the actual CLI default-on switch and a remote nonsecret environment check (BAZAAR_CARD_HUNT unset).
+
+### [2026-10-04] build-error
+PACK1 review found two deployed-policy tests still asserting restock enabled → update only those expectations to disabled restock/enabled dealer desk; preserve price-cap, cash-floor and quota checks.
+
+### [2026-10-04] finding
+PACK1 user correction: Sales should hunt teams across allied markets, not activate dealer sales. Final policy disables restock only; dealer_sell_enabled remains false and no dealer reclaim is introduced.
+
+### [2026-10-04] finding
+PACK2: max_packs_per_game_hour=0 is a hard stop, unlike max_spend zero-off: guardrails.check unconditionally rejects pack buying when packs_last_hour >= quota. Reused existing quota to obey no-more-packs across autonomous and manual guarded paths; restock remains disabled.
+
+### [2026-10-04] build-error
+PACK2 full CI: 5739 passed, two dealer-buy CLI commitment tests failed before negotiation because their historical cash-policy fixture inherited the new zero pack quota. Pin that fixture to its historical quota3; add explicit quota0 manual CLI refusal regression. Production hard ban stays unchanged.

@@ -86,6 +86,24 @@ The lifecycle of one move (the user's 5.1 → 6):
 6. **Feedback.** Settlements come back through the collector; the learner updates trader profiles
    and learnings; `jev-outcome` records whether each verdict was right.
 
+## 3.1 CI
+
+Depot is the sole PR test CI (`.depot/workflows/tests.yml`). Its four checks are unit tests,
+integration tests against isolated Postgres 17 + pgvector, Black formatting and Ruff linting.
+The pytest `integration` marker splits the two suites. Local typechecking, coverage and generated
+document checks stay in the Definition of Done. Simulator smoke is an optional manual diagnostic.
+The current CI scope is specified in [CI1](CI1-spec.md).
+
+## 3.2 Repository documentation
+
+The README is the setup and navigation entry point; detailed operating instructions live in
+`docs/operations.md` and the linked reference guides. Its generated block contains compact
+project metadata from `pyproject.toml`, not backlog, memory or activity history.
+`docs/architecture.html` describes the implemented system, generated from
+`docs/architecture.status.json` and `scripts/templates/architecture.html.tmpl`.
+Source links substantiate its component inventory; configured services are not an uptime claim.
+Documentation cleanup and verification are tracked in [DOC1](DOC1-spec.md).
+
 ## 4. Components
 
 Python 3.12 package managed with `uv`, at `src/bazaar_agent/`. The vendored kit stays untouched
@@ -291,7 +309,7 @@ Corrected by the rules audit (Sat 3 Oct, commit 8dbf50b7; full text in `docs/bri
 
 - Holding cards, the album and `collection_value` never score by themselves. A card scores only when it moves: a team trade (price minus our `your_value`, into `neg_points`) or a dealer deal (ladder share of that dealer's own range, buying or selling; the opening price scores 0 and the dealer's final scores the whole range).
 - Per round, market-making is about 22.5 × `bench_points` + 7.5 × organic, and negotiating is about ladder 7.5 + duels 7.5 + team trades 15, each part capped at the top-3 mean. The ladder restarts every round.
-- A round starts on the organisers' `round` action in `/api/schedule` (round 2 at tick 160, round 3 at game hour 16.65, about Sun 11:34), not when the doors open.
+- A round starts on the organisers' `round` action. Round 2 started at tick 160; round 3 was observed at tick 1446. The Sunday schedule changed after the pre-opening read. Use live `/api/clock` and `/api/schedule`; the obsolete h16.65 anchor must not drive operations. At `now_hours=14.037`, the next Market Tests are h14.65/h15, Duels III is h15.367 and scores freeze is h19.367. See `docs/briefing.md` for source evidence.
 - Page cards still cost points when sold: breaking a complete page dropped `neg_points` 134.7 → 44.6 (Sat 3 Oct, tick 948; the coordinator's reading is that team-acquired page cards were revalued, not in the audit). Hence the hard rules in `.ai/context.md`.
 
 ### 7.3 Level 2 is the gate to 30 points
@@ -430,3 +448,7 @@ id and Python SDK version when we build it). Today we only keep the seam that ma
 3. **Words.** Templates only, or an LLM for message text (Claude Haiku 4.5 is cheap and fast)?
    Templates are enough for Abuela; duels may benefit from an LLM.
 4. **Merge `docs/openapi-spec`** into main so Plan B has its reference on the default branch.
+
+## AT1 autonomous trading policy update, 4 October
+
+Omar explicitly requested removal of the amount-based human approval threshold and the global 250 P/hour spending cap. Zero disables these two rules; positive values remain enforceable. This supersedes earlier mandatory 60 P approval wording for normal automated trades. Cash, pending commitments, sole page-copy protection, value/impact checks and tick/API limits still apply. Details and tests: `AT1-spec.md`.

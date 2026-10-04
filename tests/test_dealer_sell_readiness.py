@@ -374,15 +374,16 @@ def ctx_with(approved: approvals.ApprovalBook | None) -> gr.Context:
 
 @pytest.mark.human_approval
 def test_a_dealer_sale_at_or_above_the_threshold_needs_an_approval_in_force(tmp_path, asked):
-    top = REAL.human_approval_above
-    assert top > 0  # GUARDRAILS.md turns it on (60 on Sat 3 Oct)
-    hooks = approval_hooks(tmp_path, RARE, ctx_with(book()))
+    top = AT60.human_approval_above
+    hooks = approval_hooks(tmp_path, RARE, ctx_with(book()), AT60)
     for kind in ("dealer_sell", "accept_sell"):  # our ask, and our accept of her bid
         assert hooks.guard(kind, top) == f"needs human approval: SAL-09 sell {top}"
         assert hooks.guard(kind, top + 9) == f"needs human approval: SAL-09 sell {top + 9}"
         assert hooks.guard(kind, top - 1) is None  # under the threshold no human is asked
     assert [(r["card"], r["side"], r["price"]) for r in asked] == [("SAL-09", "sell", top)]  # asked once
-    approved = approval_hooks(tmp_path, RARE, ctx_with(book(approvals.Approval("SAL-09", "sell", None, top, 200))))
+    approved = approval_hooks(
+        tmp_path, RARE, ctx_with(book(approvals.Approval("SAL-09", "sell", None, top, 200))), AT60
+    )
     for kind in ("dealer_sell", "accept_sell"):
         assert approved.guard(kind, top) is None and approved.guard(kind, top + 9) is None
     for wrong in (
@@ -391,7 +392,7 @@ def test_a_dealer_sale_at_or_above_the_threshold_needs_an_approval_in_force(tmp_
         approvals.Approval("SAL-09", "sell", None, top + 10, 200),  # a minimum above our price
         approvals.Approval("SAL-09", "sell", None, top, 100),  # expired at this tick
     ):
-        hooks = approval_hooks(tmp_path, RARE, ctx_with(book(wrong)))
+        hooks = approval_hooks(tmp_path, RARE, ctx_with(book(wrong)), AT60)
         assert all(hooks.guard(kind, top) is not None for kind in ("dealer_sell", "accept_sell")), wrong
 
 
@@ -561,6 +562,17 @@ def test_ladder_deals_counts_our_scored_dealer_deals_of_today_only():
     ]
     assert desk.ladder_deals(events, "t01") == {"picaros": 1, "abuela": 1}
     assert desk.ladder_deals(events, "") == {}
+
+
+def test_ladder_deals_restart_when_a_round_starts_mid_day():
+    # The ladder restarts every round, and a round may start in the middle of a day (Sunday's schedule).
+    events = [
+        {"id": 50, "tick": 40, "type": "day.opened", "payload": {"day": "sun"}},
+        *sell_thread(60, 41, "picaros", 102, 5, 7, 60),  # round 2, this morning
+        {"id": 75, "tick": 75, "type": "round.started", "payload": {"round": 3}},
+        *sell_thread(80, 43, "abuela", 104, 5, 6, 80),  # round 3
+    ]
+    assert desk.ladder_deals(events, "t01") == {"abuela": 1}
 
 
 def test_the_desk_opens_with_the_highest_level_not_yet_full_today(tmp_path):

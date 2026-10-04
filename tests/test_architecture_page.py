@@ -1,30 +1,19 @@
-"""scripts/architecture_page.py: deterministic render, stale detection, status -> CSS mapping."""
+"""The generated architecture stays deterministic, linkable and safe to render."""
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
-import re
 import sys
+from html.parser import HTMLParser
 from pathlib import Path
 from types import ModuleType
+from urllib.parse import unquote, urlsplit
 
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-TEMPLATE = (ROOT / "scripts/templates/architecture.html.tmpl").read_text(encoding="utf-8")
-
-PLAN = """# Plan
-
-## Task index
-
-| Task id | Title | Phase | Status |
-|---|---|---|---|
-| [#21](https://github.com/o/r/issues/21) | Feed capture | 0 | ✅ `bazaar monitor` <b> |
-| N3 (new) | Learner | 1 | ⬜ not started |
-
-## Next
-"""
 
 
 def _load() -> ModuleType:
@@ -38,248 +27,101 @@ def _load() -> ModuleType:
 
 ap = _load()
 
-DATA = {
-    "boxes": {
-        "state": {
-            "title": "STATE",
-            "mark": "✓",
-            "status": "done",
-            "lines": [{"text": "CLI monitor"}, {"text": "album first", "note": True}],
-        },
-        "guardrails": {
-            "title": "Guardrails",
-            "status": "partial",
-            "lines": [{"text": "checked", "mark": "✓", "lead": True}],
-        },
-    },
-    "waiting_on_you": [{"status": "todo", "label": "blocked", "title": "Token <x>", "body": "Set `A=1` & go"}],
-    "being_built": [{"status": "wip", "label": "worker", "title": "Evals", "body": "Online."}],
-    "not_started": [{"status": "part", "label": "gap", "title": "Learner", "body": "Fills tables."}],
-    "links": [{"name": "Taker", "urls": ["https://a.example", "wss://a.example/events"]}],
-    "timeline": {
-        "start": "2026-10-03T09:00",
-        "end": "2026-10-03T21:00",
-        "closed": [["2026-10-03T19:00", "2026-10-03T21:00"]],
-        "markers": [{"at": "2026-10-03T18:00", "kind": "deadline", "label": "Deadline <18>"}],
-        "events": [{"at": "2026-10-03T10:00", "label": "MT", "title": "Market <Test>"}],
-        "lanes": [
-            {
-                "name": "Trading <live>",
-                "bars": [
-                    {
-                        "title": "Fix `#61` <now>",
-                        "start": "2026-10-03T09:00",
-                        "end": "2026-10-03T12:00",
-                        "status": "wip",
-                        "priority": "P0",
-                        "owner": "Marius",
-                    },
-                    {
-                        "title": "Overlap",
-                        "start": "2026-10-03T10:00",
-                        "end": "2026-10-03T11:00",
-                        "status": "done",
-                        "priority": "P2",
-                    },
-                    {
-                        "title": "After",
-                        "start": "2026-10-03T12:00",
-                        "end": "2026-10-03T15:00",
-                        "status": "todo",
-                        "priority": "P1",
-                    },
-                ],
-            }
-        ],
-    },
-}
+
+class Page(HTMLParser):
+    def __init__(self, html: str):
+        super().__init__()
+        self.links: list[str] = []
+        self.ids: list[str] = []
+        self.tags: list[str] = []
+        self.feed(html)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.tags.append(tag)
+        values = dict(attrs)
+        if values.get("id"):
+            self.ids.append(str(values["id"]))
+        if tag == "a" and values.get("href"):
+            self.links.append(str(values["href"]))
 
 
-def test_render_is_deterministic_and_complete() -> None:
-    first = ap.render_page(DATA, PLAN, TEMPLATE)
-    assert first == ap.render_page(json.loads(json.dumps(DATA)), PLAN, TEMPLATE)
-    assert "$" not in re.sub(r"<style>.*?</style>", "", first, flags=re.S)  # no unfilled placeholder
-    assert "STATE ✓" in first and "✓ checked" in first
-    assert 'fill="var(--done)"' in first and 'fill="var(--part)"' in first
-    assert "Token &lt;x&gt;" in first and "<code>A=1</code> &amp; go" in first
-    assert '<a href="https://github.com/o/r/issues/21">#21</a>' in first
-    assert "&lt;b&gt;" in first  # plan text is escaped
-    assert "N3 (new)" in first
-
-
-def test_note_lines_are_spaced_below_the_body() -> None:
-    svg = ap.render_box("state", DATA["boxes"]["state"])
-    ys = [int(y) for y in re.findall(r'y="(\d+)" class="[sn]"', svg)]
-    assert ys == [370 + 78, 370 + 78 + 30]
-
-
-@pytest.mark.parametrize("status", ap.STATUSES)
-def test_every_status_maps_to_a_css_class(status: str) -> None:
-    css = TEMPLATE
-    pill = ap.PILL_CLASS[status]
-    assert f".{pill} " in css, f"no CSS rule for pill class {pill}"
-    token = ap.FILL[status].removeprefix("var(--").removesuffix(")")
-    assert f"--{token}:" in css, f"no CSS token for {token}"
-
-
-def test_unknown_status_and_box_are_rejected() -> None:
-    with pytest.raises(SystemExit):
-        ap.render_box("state", {"title": "X", "status": "nope", "lines": []})
-    with pytest.raises(SystemExit):
-        ap.render_box("ghost", {"title": "X", "status": "done", "lines": []})
-
-
-def test_every_geometry_box_is_seeded_and_every_seeded_box_is_known() -> None:
-    seeded = json.loads((ROOT / "docs/architecture.status.json").read_text(encoding="utf-8"))["boxes"]
-    assert set(seeded) == set(ap.GEOMETRY)
-
-
-def test_check_detects_a_stale_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    out = tmp_path / "architecture.html"
-    monkeypatch.setattr(ap, "OUTPUT", out)
-    assert ap.main(["--check"]) == 1  # missing counts as stale
-    assert ap.main([]) == 0 and out.exists()
-    assert ap.main(["--check"]) == 0
-    out.write_text(out.read_text(encoding="utf-8") + "<!-- edited -->", encoding="utf-8")
-    assert ap.main(["--check"]) == 1
-    assert ap.main([]) == 0 and ap.main(["--check"]) == 0
-
-
-def test_committed_page_is_current() -> None:
+def test_committed_page_is_current():
+    assert ap.render() == ap.OUTPUT.read_text(encoding="utf-8")
     assert ap.main(["--check"]) == 0
 
 
-def test_timeline_places_bars_on_the_axis_and_escapes_text() -> None:
-    page = ap.render_page(DATA, PLAN, TEMPLATE)
-    assert 'class="tl-bar wip" style="left:0.0%;width:25.0%;top:4px"' in page  # 09:00-12:00 of 09:00-21:00
-    assert 'class="tl-bar done" style="left:8.333%;width:8.334%;top:34px"' in page  # overlap -> second row
-    assert 'class="tl-bar todo" style="left:25.0%;width:25.0%;top:4px"' in page  # starts when the first ends
-    assert "Trading &lt;live&gt;" in page
-    lane = {
-        "name": "x",
-        "bars": [
-            {
-                "title": "Fix `#61` <now>",
-                "start": "2026-10-03T09:00",
-                "end": "2026-10-03T21:00",
-                "status": "todo",
-                "priority": "P1",
-            }
-        ],
-    }
-    one = ap.render_timeline({"start": "2026-10-03T09:00", "end": "2026-10-03T21:00", "lanes": [lane]})
-    assert "Fix <code>#61</code> &lt;now&gt;" in one
-    assert "Deadline &lt;18&gt;" in page and "Market &lt;Test&gt;" in page
-    assert 'class="tl-closed" style="left:83.333%;width:16.667%"' in page
-    assert "<script>" not in re.sub(r"<script>\s*\(function \(\) \{.*?</script>", "", page, flags=re.S)
+def test_render_is_deterministic_without_git_or_backlog():
+    assert ap.render() == ap.render()
+    page = Page(ap.render())
+    assert page.tags.count("h1") == 1
+    assert page.tags.count("section") == 6
+    assert "script" not in page.tags
+    assert len(page.ids) == len(set(page.ids))
 
 
-def test_timeline_rejects_bad_input() -> None:
-    lane = {
-        "name": "x",
-        "bars": [
-            {"title": "t", "start": "2026-10-03T09:00", "end": "2026-10-03T10:00", "status": "todo", "priority": "P9"}
-        ],
-    }
-    base = {"start": "2026-10-03T09:00", "end": "2026-10-03T21:00", "lanes": [lane]}
-    with pytest.raises(SystemExit):  # unknown priority
-        ap.render_timeline(base)
-    lane["bars"][0]["priority"] = "P1"
-    lane["bars"][0]["end"] = "2026-10-04T10:00"
-    with pytest.raises(SystemExit):  # outside the axis
-        ap.render_timeline(base)
-    lane["bars"][0]["end"] = "2026-10-03T08:00"
-    with pytest.raises(SystemExit):  # ends before it starts (and outside)
-        ap.render_timeline(base)
-    lane["bars"][0]["end"] = "2026-10-03T10:00"
-    with pytest.raises(SystemExit):
-        ap.render_timeline({**base, "markers": [{"at": "2026-10-03T10:00", "kind": "party", "label": "x"}]})
-    with pytest.raises(SystemExit):
-        ap.render_timeline({**base, "end": "2026-10-03T08:00"})
+def test_navigation_and_repository_sources_resolve():
+    page = Page(ap.render())
+    assert page.links
+    for href in page.links:
+        target = urlsplit(href)
+        if target.scheme:
+            assert target.scheme == "https"
+            continue
+        if target.path:
+            path = (ap.OUTPUT.parent / unquote(target.path)).resolve()
+            assert path.is_relative_to(ROOT), href
+            assert path.exists(), href
+        elif target.fragment:
+            assert target.fragment in page.ids, href
 
 
-def test_a_narrow_bar_label_pushes_the_next_bar_down() -> None:
-    bars = [
-        {
-            "title": "A long title that cannot fit",
-            "start": "2026-10-03T09:00",
-            "end": "2026-10-03T09:30",
-            "status": "todo",
-            "priority": "P1",
-        },
-        {"title": "Next", "start": "2026-10-03T09:45", "end": "2026-10-03T20:00", "status": "todo", "priority": "P1"},
-    ]
-    out = ap.render_timeline(
-        {"start": "2026-10-03T09:00", "end": "2026-10-03T21:00", "lanes": [{"name": "x", "bars": bars}]}
+def test_source_text_is_escaped_before_inline_markup():
+    data = json.loads(ap.STATUS.read_text())
+    data = copy.deepcopy(data)
+    data["flow"][0]["title"] = '<img src=x onerror="alert(1)">'
+    data["flow"][0]["body"] = 'Use `<script>` & "quotes"'
+    data["services"][0]["command"] = '<script>alert("x")</script>'
+    data["references"][0]["label"] = '<svg onload="alert(1)">'
+    rendered = ap.render_page(data, ap.TEMPLATE.read_text())
+    assert '<img src="x"' not in rendered
+    assert "<img src=x" not in rendered
+    assert "<script>" not in rendered
+    assert "<svg onload=" not in rendered
+    assert "<code>&lt;script&gt;</code> &amp; &quot;quotes&quot;" in rendered
+    assert "&lt;svg onload=&quot;alert(1)&quot;&gt;" in rendered
+
+
+@pytest.mark.parametrize(
+    "href",
+    [
+        "javascript:alert(1)",
+        "data:text/html,x",
+        "//example.com/x",
+        "http://example.com",
+        "https:/x",
+        "",
+        "\nhttps://x",
+        "../x\ny",
+        r"..\x",
+    ],
+)
+def test_unsafe_source_links_are_rejected(href: str):
+    with pytest.raises(ValueError, match="Unsupported architecture link"):
+        ap.link({"href": href, "label": "source"})
+
+
+def test_link_attribute_is_escaped():
+    assert ap.link({"href": 'https://example.com/?q="&x=1', "label": "source"}) == (
+        '<a href="https://example.com/?q=&quot;&amp;x=1">source</a>'
     )
-    assert 'class="tl-bar todo out"' in out and "top:34px" in out  # the label of the first occupies row 1
 
 
-def test_hostile_text_never_breaks_out_of_the_timeline() -> None:
-    evil = "\"'><script>alert(1)</script><img src=x onerror=alert(2)>"
-    tl = {
-        "start": "2026-10-03T09:00",
-        "end": "2026-10-03T21:00",
-        "markers": [{"at": "2026-10-03T18:00", "kind": "deadline", "label": evil}],
-        "events": [{"at": "2026-10-03T10:00", "label": evil, "title": evil}],
-        "lanes": [
-            {
-                "name": evil,
-                "bars": [
-                    {
-                        "title": evil,
-                        "start": "2026-10-03T09:00",
-                        "end": "2026-10-03T12:00",
-                        "status": "todo",
-                        "priority": "P1",
-                        "owner": evil,
-                    }
-                ],
-            }
-        ],
-    }
-    out = ap.render_timeline(tl)
-    assert "<script" not in out and "<img" not in out and "onerror=alert(2)>" not in out
-
-
-def test_timeline_rejects_offsets_bad_stamps_bad_bands_and_bad_ticks() -> None:
-    base = {"start": "2026-10-03T09:00", "end": "2026-10-03T21:00", "lanes": []}
-    for bad in (
-        {**base, "start": "2026-10-03T09:00+05:00"},
-        {**base, "end": "not a time"},
-        {**base, "closed": [["2026-10-03T12:00", "2026-10-03T10:00"]]},
-        {**base, "tick_hours": 0},
-        {**base, "tick_hours": 0.5},
-        {**base, "tick_hours": "3"},
-    ):
-        with pytest.raises(SystemExit):
-            ap.render_timeline(bad)
-
-
-def test_timeline_is_optional() -> None:
-    without = {k: v for k, v in DATA.items() if k != "timeline"}
-    assert "No timeline yet" in ap.render_page(without, PLAN, TEMPLATE)
-
-
-def test_a_marker_can_put_its_label_on_the_left_and_rejects_other_sides() -> None:
-    lane = {
-        "name": "L",
-        "bars": [
-            {"title": "t", "start": "2026-10-03T01:00", "end": "2026-10-03T02:00", "status": "todo", "priority": "P1"}
-        ],
-    }
-    tl = {
-        "start": "2026-10-03T00:00",
-        "end": "2026-10-03T12:00",
-        "markers": [
-            {"at": "2026-10-03T06:00", "kind": "deadline", "label": "A", "side": "left"},
-            {"at": "2026-10-03T09:00", "kind": "deadline", "label": "B"},
-        ],
-        "lanes": [lane],
-    }
-    page = ap.render_timeline(tl)
-    assert re.search(r'class="tl-marker deadline end" style="left:50(\.0+)?%"', page)
-    assert re.search(r'class="tl-marker deadline" style="left:75(\.0+)?%"', page)
-    tl["markers"][1]["side"] = "up"
-    with pytest.raises(SystemExit):
-        ap.render_timeline(tl)
+def test_check_detects_and_repairs_stale_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    output = tmp_path / "architecture.html"
+    output.write_text("old")
+    monkeypatch.setattr(ap, "OUTPUT", output)
+    assert ap.main(["--check"]) == 1
+    assert output.read_text() == "old"
+    assert ap.main([]) == 0
+    assert ap.main(["--check"]) == 0
+    assert output.read_text() == ap.render()

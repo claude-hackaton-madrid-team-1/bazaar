@@ -368,6 +368,7 @@ def _decision(conn, tick, kind, inputs, status="done", chosen=None, dry_run=Fals
     )  # fmt: skip
 
 
+@pytest.mark.integration
 def test_run_trips_on_live_rows_only_and_never_twice(pg):
     from bazaar_agent import breakers
 
@@ -385,6 +386,7 @@ def test_run_trips_on_live_rows_only_and_never_twice(pg):
     assert not any(r.active(103) for r in breakers.rows(pg))
 
 
+@pytest.mark.integration
 def test_run_never_shortens_a_human_trip_and_spam_trips_lapse(pg):
     from bazaar_agent import breakers
 
@@ -397,6 +399,7 @@ def test_run_never_shortens_a_human_trip_and_spam_trips_lapse(pg):
     assert row.source == "manual" and row.until_tick is None  # the human's open-ended trip stands
 
 
+@pytest.mark.integration
 def test_run_survives_a_broken_query_and_rolls_back(pg):
     pg.execute("alter table executions rename column sdk_method to gone")  # never public.executions
     pg.commit()
@@ -427,3 +430,22 @@ def test_a_late_swap_trip_lasts_from_the_run_never_lands_lapsed():
     trades = wd.trades_of([swap(80 + i, 100 + i, "t05", (30 + i, "LAV-03"), (40 + i, "SAL-01")) for i in range(5)], US)
     found = [f for f in wd.swap_rules(trades, [], {}, RULES, now=130) if "last copy" not in f.reason]
     assert found and all(f.until_tick == 130 + RULES.watchdog_repeat_trip_ticks for f in found)
+
+
+def test_a_dealer_sell_trip_re_arms_by_itself_after_the_configured_ticks():
+    sell = wd.Finding("dealer_sell", "sold SAL-07 for 29 < its value 118.6", 948)
+    assert wd.trip_until(sell, 950, RULES) == 990  # default 40 game ticks
+    assert wd.trip_until(sell, 950, RULES.model_copy(update={"dealer_sell_breaker_reset_ticks": 0})) is None
+    assert wd.trip_until(wd.Finding("dealer_buy", "x", 1), 950, RULES) is None  # other scopes: a human resets
+    timed = wd.Finding("dealer_sell", "spam", 948, until_tick=970)
+    assert wd.trip_until(timed, 950, RULES) == 970
+
+
+def test_a_lapsed_dealer_sell_trip_stops_refusing_and_the_next_bad_sale_trips_it_again(pg):
+    from bazaar_agent import breakers
+
+    breakers.trip(pg, "dealer_sell", "sold X below value", 100, until_tick=140, source="watchdog")
+    assert any(r.active(139) for r in breakers.rows(pg))
+    assert not any(r.active(140) for r in breakers.rows(pg))  # lapsed in game ticks, no reset call needed
+    assert breakers.trip_and_record(pg, "dealer_sell", "sold Y below value", 150, until_tick=190, source="watchdog")
+    assert any(r.active(151) for r in breakers.rows(pg))

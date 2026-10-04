@@ -37,9 +37,29 @@ def raw_catalog() -> dict[str, Any]:
 
 
 @cache
-def raw_dealers() -> dict[str, dict[str, Any]]:
+def _all_dealers() -> dict[str, dict[str, Any]]:
     data: dict[str, dict[str, Any]] = json.loads((DATA / "dealers.json").read_text(encoding="utf-8"))
     return data
+
+
+SCENARIO_ONLY_DEALERS = ("picaros", "banco")  # Los Pícaros and Don Ernesto exist only in a scenario world
+_extra_released: frozenset[str] = frozenset()
+_scenario_dealers = False
+
+
+def configure(*, extra_released: tuple[str, ...] = (), scenario_dealers: bool = False) -> None:
+    """Process-wide switches a `World` sets when it is built: sets released on top of the catalog's flags, and
+    whether the scenario-only dealers exist. Without a scenario both are off: the catalog is the captured one."""
+    global _extra_released, _scenario_dealers
+    _extra_released = frozenset(extra_released)
+    _scenario_dealers = scenario_dealers
+
+
+def raw_dealers() -> dict[str, dict[str, Any]]:
+    every = _all_dealers()
+    if _scenario_dealers:
+        return every
+    return {k: v for k, v in every.items() if k not in SCENARIO_ONLY_DEALERS}
 
 
 @cache
@@ -63,7 +83,7 @@ def set_codes() -> list[str]:
 
 
 def released_sets() -> list[str]:
-    return [s["id"] for s in raw_catalog()["sets"] if s.get("released")]
+    return [s["id"] for s in raw_catalog()["sets"] if s.get("released") or s["id"] in _extra_released]
 
 
 def set_name(code: str) -> str:

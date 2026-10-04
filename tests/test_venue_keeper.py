@@ -552,14 +552,16 @@ def ran(k, tick, t_hours, open_=True):
     k.on_tick(s.clock, s, window(open_))
 
 
-def test_our_venue_is_announced_once_then_once_every_10_ticks(tmp_path):
+def test_our_venue_is_announced_once_then_once_every_20_ticks(tmp_path):
     broker = AnnouncingBroker()
     k = announcing(tmp_path, broker)
     ran(k, 400, 6.5)
     ran(k, 401, 6.51)
     ran(k, 409, 6.58)
     assert len(broker.notes) == 1
-    ran(k, 410, 6.59)
+    ran(k, 419, 6.66)
+    assert len(broker.notes) == 1
+    ran(k, 420, 6.67)
     assert len(broker.notes) == 2
     note = broker.notes[0]
     assert note.startswith("Team 1 market (v09): 0 % fee.") and len(note) <= vn.ANNOUNCE_MAX_CHARS
@@ -621,3 +623,98 @@ def test_the_notice_prices_a_sale_on_the_house_market_from_its_live_fees_and_say
     )
     [free] = venues_from({"venues": [{**RASTRO, "fee_bps": 0, "fee_per_card": 0}]}, 400)
     assert vk.announcement(vk.PLAN, "v19", free).text == generic
+
+
+# ---------------------------------------------------------------- the Market Test book recorder's wiring
+
+
+@pytest.mark.bench_books_db
+def test_the_real_game_broker_records_the_bench_book_to_postgres(tmp_path, monkeypatch):
+    """The maker's broker hands its recorder a Postgres connection (`bench_books`, read by the dashboard's /venue),
+    world "real", our venue. Breaking this wiring is the "bench_books stays empty" symptom."""
+    from bazaar_agent import db
+
+    calls: list[dict] = []
+    monkeypatch.setattr(db, "connect", lambda *a, **kw: calls.append(kw) or "conn")
+    broker = FakeBroker()  # no bench this tick: the only connect below is the test's own
+    k = keeper(tmp_path, Team(), store={("", "v09"): (KEY, 300)}, broker=broker)
+    k.opened = vn.Opened("v09", SecretStr(KEY), ("postgres",))
+    k.on_tick(snap().clock, None, window())
+    books = k._broker[1].books
+    assert (books.world, books.venue, books.stats_dir) == ("real", "v09", tmp_path / "agents")
+    assert books._connect is not None and books._connect() == "conn"
+    assert calls == [{"app": "bazaar-bench-books", "connect_timeout_s": 3}]
+
+
+@pytest.mark.bench_books_db
+def test_a_simulator_broker_keeps_the_bench_book_in_its_jsonl_only(tmp_path):
+    k = keeper(tmp_path, Team())
+    k.settings = Settings(data_dir=tmp_path, simulated=True)
+    books = k._bench_books("v09")
+    assert books._connect is None and books.world.startswith("sim:")
+
+
+def test_the_suite_never_writes_bench_books_to_a_teammates_database(tmp_path):
+    broker = FakeBroker(bench=[bench_sell("b7-0", 30), bench_buy("b7-1", 40)])
+    k = keeper(tmp_path, Team(), store={("", "v09"): (KEY, 300)}, broker=broker)
+    k.opened = vn.Opened("v09", SecretStr(KEY), ("postgres",))
+    k.on_tick(snap().clock, None, window())
+    assert k._broker[1].books._connect is None  # tests/conftest.py no_bench_books_db
+
+
+def test_alliance_notice_uses_scheduled_publisher_without_renaming_or_extra_reads(tmp_path):
+    from bazaar_agent.strategy import load_strategy
+
+    broker = AnnouncingBroker()
+    k = announcing(tmp_path, broker)
+    k.params = lambda tick: load_strategy().params.model_copy(update={"preferred_sell_venue_owners": "t04,t15,t18"})
+    k.matrix = lambda tick: None  # the invitation needs no private matrix or extra API reads
+    partners = [ours(venue=vid, owner=owner) for vid, owner in (("v05", "t04"), ("v15", "t15"), ("v28", "t18"))]
+    for tick in (400, 401, 419, 420):
+        s = snap(tick=tick, t_hours=6.5 + (tick - 400) / 120, venues=(RASTRO, ours(), *partners))
+        k.on_tick(s.clock, s, window())
+    assert len(broker.notes) == 2
+    assert broker.notes[0].startswith("Alianza v05 / v15 / v28.")
+    assert "copias únicas de páginas completas" in broker.notes[0]
+    assert all(len(text) <= 280 for text in broker.notes)
+    assert k.team.opened == [] and k.plan == vk.PLAN
+    (tmp_path / "PAUSE").touch()
+    s = snap(tick=440, t_hours=6.9, venues=(ours(), *partners))
+    k.on_tick(s.clock, s, window())
+    assert len(broker.notes) == 2
+
+
+def test_alliance_notice_only_promotes_known_open_free_partners():
+    from dataclasses import replace
+
+    valid = venues_from({"venues": [ours(venue="v15", owner="t15")]})[0]
+    s = snap(venues=())
+    s = replace(
+        s,
+        venues=[
+            valid,
+            replace(valid, id="v01", owner="t01"),
+            replace(valid, id="v02", owner="t02"),
+            replace(valid, id="v03", status="closed"),
+            replace(valid, id="v04", fee_bps=1),
+            replace(valid, id="v05", fee_per_card=1),
+            replace(valid, id="v06", pending_fee=(100, 0)),
+            replace(valid, id="v07", house=True),
+            replace(valid, id="v08 forged claim"),
+        ],
+    )
+    note = vk.alliance_notice(s, "t01,t15")
+    assert note is not None and note.text.startswith("Alianza v15.")
+    assert vk.alliance_notice(s, "none") is None
+    many = replace(s, venues=[replace(valid, id=f"v{i:08d}") for i in range(100)])
+    assert len(vk.alliance_notice(many, "t15").text) <= 280
+
+
+def test_alliance_falls_back_to_existing_notice_when_no_partner_is_open(tmp_path):
+    from bazaar_agent.strategy import load_strategy
+
+    broker = AnnouncingBroker()
+    k = announcing(tmp_path, broker)
+    k.params = lambda tick: load_strategy().params
+    ran(k, 400, 6.5)
+    assert len(broker.notes) == 1 and broker.notes[0].startswith("Team 1 market (v09)")

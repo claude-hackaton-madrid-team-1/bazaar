@@ -250,6 +250,7 @@ def main(ctx=None):
     phoenix_data = volume("phoenix-data", region=REGION, sizeMB=VOLUME_MB)
     duels_data = volume("bazaar-duels-data", region=REGION, sizeMB=VOLUME_MB)
     taker_data = volume("bazaar-taker-data", region=REGION, sizeMB=VOLUME_MB)
+    sales_data = volume("bazaar-sales-data", region=REGION, sizeMB=VOLUME_MB)
     maker_data = volume("bazaar-maker-data", region=REGION, sizeMB=VOLUME_MB)
     mcp_data = volume("bazaar-mcp-data", region=REGION, sizeMB=VOLUME_MB)
 
@@ -280,16 +281,26 @@ def main(ctx=None):
     # The autonomous agents share ONE accept per tick with bazaar-duels through the Postgres ledger
     # (duels first; the maker never accepts). Both are LIVE since Sat 2026-10-03 01:45 Madrid: BAZAAR_LIVE=1
     # was set by hand on each service, and agent() preserve()s it (delete the variable to go back to dry run).
-    taker = agent("bazaar-taker", "agent taker", taker_data)
+    # BAZAAR_ADDRESSED_OFFERS (set by hand; unset = asks): which offers other teams address to us the taker takes
+    # (asks | all | off, agents/taker.py `TakerConfig.addressed`). Declared preserve() so an apply keeps it.
+    taker = agent("bazaar-taker", "agent taker", taker_data, {"BAZAAR_ADDRESSED_OFFERS": preserve()})
     # BAZAAR_BENCH_POLICY=edge (set by hand; unset or exact: today's matching) has our venue's broker match the
     # Market Test with the bench edge (agents/bench_edge.py), behind BAZAAR_BENCH_GUARD_MARGIN (default 10; none =
     # unguarded). Both declared preserve() so an apply keeps the hand-set values.
     bench_env = {
         "BAZAAR_BENCH_POLICY": preserve(),
         "BAZAAR_BENCH_GUARD_MARGIN": preserve(),
+        "BAZAAR_COUNTER_BIDS": preserve(),  # set by hand to 0 to stop countering bids addressed to us
+        "BAZAAR_OUTREACH_BIDS": preserve(),  # set by hand to 0 to keep every bid public
         "BAZAAR_BENCH_MATCH_PROBE": preserve(),  # once: ONE non-crossing match probe (agents/bench_match_probe.py)
     }
     maker = agent("bazaar-maker", "agent maker", maker_data, bench_env)
+    sales = agent(
+        "bazaar-sales",
+        "agent sales",
+        sales_data,
+        {"BAZAAR_LLM_RUNTIME": preserve(), "OTEL_SERVICE_NAME": "bazaar-sales"},
+    )
     # The runtime tools for teammates' Claude Code, over MCP: bearer token, rate limits, DRY RUN.
     mcp = mcp_server("bazaar-mcp", mcp_data)
     sim = simulator()
@@ -302,6 +313,7 @@ def main(ctx=None):
             duels,
             taker,
             maker,
+            sales,
             mcp,
             sim,
             live,
@@ -309,6 +321,7 @@ def main(ctx=None):
             duels_data,
             taker_data,
             maker_data,
+            sales_data,
             mcp_data,
         ],
     )
