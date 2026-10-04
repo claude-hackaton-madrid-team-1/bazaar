@@ -10,6 +10,8 @@ Once per game tick (`ticks.run_per_tick`, never wall-clock; on Railway inside th
   3. the exact maximum-surplus matching (`agents/matcher.py`), bench first, at most
      `max_matches_per_tick` matches; with `bench_policy = "edge"` (BAZAAR_BENCH_POLICY=edge, default exact) the
      bench pairs come from `agents/bench_edge.py` instead (the exact plan unless the edge beats it by a margin);
+     with `bench_policy = "probe"` the exact plan goes out unchanged and then a few bench pairs whose quotes do
+     not cross, priced between the quotes (`agents/bench_probe.py`): refused if the server checks quotes;
   4. `guardrails.check()` on a `broker_match`: the kill switch, the pause file and `allow_venue_open`;
   5. each match logged to `decisions` (and, live, its request to `executions`), the tick window checked
      right before every send: a match that would land late is dropped, never sent late. Sends are paced
@@ -38,9 +40,24 @@ from typing import Any, Literal
 from pydantic import ValidationError
 
 from bazaar_agent import telemetry as tm
+from bazaar_agent.agents.bench_capture import BenchBooks
 from bazaar_agent.agents.bench_edge import DEFAULT_GUARD_MARGIN, BenchEdge, edge_plan, expiries_in
+from bazaar_agent.agents.bench_lookahead import BenchLookahead
+from bazaar_agent.agents.bench_match_probe import PROBE_ENV, PROBE_MODES, pick_probe
 from bazaar_agent.agents.bench_model import PRIORS
-from bazaar_agent.agents.matcher import BrokerBook, Fee, Match, Quotes, plan_matches, quotes_from
+from bazaar_agent.agents.bench_posterior import PosteriorPolicy
+from bazaar_agent.agents.bench_probe import BenchProbe
+from bazaar_agent.agents.matcher import (
+    BrokerBook,
+    Fee,
+    Match,
+    Quote,
+    Quotes,
+    feasible,
+    match_price,
+    plan_matches,
+    quotes_from,
+)
 from bazaar_agent.agents.runtime import Recorder, TickWindow, window_for
 from bazaar_agent.agents.seller import offers_in
 from bazaar_agent.config import REPO_ROOT
@@ -60,13 +77,32 @@ class BrokerConfig:
     # How the Market Test bench is matched. "exact" (today): the maximum quoted-surplus matching, which pairs the
     # same traders as the free stall. "edge": `agents/bench_edge.py` (PR #84), the maximum *estimated true* surplus
     # from per-trader limit bands, sent only when it beats the exact plan by `bench_guard_margin` estimated primas
-    # (-inf: whenever it has at least as many pairs, #84 as it was).
+    # (-inf: whenever it has at least as many pairs, #84 as it was). "probe": the exact plan, then a few
+    # non-crossing bench pairs priced between their quotes (`agents/bench_probe.py`). "lookahead":
+    # `agents/bench_lookahead.py`, the exact plan unless another matching of quote-crossing pairs (hold, re-pair, one
+    # more pair) earns more true surplus in rollouts over the fitted bench model. "lookahead_safe" /
+    # "lookahead_bold": `agents/bench_posterior.py`, the quote-crossing set most likely to end the session above the
+    # stall in worlds sampled from each trader's posterior; a session under the stall scores 0 (safe) or half of
+    # Saturday's fitted 0.5 x E/Es (bold).
     bench_policy: BenchPolicy = "exact"
     bench_guard_margin: float = DEFAULT_GUARD_MARGIN
+    # BAZAAR_BENCH_MATCH_PROBE=once: after the exact matches, ONE request ever for a pair whose quotes do not cross
+    # (`agents/bench_match_probe.py`); needs `probe_claim` on the agent, else nothing is sent.
+    match_probe: bool = False
 
 
-BenchPolicy = Literal["exact", "edge"]
-BENCH_POLICIES: dict[str, BenchPolicy] = {"exact": "exact", "edge": "edge"}
+BenchPolicy = Literal["exact", "edge", "probe", "lookahead", "lookahead_safe", "lookahead_bold"]
+BENCH_POLICIES: dict[str, BenchPolicy] = {
+    "exact": "exact",
+    "edge": "edge",
+    "probe": "probe",
+    "lookahead": "lookahead",
+    "lookahead_safe": "lookahead_safe",
+    "lookahead_bold": "lookahead_bold",
+}
+# `PosteriorPolicy.below`: bold weighs a session under the stall at half of Saturday's fitted 0.5 x E/Es; at the full
+# fit it gambles more and does worse under both rules (900 books a world, docs/research/2026-10-04/bench-search.md)
+POSTERIOR_BELOW: dict[str, float] = {"lookahead_safe": 0.0, "lookahead_bold": 0.5}
 BENCH_POLICY_ENV = "BAZAAR_BENCH_POLICY"
 BENCH_MARGIN_ENV = "BAZAAR_BENCH_GUARD_MARGIN"
 UNGUARDED = ("none", "-inf", "-infinity")  # BAZAAR_BENCH_GUARD_MARGIN values for no guard at all
@@ -74,8 +110,14 @@ NOT_WIRED = ("BAZAAR_BENCH_CROSS", "BAZAAR_BENCH_PRESET")  # #84's other switche
 
 
 def bench_text(config: BrokerConfig) -> str:
-    """How the broker matches the bench, for the keeper's lines: `exact`, `edge (guard margin 10 P)` or
-    `edge (unguarded, as #84)`."""
+    """How the broker matches the bench, for the keeper's lines: `exact`, `probe (exact + non-crossing probes)`,
+    `edge (guard margin 10 P)` or `edge (unguarded, as #84)`."""
+    if config.bench_policy == "probe":
+        return "probe (exact + non-crossing probes)"
+    if config.bench_policy == "lookahead":
+        return "lookahead (exact unless a crossing matching earns more in rollouts)"
+    if config.bench_policy in POSTERIOR_BELOW:
+        return f"{config.bench_policy} (posterior samples; the stall's pairs unless others end above it more often)"
     if config.bench_policy != "edge":
         return "exact"
     margin = config.bench_guard_margin
@@ -97,10 +139,10 @@ def bench_config_from_env(
     base: BrokerConfig, environ: Mapping[str, str] | None = None, log: Callable[[str], None] | None = None
 ) -> BrokerConfig:
     """The bench options of a broker with no command line (the maker's venue keeper on Railway), case-insensitive:
-    BAZAAR_BENCH_POLICY (`exact` or `edge`) and BAZAAR_BENCH_GUARD_MARGIN (estimated primas; `none` or `-inf`: no
-    guard). Unset or empty: `base` unchanged. Any other value is IGNORED, loudly (its length only, never its text),
-    and `base` stays: a typo must never stop the maker, which also posts our offers. #84's BAZAAR_BENCH_CROSS and
-    BAZAAR_BENCH_PRESET are not wired here: set, they are reported as ignored."""
+    BAZAAR_BENCH_POLICY (`exact`, `edge`, `probe` or `lookahead`) and BAZAAR_BENCH_GUARD_MARGIN (estimated primas;
+    `none` or `-inf`: no guard). Unset or empty: `base` unchanged. Any other value is IGNORED, loudly (its length
+    only, never its text), and `base` stays: a typo must never stop the maker, which also posts our offers. #84's
+    BAZAAR_BENCH_CROSS and BAZAAR_BENCH_PRESET are not wired here: set, they are reported as ignored."""
     env = os.environ if environ is None else environ
     say = log or (lambda line: None)
     config = base
@@ -108,7 +150,10 @@ def bench_config_from_env(
     if value:
         policy = BENCH_POLICIES.get(value)
         if policy is None:
-            say(f"broker: IGNORED {BENCH_POLICY_ENV} ({len(value)} chars; exact or edge); it stays {base.bench_policy}")
+            say(
+                f"broker: IGNORED {BENCH_POLICY_ENV} ({len(value)} chars; {', '.join(BENCH_POLICIES)}); "
+                f"it stays {base.bench_policy}"
+            )
         else:
             config = replace(config, bench_policy=policy)
     value = (env.get(BENCH_MARGIN_ENV) or "").strip().lower()
@@ -121,6 +166,11 @@ def bench_config_from_env(
             )
         else:
             config = replace(config, bench_guard_margin=margin)
+    value = (env.get(PROBE_ENV) or "").strip().lower()
+    if value in PROBE_MODES:
+        config = replace(config, match_probe=True)
+    elif value:
+        say(f"broker: IGNORED {PROBE_ENV} ({len(value)} chars; once); the match probe stays off")
     for name in NOT_WIRED:
         if (env.get(name) or "").strip():
             say(f"broker: IGNORED {name}: not wired in this broker (quote-crossing pairs only, normal priors)")
@@ -209,7 +259,7 @@ class BenchSessions:
         for run in [r for r, s in self.open.items() if s.in_book and r not in runs]:
             self._finish(run, tick)
 
-    def record(self, m: Match, tick: int, refused: bool) -> None:
+    def record(self, m: Match, tick: int, refused: bool, surplus: int | None = None) -> None:
         session = self._start(m.sell.item.removeprefix("bench:"), tick)
         if session is None:
             return
@@ -218,7 +268,10 @@ class BenchSessions:
             session.refused += 1
         elif (key := (str(m.sell.id), str(m.buy.id))) not in session.matched:
             session.matched.add(key)
-            session.pairs, session.surplus = session.pairs + 1, session.surplus + m.surplus
+            session.pairs, session.surplus = (
+                session.pairs + 1,
+                session.surplus + (m.surplus if surplus is None else surplus),
+            )
 
 
 # ---------------------------------------------------------------- the agent
@@ -262,18 +315,34 @@ class BrokerAgent:
         now: Callable[[], float] = time.monotonic,
         hub: Any = None,
         sleep: Callable[[float], None] = time.sleep,
+        books: BenchBooks | None = None,
     ) -> None:
         self.broker, self.team, self.us, self.rules = broker, team, us, rules
         self.live, self.log, self.events, self.now, self.sleep = live, log, events, now, sleep
         self.config = config or BrokerConfig()
         self.edge = BenchEdge(PRIORS["normal"])  # used only with bench_policy = "edge"
         self.edge_pairs: set[tuple[str, str]] = set()  # this tick's bench pairs that come from the edge itself
+        self.probe = BenchProbe()  # used only with bench_policy = "probe"
+        self.lookahead = BenchLookahead()  # used only with bench_policy = "lookahead"
+        self.lookahead_pairs: set[tuple[str, str]] = set()  # this tick's bench pairs the lookahead chose over exact
+        self.posterior: PosteriorPolicy | None = None  # used only with bench_policy = "lookahead_safe" / "_bold"
+        self.posterior_pairs: set[tuple[str, str]] = set()  # this tick's bench pairs the posterior planner sent
+        self.bench_runs: set[str] = set()  # "b87-": bench runs seen, to spot their rows in the book's settlements
+        self.probe_pairs: set[tuple[str, str]] = set()  # this tick's bench pairs that are probes (quotes do not cross)
         self.stats_dir = stats_dir
+        self.books = books if books is not None else BenchBooks(None, stats_dir, self.log)  # JSONL only
         self.rec = Recorder("broker", decisions, live, log, hub)
         self.sessions = BenchSessions(self._session_closed)
         self.pairs_seen: set[frozenset[str]] = set()
         self.done: set[str] = set()  # offer ids the venue accepted in a match: never proposed again
         self.history: list[TickStats] = []
+        # The one-time claim of the match probe (`KeyVault.claim_once`): None means no durable ledger, so no probe.
+        self.probe_claim: Callable[[str, int], bool] | None = None
+        self.probed = False  # this process already spent the probe: never asks twice
+        self.probe_retry_tick = 0  # a claim not taken (held elsewhere, or unreadable) is asked again from this tick
+        self._bench_present = False
+        self._bench_events: set[int] = set()
+        self._bench_settlements: set[str] = set()
 
     def on_tick(
         self,
@@ -302,20 +371,110 @@ class BrokerAgent:
         fresh = [q for q in found.quotes if str(q.id) not in self.done]
         quotes = Quotes(fresh, found.skipped, found.ours)
         self.sessions.observe_book({q.item.removeprefix("bench:") for q in quotes.quotes if q.bench}, clock.tick)
+        if bench := sorted((q for q in found.quotes if q.bench), key=lambda q: str(q.id)):
+            # the whole bench book, every tick: arrivals, quote drift and departures are only seen here
+            self.log(f"tick {clock.tick} broker: bench book " + " ".join(f"{q.id}:{q.side[0]}{q.price}" for q in bench))
+        self._log_bench_settlements(clock.tick, book, found.quotes)
+        if book.bench_offers or self._bench_present:
+            self.books.evidence(
+                clock.tick,
+                "book",
+                {"offers": book.bench_offers, "fee_bps": book.fee_bps, "fee_per_card": book.fee_per_card},
+            )
+        self._bench_present = bool(book.bench_offers)
         plan = self._plan(quotes, Fee(book.fee_bps, book.fee_per_card), clock.tick, book)
         stats = TickStats(clock.tick, self.live, skipped=quotes.skipped, ours=quotes.ours)
         run = _Run(clock, window, stats)
         for m in plan:
             self._match(run, m)
+        self._probe(run, quotes, plan, Fee(book.fee_bps, book.fee_per_card))
         self.pairs_seen |= run.pairs
+        self.books.record(clock.tick, book.bench_offers, book.fee_bps, book.fee_per_card)  # after the sends, no request
         stats.distinct_pairs, stats.pairs_so_far = len(run.pairs), len(self.pairs_seen)
         self._tick_done(stats)
+
+    def _probe(self, run: _Run, quotes: Quotes, plan: list[Match], fee: Fee) -> None:
+        """The one match probe, after the tick's exact matches went out (so it can never cost one). Never raises."""
+        if not self.config.match_probe or self.probed or not self.live or run.clock.tick < self.probe_retry_tick:
+            return
+        if not run.window.open():
+            return
+        tick = run.clock.tick
+        try:
+            used = {str(q.id) for m in plan for q in (m.sell, m.buy)}
+            ages = {r: tick - s.first_tick for r, s in self.sessions.open.items()}
+            found = pick_probe(quotes.quotes, used, fee, run_age=ages)
+            if found is None:
+                return
+            self._send_probe(run, found.match, found.gap)
+        except Exception as e:  # the probe is an extra: never lose the tick to it
+            self.log(f"tick {tick} broker: match probe failed ({type(e).__name__}); nothing sent")
+
+    def _send_probe(self, run: _Run, m: Match, gap: int) -> None:
+        tick = run.clock.tick
+        verdict = check(Action("broker_match"), broker_context(self.rules, run.clock), self.rules)
+        if not verdict.allowed:
+            return  # held by the guardrails: the claim stays free for a later tick
+        if self.probe_claim is None or not self.probe_claim("bench_match_probe", tick):
+            self.log(f"tick {tick} broker: match probe not sent (no durable claim: taken, or the ledger is unreadable)")
+            self.probe_retry_tick = tick + 5  # not our claim, or Postgres is down: ask again later, never send
+            return
+        self.probed = True  # claimed: whatever the answer, this is the only one
+        request = {"sell": m.sell.id, "buy": m.buy.id, "price": m.price}
+        line = (
+            f"PROBE sell {m.sell.id} (ask {m.sell.price}) x buy {m.buy.id} (bid {m.buy.price}) at {m.price}, "
+            f"quotes {gap} short of crossing"
+        )
+        did = self.rec.decide(
+            tick,
+            "bench_probe",
+            line,
+            inputs={"ask": m.sell.price, "bid": m.buy.price, "fee": m.fee, "gap": gap, "bench": True, **request},
+            reason="one live probe: does the server match on hidden limits when the quotes do not cross?",
+            guardrail=str(verdict),
+            chosen=True,
+            status="approved",
+            move=request,
+        )
+        if not run.window.open():
+            self.rec.decisions.settle(did, "expired")
+            self.log(f"tick {tick} broker: match probe claimed but the tick window closed; the one probe is spent")
+            return
+        answer = self.rec.send(did, tick, "broker_match_probe", request, lambda: self.broker.match(**request))
+        err = self.rec.last_error
+        outcome = {
+            "accepted": answer is not None,
+            "status": self.rec.last_status,
+            "code": self.rec.last_code,
+            "message": (err.message[:200] if err is not None else None),
+            "extra": (err.extra if err is not None else None),
+            "body": answer,
+        }
+        self.books.evidence(tick, "probe_response", {"request": request, **outcome})
+        self.rec.decide(
+            tick,
+            "bench_probe",
+            f"probe answer: {'ACCEPTED' if answer is not None else 'turned down'} "
+            f"{json.dumps(outcome, default=str)[:300]}",
+            inputs={**request, "answer": outcome},
+            reason="the server's full answer to the one match probe",
+            guardrail="allowed",
+            chosen=False,
+            status="done",
+            move=request,
+        )
 
     def _plan(self, quotes: Quotes, fee: Fee, tick: int, book: BrokerBook) -> list[Match]:
         """Today's exact matching of everything or, with `bench_policy = "edge"`, the edge's bench plan (the exact
         one unless the edge beats it by its guard margin) and the exact public matching with the slots left."""
         cap = self.config.max_matches_per_tick
-        self.edge_pairs = set()
+        self.edge_pairs, self.probe_pairs, self.lookahead_pairs, self.posterior_pairs = set(), set(), set(), set()
+        if self.config.bench_policy in POSTERIOR_BELOW:
+            return self._posterior_plan(quotes, fee, tick, book, cap)
+        if self.config.bench_policy == "probe":
+            return self._with_probes(plan_matches(quotes.quotes, fee, cap), quotes, fee, tick, cap)
+        if self.config.bench_policy == "lookahead":
+            return self._with_lookahead(quotes, fee, tick, book, cap)
         if self.config.bench_policy != "edge":
             return plan_matches(quotes.quotes, fee, cap)
         bench = [q for q in quotes.quotes if q.bench]
@@ -335,14 +494,115 @@ class BrokerAgent:
         public = [q for q in quotes.quotes if not q.bench]
         return picked.matches + plan_matches(public, fee, cap - len(picked.matches))
 
-    def _observe_feed(self, tick: int, events: list[Event] | None = None) -> None:
-        if events is not None:
-            self.sessions.observe_events(events, tick)
-            return
-        if self.events is None:
-            return
+    def _with_lookahead(self, quotes: Quotes, fee: Fee, tick: int, book: BrokerBook, cap: int) -> list[Match]:
+        """The lookahead's bench plan (the exact one unless rollouts favour another crossing matching), then the
+        exact public matching with the slots left. A failing planner sends the exact plan for the tick."""
+        bench = [q for q in quotes.quotes if q.bench]
+        exact = plan_matches(bench, fee, cap)
         try:
-            self.sessions.observe_events(self.events(), tick)
+            expires = max(expiries_in(book.bench_offers, tick).values(), default=None)
+            picked = self.lookahead.plan(
+                bench, fee, tick, exact, expires, lambda line: self.log(f"tick {tick} broker: {line}")
+            )[:cap]
+        except Exception as e:  # never lose the tick to the lookahead: today's matching instead, and it restarts
+            self.log(f"tick {tick} broker: bench lookahead failed ({type(e).__name__}); exact matching this tick")
+            self.lookahead = BenchLookahead()
+            picked = exact
+        chosen = {(str(m.sell.id), str(m.buy.id)) for m in picked}
+        if chosen != {(str(m.sell.id), str(m.buy.id)) for m in exact}:
+            self.lookahead_pairs = chosen
+        public = [q for q in quotes.quotes if not q.bench]
+        return picked + plan_matches(public, fee, cap - len(picked))
+
+    def _posterior_plan(self, quotes: Quotes, fee: Fee, tick: int, book: BrokerBook, cap: int) -> list[Match]:
+        """The posterior planner's bench pairs (only quote-crossing ones, priced as the exact plan prices), then the
+        exact public matching with the slots left. A failing planner loses nothing: today's matching that tick, and
+        its models restart."""
+        below = POSTERIOR_BELOW[self.config.bench_policy]
+        if self.posterior is None or self.posterior.below != below:
+            self.posterior = PosteriorPolicy(below=below)
+        bench = {str(q.id): q for q in quotes.quotes if q.bench}
+        public = [q for q in quotes.quotes if not q.bench]
+        try:
+            ends = {str(o.get("id")): o.get("expires_tick") for o in book.bench_offers}
+            offers = [
+                {"id": i, ("want" if q.side == "sell" else "give"): {"cash": q.price}, "expires_tick": ends.get(i)}
+                for i, q in bench.items()
+            ]
+            picked = []
+            for sell, buy, _ in self.posterior({"tick": tick, "bench_offers": offers}):
+                s, b = bench.get(str(sell)), bench.get(str(buy))
+                if s is not None and b is not None and feasible(s, b, fee):
+                    price = match_price(s.price, b.price, fee)
+                    picked.append(Match(s, b, price, fee.of(price)))
+        except Exception as e:  # never lose the tick to the planner
+            self.log(f"tick {tick} broker: bench posterior failed ({type(e).__name__}); exact matching this tick")
+            self.posterior = None
+            return plan_matches(quotes.quotes, fee, cap)
+        picked = picked[:cap]
+        self.posterior_pairs = {(str(m.sell.id), str(m.buy.id)) for m in picked}
+        for run, choice in self.posterior.last_choice.items():
+            if choice.get("deviates") and choice.get("tick") == tick:
+                self.log(
+                    f"tick {tick} broker: bench posterior leaves the stall's pairs in {run}: score "
+                    f"{choice['pick']:.3f} against {choice['stall']:.3f} ({len(picked)} pair(s))"
+                )
+        return picked + plan_matches(public, fee, cap - len(picked))
+
+    def _log_bench_settlements(self, tick: int, book: BrokerBook, found: list[Quote]) -> None:
+        """The book's `settlements` rows that name a bench run we saw: whether a queued probe really settled (the
+        POST only says `queued`) may show nowhere else before the session's score."""
+        self.bench_runs |= {q.item.removeprefix("bench:") + "-" for q in found if q.bench}
+        rows = (book.model_extra or {}).get("settlements") or []
+        named = [json.dumps(r, sort_keys=True) for r in rows if any(run in json.dumps(r) for run in self.bench_runs)]
+        for row in named:
+            if row not in self._bench_settlements:
+                self.books.evidence(tick, "settlement", {"settlement": json.loads(row)})
+                self._bench_settlements.add(row)
+        if named:
+            self.log(f"tick {tick} broker: bench settlements {len(named)}: " + " | ".join(named)[:600])
+
+    def _with_probes(self, exact: list[Match], quotes: Quotes, fee: Fee, tick: int, cap: int) -> list[Match]:
+        """The exact plan, untouched and first, then the probes in the slots left: a probe never displaces,
+        delays or reprices an exact match, and a failing probe planner leaves the exact plan alone."""
+        try:
+            bench = [q for q in quotes.quotes if q.bench]
+            for m, accepted in self.probe.resolve(bench):
+                self.log(
+                    f"tick {tick} broker: bench probe {m.sell.id}×{m.buy.id} at {m.price} "
+                    + (
+                        "GONE from the book (settled, or removed while queued)"
+                        if accepted
+                        else "DROPPED (traders back in the book)"
+                    )
+                    + f" · {self.probe.summary(m.sell.item)}"
+                )
+            probes = self.probe.plan(bench, exact, fee, cap - len(exact))
+        except Exception as e:  # never lose the tick to the probe
+            self.log(f"tick {tick} broker: bench probe failed ({type(e).__name__}); exact matching only")
+            self.probe = BenchProbe(self.probe.config)
+            return exact
+        self.probe_pairs = {(str(m.sell.id), str(m.buy.id)) for m in probes}
+        if probes:
+            self.log(
+                f"tick {tick} broker: bench probe {len(probes)} non-crossing pair(s) after {len(exact)} exact: "
+                + ", ".join(f"{m.sell.id}@{m.sell.price}×{m.buy.id}@{m.buy.price} at {m.price}" for m in probes)
+            )
+        return exact + probes
+
+    def _observe_feed(self, tick: int, events: list[Event] | None = None) -> None:
+        try:
+            events = events if events is not None else (self.events() if self.events else [])
+            self.sessions.observe_events(events, tick)
+            for event in events:
+                eid = event.get("id")
+                if (
+                    event.get("type") in ("bench.started", "bench.finished")
+                    and isinstance(eid, int)
+                    and eid not in self._bench_events
+                ):
+                    self.books.evidence(tick, "session", dict(event))
+                    self._bench_events.add(eid)
         except Exception as e:  # the feed is a hint for session bounds; the book still drives matching
             self.log(f"tick {tick} broker: feed unavailable ({type(e).__name__}); sessions from the book")
 
@@ -363,8 +623,9 @@ class BrokerAgent:
 
     def _match(self, run: _Run, m: Match) -> None:
         tick, stats = run.clock.tick, run.stats
+        probe = (str(m.sell.id), str(m.buy.id)) in self.probe_pairs
         stats.proposed += 1
-        stats.proposed_surplus += m.surplus
+        stats.proposed_surplus += 0 if probe else m.surplus
         # checked per match, not per tick: a pause file touched mid-tick stops the very next send
         verdict = check(Action("broker_match"), broker_context(self.rules, run.clock), self.rules)
         status: Status = "rejected" if not verdict.allowed else "approved" if run.window.open() else "expired"
@@ -392,7 +653,19 @@ class BrokerAgent:
             reason=(
                 "bench edge: maximum estimated true surplus (limit bands from quotes), midpoint price"
                 if (str(m.sell.id), str(m.buy.id)) in self.edge_pairs
-                else "maximum-surplus matching (exact), midpoint price"
+                else (
+                    "bench probe: quotes do not cross, price between them (accepted only if limits are checked)"
+                    if probe
+                    else (
+                        "bench lookahead: crossing matching with the most true surplus in rollouts, midpoint price"
+                        if (str(m.sell.id), str(m.buy.id)) in self.lookahead_pairs
+                        else (
+                            "bench posterior: the crossing set most likely to end above the stall (sampled limits)"
+                            if (str(m.sell.id), str(m.buy.id)) in self.posterior_pairs
+                            else "maximum-surplus matching (exact), midpoint price"
+                        )
+                    )
+                )
             ),
             guardrail=str(verdict),
             chosen=chosen,
@@ -415,17 +688,43 @@ class BrokerAgent:
             if run.sends and self.config.pace_s > 0:
                 self.sleep(self.config.pace_s)
             run.sends += 1
-            refused = self.rec.send(did, tick, "broker_match", request, lambda: self.broker.match(**request)) is None
-            if not refused:
+            answer = self.rec.send(did, tick, "broker_match", request, lambda: self.broker.match(**request))
+            refused = answer is None
+            if m.sell.bench:
+                state = "refused" if 400 <= self.rec.last_status < 500 and self.rec.last_status != 408 else "unknown"
+                if not refused:
+                    state = "queued_or_acknowledged"
+                self.books.evidence(
+                    tick,
+                    "match_response",
+                    {
+                        "request": request,
+                        "response": answer,
+                        "http_status": self.rec.last_status,
+                        "code": self.rec.last_code,
+                        "state": state,
+                    },
+                )
+            if not refused and not probe:  # a probe's traders come back if it is dropped at settlement
                 self.done |= {str(m.sell.id), str(m.buy.id)}
+            if probe and refused:
+                code = self.rec.last_error.code if self.rec.last_error else None
+                self.probe.record(m, False, code)
+                self.log(
+                    f"tick {tick} broker: bench probe {m.sell.id}×{m.buy.id} at {m.price} REFUSED {code} "
+                    f"· {self.probe.summary(m.sell.item)}"
+                )
+            elif probe:
+                self.probe.sent(m)
+                self.log(f"tick {tick} broker: bench probe {m.sell.id}×{m.buy.id} at {m.price} QUEUED")
         if m.sell.bench:
-            self.sessions.record(m, tick, refused)
+            self.sessions.record(m, tick, refused, 0 if probe else m.surplus)
         if refused:
             stats.refused += 1
             return
         stats.sent += 1
         if m.sell.bench:
-            stats.surplus_bench += m.surplus
+            stats.surplus_bench += 0 if probe else m.surplus
         else:
             stats.surplus_public += m.surplus
             run.pairs.add(m.makers)
@@ -446,6 +745,9 @@ class BrokerAgent:
 
     def _session_closed(self, s: Session) -> None:
         self.edge.forget(s.run)
+        if self.config.bench_policy == "probe":
+            # the run's probe memory stays: its cap must hold even if its offers show again after this close
+            self.log(f"broker: Market Test {s.run} {self.probe.summary(s.run)}; refusal codes {dict(self.probe.codes)}")
         row = {"run": s.run, "first_tick": s.first_tick, "last_tick": s.last_tick, "pairs": s.pairs}
         row |= {"surplus": s.surplus, "refused": s.refused, "live": self.live}
         tm.event("broker.bench_session", row)

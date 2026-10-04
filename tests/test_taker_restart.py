@@ -183,7 +183,7 @@ def test_restart_reads_are_bounded_per_tick(tmp_path):
     team = FakeTeam()
     for tid in range(10, 17):
         team.thread_payloads[tid] = {"id": tid, "status": "closed", "closed_reason": "idle", "with": "abuela"}
-    t, _, _ = make_taker(tmp_path, team, FakePublic(), max_spend_per_game_hour=0)  # no new threads in the way
+    t, _, _ = make_taker(tmp_path, team, FakePublic(dealers=[]))  # no new threads in the way
     t.on_tick(at(team, TICK))
     assert sum(r.startswith("thread 1") for r in team.reads) == 3
     _ticks(t, team, TICK + 1, 3)
@@ -293,7 +293,7 @@ def test_many_walked_threads_never_starve_the_one_that_dealt(tmp_path):
         team.thread_payloads[tid] = {"id": tid, "status": "closed", "closed_reason": "walked", "with": "abuela"}
     log.decide(_bid_row(99, TICK - 1, 18))  # the thread it drove when it died: abuela took our 18
     dealer_took_our_bid(team, 99, 991, "LAV-08", 18)
-    t, _, ledger = make_taker(tmp_path, team, FakePublic(), max_spend_per_game_hour=0)
+    t, _, ledger = make_taker(tmp_path, team, FakePublic(dealers=[]))
     t.on_tick(at(team, TICK))
     assert "thread 99" in team.reads and ledger.spent_since(0) == 18
 
@@ -315,7 +315,7 @@ def test_deals_of_a_process_from_before_the_first_wrap_up_are_not_booked_again(t
     log.decide(_bid_row(10, TICK - 5, 12))  # no PROCESS_STARTED before it
     team = FakeTeam()
     dealer_took_our_bid(team, 10, 101, "LAV-08", 12)
-    t, _, ledger = make_taker(tmp_path, team, FakePublic(), max_spend_per_game_hour=0)
+    t, _, ledger = make_taker(tmp_path, team, FakePublic(dealers=[]))
     _ticks(t, team, TICK, 2)
     assert "thread 10" not in team.reads and ledger.spent_since(0) == 0
 
@@ -389,7 +389,7 @@ def test_a_thread_another_live_taker_opened_is_never_adopted_or_booked(tmp_path)
     team = FakeTeam(threads=[DEALER_THREAD], offers=[thread_bid(77, 40, "LAV-08", 20)])
     dealer_took_our_bid(team, 41, 78, "LAV-08", 18)
     team.threads = [DEALER_THREAD]
-    t, _, ledger = make_taker(tmp_path, team, FakePublic(), max_spend_per_game_hour=0)
+    t, _, ledger = make_taker(tmp_path, team, FakePublic(dealers=[]))
     _ticks(t, team, TICK, 4)
     assert "abuela" not in t.convs and ("close_thread", 40) not in team.sent
     assert "thread 41" not in team.reads and ledger.spent_since(0) == 0
@@ -458,10 +458,17 @@ def test_a_store_that_never_answers_keeps_the_wrap_up_going_until_its_cap(tmp_pa
         raise OSError("no route")
 
     team = FakeTeam()
-    kw = parts(tmp_path, max_spend_per_game_hour=0) | {"decisions": DecisionLog(tmp_path, down)}
+    kw = parts(tmp_path) | {"decisions": DecisionLog(tmp_path, down)}
     config = TakerConfig(max_dealer_threads=3, restart_lookback_ticks=6)
     t = Taker(
-        team, FakePublic(), live=True, log=lambda s: None, now=lambda: 1000.0, sleep=lambda s: None, config=config, **kw
+        team,
+        FakePublic(dealers=[]),
+        live=True,
+        log=lambda s: None,
+        now=lambda: 1000.0,
+        sleep=lambda s: None,
+        config=config,
+        **kw,
     )
     _ticks(t, team, TICK, 3)
     assert not t._restart_checked
@@ -487,7 +494,7 @@ def test_rate_limited_and_network_reads_do_not_use_up_tries(tmp_path):
         return real(tid)
 
     team.thread = thread
-    t, _, ledger = make_taker(tmp_path, team, FakePublic(), max_spend_per_game_hour=0)
+    t, _, ledger = make_taker(tmp_path, team, FakePublic(dealers=[]))
     _ticks(t, team, TICK, 12)
     assert fails["n"] == 8 and ledger.spent_since(0) == 21  # more failed reads than RESTART_TRIES, still booked
 

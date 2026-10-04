@@ -204,7 +204,7 @@ def test_the_hour_follows_the_observed_pace_and_hourly_blockers_are_capped():
     assert counted.end_tick == 530  # 0.5 h left at 1/60 h per tick, not 60 ticks at 30 s
     slow = GameHour(tick=1000, t_hours=20.01, tick_seconds=5.0)
     quota = from_refusal("abuela", "persona_quota", "", {}, US, slow, "LAV-03")
-    assert quota.until_tick == 1000 + HOURLY_CAP_TICKS  # not 1713: retried within the cap
+    assert quota.until_tick == slow.end_tick  # a trusted refusal waits for the actual game hour
     far = from_refusal("abuela", "cooloff", "", {"until_tick": 10**10}, US, HOUR, None)
     assert far.until_tick == HOUR.tick + COOLOFF_CAP_TICKS
 
@@ -271,3 +271,25 @@ def test_a_blocker_learned_in_the_future_is_not_believed():
     assert not blocks_for([future], US, 600)
     feedline = from_refusal("abuela", "cooloff", "", {"until_tick": 190}, US, HOUR, None)
     assert not blocks_for([feedline.model_copy(update={"detail": {"origin": "feed\n"}})], US, 180)
+
+
+def test_server_conversation_quota_waits_full_15_second_game_hour_for_all_topics():
+    hour = GameHour(tick=1884, t_hours=15 + 110 / 240, tick_seconds=15)
+    quota = from_refusal(
+        "abuela", "persona_quota", "at most 10 conversations per hour with abuela", {}, US, hour, "sobre_barrio"
+    )
+    assert quota.until_tick == 2014
+    assert quota.detail["conversations_per_hour"] == 10 and "item" not in quota.detail
+    for tick in (1884, 1944, 2013):
+        assert blocks_for([quota], US, tick).stops("abuela", "LAV-03") == quota
+        assert blocks_for([quota], US, tick).stops("abuela", "sobre_barrio") == quota
+    assert not blocks_for([quota], US, 2014)
+    assert not blocks_for([quota], "t02", 1944)
+    assert not blocks_for([quota], US, 1800)  # a reset never imports future quota
+
+
+def test_server_quota_explicit_until_tick_is_preserved_but_llm_cannot_block():
+    hour = GameHour(tick=1884, t_hours=15.45, tick_seconds=15)
+    quota = from_refusal("abuela", "persona_quota", "", {"until_tick": 2020}, US, hour, None)
+    assert quota.until_tick == 2020 and blocks_for([quota], US, 2019)
+    assert not blocks_for([quota.model_copy(update={"source": "llm"})], US, 2019)

@@ -12,11 +12,15 @@ Every maker tick (`Maker.on_tick`, driven by /api/clock), before the maker's own
   3. We run a venue and hold its key: the broker (`agents/broker.py`) reads /api/broker/book and sends
      the maximum-surplus matches (bench first) inside the maker's tick window; BAZAAR_BENCH_POLICY=edge (unset:
      exact) has it match the Market Test with the bench edge (`agents/bench_edge.py`).
-  4. With `announce_every_game_hours` (the maker passes ANNOUNCE_EVERY_GAME_HOURS): a short neutral notice
-     on our venue (`POST /api/broker/announce`: the venue's name, id and fee, the house market's fee on a
-     sample sale, and what the broker does) once the
-     broker is on, then at most once per that many game hours, through `guardrails.check()`
-     (`venue_announce`: `allow_venue_open` and the kill switch). Memory only: a restart announces once more.
+  4. With `announce_every_ticks` (the maker passes ANNOUNCE_EVERY_TICKS): a notice on our venue
+     (`POST /api/broker/announce`) once the broker is on, then one every that many ticks and at most
+     ANNOUNCE_MAX_PER_GAME_HOUR per game hour, through `guardrails.check()` (`venue_announce`:
+     `allow_venue_open` and the kill switch). Configured open, zero-fee partner venues get an alliance invitation;
+     otherwise it names the cards the most other teams miss (`venue_notice.py`,
+     from the team matrix the maker reads, rotating through the top WANTED_POOL) or, without a current matrix,
+     says our fee and what the broker does. The server takes one notice per venue every 20 ticks and refuses the
+     rest `wait`: the last notice
+     the feed shows for our venue counts, so a restart never retries one, and a `wait` naming a tick is honoured.
 Dry run (the maker's default) opens nothing and matches nothing: it writes what it would do.
 
 The broker key is never logged, printed, published or put in a decision or an execution row: the opening
@@ -25,6 +29,7 @@ is recorded with the venue id and the places the key was saved, never the key.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -35,10 +40,13 @@ from bazaar_agent.agents.broker import BrokerAgent, BrokerConfig, bench_config_f
 from bazaar_agent.agents.market import Venue, _fee
 from bazaar_agent.agents.runtime import Recorder, Snapshot, TickWindow
 from bazaar_agent.agents.seller import offers_in, open_commitments
+from bazaar_agent.agents.venue_notice import WANTED_POOL, rotated, wanted_cards, wanted_notice
 from bazaar_agent.config import ConfigError, Settings
 from bazaar_agent.decisions import DecisionLog, Status
 from bazaar_agent.guardrails import VENUE_COST, Action, Guardrails, check, runs_venue
 from bazaar_agent.sdk import BazaarError
+from bazaar_agent.strategy import StrategyParams
+from bazaar_agent.team_matrix import TeamMatrix
 from bazaar_agent.ticks import Clock
 from bazaar_agent.venue import (
     AlreadyOpened,
@@ -56,7 +64,11 @@ RETRY_TICKS = 10  # after a refused or failed opening (a refusal costs nothing; 
 REMIND_TICKS = 20  # how often a dry run, or a venue without its key, says so again
 LIST_LAG_TICKS = 3  # ticks the public list and /me may take to show the venue we just opened
 FINAL_REFUSALS = frozenset({"venue_exists", "not_allowed", "forbidden"})  # never tried again by this process
-ANNOUNCE_EVERY_GAME_HOURS = 1.0  # the maker's notice on our venue: once, then at most once per game hour
+# Sunday's server refuses a sooner notice with `wait` (observed at tick 1627).
+ANNOUNCE_EVERY_TICKS = 20
+ANNOUNCE_MAX_PER_GAME_HOUR = 24  # also bounds announcements if the organisers shorten ticks again
+WAIT_HINT_MAX_TICKS = 120  # a `wait` refusal naming a later tick is honoured up to this far ahead
+MATRIX_GRACE_TICKS = 3  # a process's first notice waits this long for the team matrix's first read
 EXAMPLE_PRICE = 20  # the notice's fee example: 5 % of it is a whole number, so no rounding hides in it
 
 # Our market: a board (only there can our broker act), no fee (fees never score; what counts is the gains
@@ -68,6 +80,35 @@ PLAN = VenueSpec(
     mechanism="board",
     description="Board venue, 0 % fee: crossing offers are matched every tick.",
 )
+
+
+def alliance_notice(snap: Snapshot, owners: str) -> Announcement | None:
+    """Invite trades using public venue facts only; no inventory or private values."""
+    preferred = set(owners.split(","))
+    ids = sorted(
+        {
+            v.id
+            for v in snap.venues
+            if v.owner in preferred
+            and v.owner != snap.us
+            and not v.house
+            and v.status == "open"
+            and v.fee_bps == 0
+            and v.fee_per_card == 0
+            and v.pending_fee in (None, (0, 0))
+            and re.fullmatch(r"v[0-9]{1,8}", v.id)
+        }
+    )
+    suffix = (
+        ". Mercados sin comisión para comprar, vender e intercambiar cartas con ofertas estructuradas "
+        "y valor justo. Protegemos las copias únicas de páginas completas. Todos los equipos son bienvenidos."
+    )
+    selected: list[str] = []
+    for vid in ids:
+        if len("Alianza " + " / ".join([*selected, vid]) + suffix) > 280:
+            break  # ponytail: one bounded notice; extra venues can wait for a future campaign.
+        selected.append(vid)
+    return Announcement(text="Alianza " + " / ".join(selected) + suffix) if selected else None
 
 
 def _fee_text(fee_bps: int, fee_per_card: int) -> str:
@@ -108,7 +149,8 @@ def our_venue(snap: Snapshot) -> OurVenue | None:
         for v in snap.venues
         if v.owner == snap.us and not v.house and not v.starter and v.status in ("open", "closing")
     ]
-    if mine:
+    if mine:  # with an auto hedge venue open too, the board venue is the one our broker runs
+        mine.sort(key=lambda v: v.mechanism != "board")
         return OurVenue(mine[0].id, mine[0].status)
     if not runs_venue(snap.me):
         return None
@@ -136,7 +178,9 @@ class VenueKeeper:
         broker_config: BrokerConfig | None = None,
         make_broker: Callable[[SecretStr], Any] | None = None,
         stats_dir: Any = None,
-        announce_every_game_hours: float | None = None,
+        announce_every_ticks: int | None = None,
+        matrix: Callable[[int], TeamMatrix | None] | None = None,
+        params: Callable[[int], StrategyParams] | None = None,
     ) -> None:
         self.team, self.settings, self.rules, self.vault = team, settings, rules, vault
         self.decisions, self.live, self.log, self.hub, self.plan = decisions, live, log, hub, plan
@@ -145,7 +189,7 @@ class VenueKeeper:
         # BAZAAR_BENCH_POLICY / BAZAAR_BENCH_GUARD_MARGIN (Railway, set by hand; default exact) pick how the broker
         # matches the Market Test; the edge says so at start (the venue runbooks look for this line)
         self.broker_config = bench_config_from_env(broker_config or BrokerConfig(pace_s=0.2), log=log)
-        if self.broker_config.bench_policy == "edge":
+        if self.broker_config.bench_policy != "exact":
             log(f"venue keeper: broker bench {bench_text(self.broker_config)}")
         self.make_broker = make_broker or (lambda key: broker_client(settings, key))
         self.stats_dir = stats_dir
@@ -160,8 +204,13 @@ class VenueKeeper:
         self._last: tuple[str, str] | None = None  # the last unsent opening (status, guardrail), said once
         self._broker: tuple[str, BrokerAgent] | None = None
         self._client: Any = None  # the broker connection of `_broker`: the notice goes out through it
-        self.announce_every = announce_every_game_hours  # None: no notice from this process
-        self.announced_at: float | None = None  # the game hour of our last notice (sent, or would-be in a dry run)
+        self.announce_every = announce_every_ticks  # None: no notice from this process
+        self.params = params
+        self.matrix = matrix  # the team matrix for this tick (`LatestMatrix.current`); None: the generic notice only
+        self.announced_tick: int | None = None  # our last notice (sent, refused or would-be in a dry run)
+        self.announced_at: float | None = None  # its game hour
+        self.announce_after = 0  # a `wait` refusal's tick: nothing before it
+        self._first_try: int | None = None  # the tick of this process's first try (the matrix grace)
 
     # ------------------------------------------------------------ the tick
 
@@ -314,6 +363,18 @@ class VenueKeeper:
             return False
         return any(v.id == venue and v.owner == snap.us and not v.starter and not v.house for v in snap.venues)
 
+    def _bench_books(self, venue: str) -> Any:
+        """The Market Test book recorder of our broker: Postgres `bench_books` for the real game (its own short
+        connection, off the tick), the JSONL alone on a simulator or without a DATABASE_URL."""
+        from bazaar_agent import db
+        from bazaar_agent.agents.bench_capture import BenchBooks
+        from bazaar_agent.holdings import scope_of
+
+        connect = (
+            None if self.settings.simulator else (lambda: db.connect(app="bazaar-bench-books", connect_timeout_s=3))
+        )
+        return BenchBooks(connect, self.stats_dir, self.log, world=scope_of(self.settings).world, venue=venue)
+
     def _broker_tick(self, venue: str, clock: Clock, snap: Snapshot | None, window: TickWindow) -> None:
         if self._broker is None or self._broker[0] != venue:
             key = self._key(venue)
@@ -338,7 +399,11 @@ class VenueKeeper:
                 stats_dir=self.stats_dir,
                 config=self.broker_config,
                 hub=self.hub,
+                books=self._bench_books(venue),
             )
+            if self.broker_config.match_probe:
+                agent.probe_claim = self.vault.claim_once  # durable and shared: one probe per game
+                self.log(f"tick {clock.tick} venue: bench match probe ARMED (one request ever, durable claim)")
             self._broker = (venue, agent)
             self.log(
                 f"tick {clock.tick} venue: broker on for {venue} ({'LIVE' if self.live else 'dry run'}), "
@@ -353,19 +418,35 @@ class VenueKeeper:
             our_offers=snap.offers if snap is not None else None,
             events=snap.events if snap is not None else None,
         )
-        house = next((v for v in snap.venues if v.house), None) if snap is not None else None
-        self._maybe_announce(venue, clock, window, house)
+        self._maybe_announce(venue, clock, window, snap)
 
     # ------------------------------------------------------------ the notice on our venue
 
-    def _maybe_announce(self, venue: str, clock: Clock, window: TickWindow, house: Venue | None = None) -> None:
-        """Once the broker is on, then at most once per `announce_every` game hours; only inside the tick
-        window and only when the guardrails allow `venue_announce` (a refusal is tried again next tick, quietly)."""
-        if self.announce_every is None or self._client is None or not window.open():
+    def _maybe_announce(self, venue: str, clock: Clock, window: TickWindow, snap: Snapshot | None) -> None:
+        """Once the broker is on, then every `announce_every` ticks (at most ANNOUNCE_MAX_PER_GAME_HOUR per game
+        hour); only inside the tick window and only when the guardrails allow `venue_announce` (a refusal is tried
+        again next tick, quietly)."""
+        if (
+            self.announce_every is None
+            or self._client is None
+            or not window.open()
+            or not self._due(venue, clock, snap)
+        ):
             return
-        if self.announced_at is not None and clock.t_hours - self.announced_at < self.announce_every:
-            return
-        note = announcement(self.plan, venue, house)
+        us, held = (snap.us, _held(snap.me)) if snap is not None else ("", set())
+        pool = wanted_cards(self.matrix(clock.tick), us, WANTED_POOL, held) if self.matrix is not None else []
+        cards = rotated(pool, clock.tick // self.announce_every)
+        if self._first_try is None:
+            self._first_try = clock.tick
+        alliance = (
+            alliance_notice(snap, self.params(clock.tick).preferred_sell_venue_owners)
+            if snap is not None and self.params is not None
+            else None
+        )
+        if not alliance and not cards and self.matrix is not None and clock.tick - self._first_try < MATRIX_GRACE_TICKS:
+            return  # the maker's first matrix read lands a tick or two after a start
+        house = next((v for v in snap.venues if v.house), None) if snap is not None else None
+        note = alliance or wanted_notice(self.plan, venue, cards, house) or announcement(self.plan, venue, house)
         verdict = check(
             Action("venue_announce"),
             venue_context(self.rules, {"tick": clock.tick, "t_hours": clock.t_hours}),
@@ -373,13 +454,15 @@ class VenueKeeper:
         )
         if not verdict.allowed:
             return
-        self.announced_at = clock.t_hours  # sent or not, the next one waits its hour: never a notice per tick
+        # sent or not, the next one waits its turn: never a notice per tick
+        self.announced_tick, self.announced_at = clock.tick, clock.t_hours
         did = self.rec.decide(
             clock.tick,
             "venue_announce",
             f"announce on our venue {venue}: {note.text!r}",
-            inputs={"venue": venue, "text": note.text},
-            reason=f"our venue's notice, at most once per {self.announce_every:g} game hour(s)",
+            inputs={"venue": venue, "text": note.text, "cards": cards},
+            reason=f"our venue's notice, one every {self.announce_every} ticks"
+            + (": the cards the most other teams miss (team matrix)" if cards else ""),
             guardrail=str(verdict),
             chosen=True,
             status="approved",
@@ -389,4 +472,54 @@ class VenueKeeper:
             return
         client, request = self._client, {"text": note.text}
         if self.rec.send(did, clock.tick, "broker_announce", request, lambda: client.announce(note.text)) is not None:
-            self.log(f"tick {clock.tick} venue: announced {venue}")
+            self.log(f"tick {clock.tick} venue: announced {venue}" + (f" ({', '.join(cards)})" if cards else ""))
+        elif self.rec.last_code == "wait":
+            self.announce_after = _wait_tick(self.rec.last_error, clock.tick)
+
+    def _due(self, venue: str, clock: Clock, snap: Snapshot | None) -> bool:
+        """Every `announce_every` ticks after our last notice, the one this process sent or the newest the feed
+        shows for our venue (a restart, or a notice from a laptop), and never sooner than a game hour allows."""
+        if self.announced_tick is not None and clock.tick < self.announced_tick:  # a simulator reset: start over
+            self.announced_tick, self.announced_at, self.announce_after, self._first_try = None, None, 0, None
+        if clock.tick < self.announce_after or self.announce_every is None:
+            return False
+        feed = _last_notice(venue, snap.events if snap is not None else (), clock.tick)
+        last = max(-1 if self.announced_tick is None else self.announced_tick, feed)
+        if last >= 0 and clock.tick - last < self.announce_every:
+            return False
+        if last > (-1 if self.announced_tick is None else self.announced_tick):  # only the feed knows it: its hour
+            self.announced_tick = last
+            self.announced_at = clock.t_hours - (clock.tick - last) * clock.tick_seconds / 3600
+        hour_gap = 1 / ANNOUNCE_MAX_PER_GAME_HOUR - 1e-9
+        return self.announced_at is None or clock.t_hours - self.announced_at >= hour_gap
+
+
+def _held(me: dict[str, Any]) -> set[str]:
+    """The cards we hold a copy of (/api/me): the only ones our notice may name."""
+    return {str(a.get("ref")) for a in me.get("assets") or [] if isinstance(a, dict) and a.get("kind") == "card"}
+
+
+def _last_notice(venue: str, events: Any, now: int) -> int:
+    """The tick of the newest `venue.announcement` for our venue in the feed (newest last) up to `now`, -1 when
+    none: an event from a tick the game has not reached (another world's row) is skipped, never a reason to wait."""
+    for event in reversed(events or ()):
+        if not isinstance(event, dict) or event.get("type") != "venue.announcement":
+            continue
+        payload, tick = event.get("payload"), event.get("tick")
+        ours = isinstance(payload, dict) and payload.get("venue") == venue
+        if ours and isinstance(tick, int) and not isinstance(tick, bool) and 0 <= tick <= now:
+            return tick
+    return -1
+
+
+def _wait_tick(refused: Any, tick: int) -> int:
+    """The tick a `wait` refusal names (`next_tick`, `until_tick` or `retry_tick` in its extra), within
+    WAIT_HINT_MAX_TICKS; else 0, and the usual cadence decides."""
+    extra = getattr(refused, "extra", None)
+    if not isinstance(extra, dict):
+        return 0
+    for key in ("next_tick", "until_tick", "retry_tick"):
+        value = extra.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and tick < value <= tick + WAIT_HINT_MAX_TICKS:
+            return value
+    return 0

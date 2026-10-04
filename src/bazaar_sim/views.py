@@ -134,8 +134,8 @@ def clock_view(w: World) -> dict[str, Any]:
         "next_opens": iso(now + 24 * 3600),
         "next_tick_in": w.next_tick_in(),
         "paused": c.paused,
-        "round": 1,
-        "round_name": "Simulator · El Rastro",
+        "round": w.state.round or 1,
+        "round_name": "Simulator · El Rastro" if w.scenario is None else f"Sunday · round {w.state.round or 1}",
         "t_hours": w.t_hours,
         "tick": c.tick,
         "tick_seconds": c.tick_seconds,
@@ -163,7 +163,8 @@ def catalog_view(w: World) -> dict[str, Any]:
     sets = []
     for s in data["sets"]:
         cards = [{**c, "minted": w.state.minted.get(c["id"], 0)} for c in s["cards"]]
-        sets.append({**s, "cards": cards})
+        released = bool(s.get("released")) or s["id"] in w.state.released
+        sets.append({**s, "released": released, "cards": cards})
     return {**data, "sets": sets}
 
 
@@ -186,8 +187,10 @@ def schedule_view(w: World) -> dict[str, Any]:
     from bazaar_sim.broker import bench_preset
     from bazaar_sim.duels import DECAY
 
+    if w.scenario is not None:
+        return w.scenario.schedule_view(w)
     cfg = w.config
-    hours_per_tick = cfg.tick_seconds / 3600.0
+    hours_per_tick = w.game_tick_seconds / 3600.0
     session = w.state.duel_session
     upcoming: list[dict[str, Any]] = []
     for kind, first, every in (
@@ -238,10 +241,11 @@ def dealer_view(w: World, dealer_id: str) -> dict[str, Any]:
     data = dict(catalog.raw_dealers()[dealer_id])
     data.pop("teaser", None)
     data.pop("how", None)
+    data["enabled"] = dealer_id not in w.state.disabled_dealers and bool(data.get("enabled", True))
     at = w.open_to_all_tick(dealer_id)
     if at is not None:
         data["open_to_all"] = w.tick >= at
-        data["unlock"] = {**data["unlock"], "open_to_all_at": round(at * w.config.tick_seconds / 3600.0, 3)}
+        data["unlock"] = {**data["unlock"], "open_to_all_at": round(at * w.game_tick_seconds / 3600.0, 3)}
     return data
 
 
@@ -251,10 +255,10 @@ def dealers_view(w: World) -> dict[str, Any]:
 
 def levels_view(w: World) -> dict[str, Any]:
     levels = []
-    for dealer_id in ("chato", "pilar"):
+    for dealer_id in [d for d in ("chato", "pilar", "picaros", "banco") if d in catalog.raw_dealers()]:
         data = catalog.raw_dealers()[dealer_id]
         at = w.open_to_all_tick(dealer_id) or 0
-        left = max(0.0, (at - w.tick) * w.config.tick_seconds / 3600.0)
+        left = max(0.0, (at - w.tick) * w.game_tick_seconds / 3600.0)
         levels.append(
             {
                 "id": dealer_id,
@@ -264,6 +268,19 @@ def levels_view(w: World) -> dict[str, Any]:
                 "teaser": data["teaser"],
                 "how": data["how"],
                 "opens_to_all_in_hours": round(left, 3),
+            }
+        )
+    if w.scenario is not None:
+        levels.append(
+            {
+                "id": "taller",
+                "kind": "taller",
+                "name": "The Workshop",
+                "state": "active",
+                "teaser": "«Three spares. One surprise.»",
+                "how": 'POST /api/taller {"assets": [a, b, c]}: three spare copies of one rarity '
+                "(you keep at least one of each card) become one random card of the next rarity.",
+                "opens_to_all_in_hours": 0.0,
             }
         )
     return {"levels": levels}

@@ -130,22 +130,38 @@ def over_cap(price: int, ref: str, values: OfficialValues, tick: int, held: int,
     official = values.value(ref, tick, held)
     if official is None or price <= official - margin + 1e-9:
         return None
-    return f"bid {price} > official value {official:g} of {ref} (GET /api/me/value)"
+    less = f" - margin {margin:g}" if margin else ""
+    return f"bid {price} > official value {official:g}{less} of {ref} (GET /api/me/value)"
 
 
 def cap_violations(
-    ref: str, price: int, gives_value: float, values: OfficialValues | None, tick: int, held: int, rules: _Margin
+    ref: str,
+    price: int,
+    gives_value: float,
+    values: OfficialValues | None,
+    tick: int,
+    held: int,
+    rules: _Margin,
+    margin: float | None = None,
+    rule: str | None = None,
 ) -> list[str]:
     """A card buy's price (fee included) plus what else it gives (a swap's copy) must stay at or under the official
-    value of one more copy minus `official_value_margin`. No value book, or an unreadable value: refused."""
+    value of one more copy minus `official_value_margin` (or `margin`, when given: an epic or legendary's
+    `Guardrails.value_margin_for`; below 0 with `rule` "dealer_ladder_value_tolerance": that much over it). No value
+    book, or an unreadable value: refused."""
     if values is None:
         return [f"official value of {ref} not read {UNREAD}"]
     official = values.value(ref, tick, held)
     if official is None:
         return [f"official value of {ref} could not be read {UNREAD}"]
-    margin = rules.official_value_margin
+    named = margin is not None and margin != rules.official_value_margin
+    margin = rules.official_value_margin if margin is None else margin
     if price + gives_value <= official - margin + 1e-9:
         return []
     gives = f" + copy given {gives_value:g}" if gives_value else ""
-    less = f" - official_value_margin {margin:g}" if margin else ""
+    if rule is not None:  # the tolerance, net of official_value_margin
+        less = f" + {rule} {-margin:g}" if margin < 0 else f" - official_value_margin net of {rule} {margin:g}"
+    else:
+        rule = "off_page_min_surplus" if named else "official_value_margin"
+        less = f" - {rule} {margin:g}" if margin else ""
     return [f"price {price}{gives} > official value {official:g}{less} of {ref} (GET /api/me/value)"]

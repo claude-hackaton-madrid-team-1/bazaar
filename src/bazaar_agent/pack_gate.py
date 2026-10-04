@@ -1,9 +1,9 @@
-"""pack_value + Jev: a pack is bought only when Jev says it is worth one of our scarce pack slots now.
+"""Pack slot gate: explicit inventory restocking, otherwise holding-value proposals plus Jev.
 
 Packs are capped per game hour (`max_packs_per_game_hour` in GUARDRAILS.md, and each dealer's own
-`per_team_per_hour` in `/api/dealers`). The strategy engine finds the packs worth more to us than their
-price; Jev weighs that against the slots left, the best alternative buy and our cash. `no` or
-`undecided` keeps the slot. Pure: the judge is injected, so tests use a fake.
+`per_team_per_hour` in `/api/dealers`). Explicit restocking buys inventory within those quotas;
+otherwise the strategy proposes holding-value gains and Jev weighs alternatives. `no` or `undecided`
+keeps the slot on that legacy path. Pure: the judge is injected, so tests use a fake.
 """
 
 from __future__ import annotations
@@ -52,14 +52,14 @@ def pack_state(
 
 def gate_packs(
     book: Playbook,
-    judge: PackJudge,
+    judge: PackJudge | None,
     slots: PackSlots,
     used_by_pack: Mapping[str, int],
     rules: Guardrails,
     t_hours: float,
 ) -> Playbook:
-    """pack_value + Jev: a pack move keeps its command only when Jev decides yes to spending a slot now.
-    `no` or `undecided` keeps the slot; with no slot left, Jev is not asked at all."""
+    """Restocking uses the explicit policy; other pack proposals require Jev yes.
+    Neither path spends a slot beyond the shared or dealer quota."""
 
     def gated(mv: Move) -> Move:
         if not mv.command:
@@ -67,6 +67,10 @@ def gate_packs(
         left = slots_left(book, mv.ref, slots, used_by_pack)
         if left == 0:
             return replace(mv, command="", reason=f"{mv.reason}; no pack slot left this game hour")
+        if rules.pack_restock_enabled and mv.strategy == "pack_restock":
+            return replace(mv, jev="not required: inventory restock")
+        if judge is None:
+            return replace(mv, command="", reason=f"{mv.reason}; no pack judge: keep the slot")
         verdict, probability = judge(pack_state(mv, book, left, slots, rules, t_hours))
         jev = f"{verdict} {probability:.2f}"
         if verdict == "yes":

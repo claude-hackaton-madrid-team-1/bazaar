@@ -134,6 +134,41 @@ def test_a_bid_from_before_a_restart_is_refunded_at_the_conservative_date(tmp_pa
     assert refund["tick"] == T0 - 10 and refund["t_hours"] <= at(T0 - 10).t_hours
 
 
+def test_a_restarted_maker_recovers_the_exact_bid_date_across_tick_speed_changes(tmp_path):
+    team = Listing()
+    old = bid(777, "LAV-09", 65, created=T0 - 10, expires=T0 + 5)
+    team.offers = [old]
+    m, _ = maker(tmp_path, team, live=True)
+    spent_at = at(T0 - 10, 15).t_hours
+    for kind in ("listing", "spend"):
+        m.ledger.record(kind, T0 - 10, spent_at, 65, "LAV-09")
+    run(m, team, [T0], seconds=15)
+    team.offers.remove(old)
+    run(m, team, [T0 + 6, T0 + 7], seconds=15)
+    refunds = [r for r in spend_rows(m) if r["price"] < 0]
+    assert len(refunds) == 1
+    assert (refunds[0]["tick"], refunds[0]["t_hours"]) == (T0 - 10, spent_at)
+    run(m, team, [T0 + 8], seconds=15)
+    assert len([r for r in spend_rows(m) if r["price"] < 0]) == 1
+
+
+def test_file_bid_refund_recovers_exact_date_and_refuses_prior_wrong_date_credit(tmp_path):
+    from bazaar_agent.guardrails import Ledger
+
+    ledger = Ledger(tmp_path / "ledger.jsonl")
+    for kind in ("spend", "listing"):
+        ledger.record(kind, 1467, 13.7208, 160, "MAL-11")
+    assert ledger.refund_bid(1467, 12.6792, 160, "MAL-11") == 13.7208
+    assert ledger.refund_bid(1467, 13.7208, 160, "MAL-11") is None
+    assert ledger.spent_since(13) == 0
+    # Historical wrong-date credit must block a second credit, not choose fallback.
+    for kind in ("spend", "listing"):
+        ledger.record(kind, 1468, 13.73, 160, "MAL-11")
+    ledger.record("spend", 1468, 12.68, -160, "MAL-11")
+    assert ledger.refund_bid(1468, 13.73, 160, "MAL-11") is None
+    assert len(ledger.entries()) == 6
+
+
 def test_a_bid_gone_under_the_kill_switch_is_not_refunded(tmp_path, monkeypatch):
     """The runbook is PAUSE, then `bazaar flatten`, which cancels our bids and books their refunds: under the
     switch a bid seen gone is never refunded again (a true lapse then over-counts, fail safe; review of #142)."""

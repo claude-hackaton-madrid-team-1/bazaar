@@ -62,6 +62,66 @@
    "open_to_all_at": null
   }
  },
+ "banco": {
+  "avatar": {
+   "color": "#C08A2E",
+   "emoji": "🏦",
+   "initials": "DE"
+  },
+  "bio": "Don Ernesto has run the same treasury desk for thirty-five years. He buys the finest cards as reserves, sells gold packs at his price, and has never once been in a hurry.\n",
+  "enabled": true,
+  "how": "The vault: epic and legendary cards for whoever negotiates them, within hourly limits. Open a thread (with: banco).",
+  "id": "banco",
+  "kind": "banker",
+  "level": 5,
+  "menu": {
+   "buys": [
+    {
+     "rarity": "epic",
+     "sets": "released"
+    },
+    {
+     "rarity": "legendary",
+     "sets": "released"
+    }
+   ],
+   "deals_per_team_per_hour": 4,
+   "sells": [
+    {
+     "list_price": 420,
+     "name": "Gold pack",
+     "opening_ask": 546,
+     "pack": "sobre_oro",
+     "per_team_per_hour": 1
+    },
+    {
+     "list_price": 585,
+     "rarity": "legendary",
+     "sets": "released"
+    }
+   ]
+  },
+  "name": "Don Ernesto",
+  "open_to_all": false,
+  "status": "active",
+  "teaser": "«Gold is not shown. It is negotiated.»",
+  "title": "treasury desk at Casa Prima on Calle de Alcalá",
+  "traits": {
+   "chattiness": 0.35,
+   "generosity": 0.1,
+   "memory": 1.0,
+   "patience": 0.95,
+   "shrewdness": 0.95,
+   "strictness": 1.0
+  },
+  "unlock": {
+   "always": false,
+   "early_deals_with": "pilar",
+   "early_min_deals": 3,
+   "early_min_level": 3,
+   "open_to_all_at": null
+  }
+ },
  "chato": {
   "avatar": {
    "color": "#3D5A80",
@@ -134,6 +194,64 @@
    "open_to_all_at": null
   }
  },
+ "picaros": {
+  "avatar": {
+   "color": "#D1495B",
+   "emoji": "🎩",
+   "initials": "PN"
+  },
+  "bio": "Paco and Nando appear wherever there is money and disappear before anyone checks the cards. Their bargains are sometimes real. Their deadlines never are.\n",
+  "enabled": true,
+  "how": "Two brothers with bargains and bad faith: read every offer before you accept, and flag a trick (POST /api/flags).",
+  "id": "picaros",
+  "kind": "trickster",
+  "level": 4,
+  "menu": {
+   "buys": [
+    {
+     "rarity": "common",
+     "sets": "released"
+    },
+    {
+     "rarity": "uncommon",
+     "sets": "released"
+    }
+   ],
+   "deals_per_team_per_hour": 6,
+   "sells": [
+    {
+     "list_price": 63,
+     "rarity": "rare",
+     "sets": "released"
+    },
+    {
+     "list_price": 162,
+     "rarity": "epic",
+     "sets": "released"
+    }
+   ]
+  },
+  "name": "Los Pícaros",
+  "open_to_all": false,
+  "status": "active",
+  "teaser": "«Quick deals. Few questions.»",
+  "title": "Paco and Nando, twin brothers with a suitcase full of bargains",
+  "traits": {
+   "chattiness": 0.8,
+   "generosity": 0.6,
+   "memory": 0.3,
+   "patience": 0.4,
+   "shrewdness": 0.7,
+   "strictness": 0.1
+  },
+  "unlock": {
+   "always": false,
+   "early_deals_with": "pilar",
+   "early_min_deals": 2,
+   "early_min_level": 0,
+   "open_to_all_at": null
+  }
+ },
  "pilar": {
   "avatar": {
    "color": "#7B2D8B",
@@ -185,10 +303,10 @@
    "deals_per_team_per_hour": 6,
    "sells": [
     {
-     "pack": "sobre_oro",
-     "name": "Gold pack",
      "list_price": 420,
+     "name": "Gold pack",
      "opening_ask": 504,
+     "pack": "sobre_oro",
      "per_team_per_hour": 1
     }
    ]
@@ -199,12 +317,12 @@
   "teaser": "«I only buy what completes my albums. Salamanca, above all.»",
   "title": "collector from Salamanca, buys what completes her albums",
   "traits": {
-   "patience": 0.6,
+   "chattiness": 0.55,
    "generosity": 0.5,
-   "shrewdness": 0.75,
    "memory": 0.7,
-   "strictness": 0.6,
-   "chattiness": 0.55
+   "patience": 0.6,
+   "shrewdness": 0.75,
+   "strictness": 0.6
   },
   "unlock": {
    "always": false,

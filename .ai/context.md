@@ -49,14 +49,16 @@ both sides agree on. Dominant constraint: negotiation quality within the game's 
 (one team key, rate limits, heartbeat trade cap). Source: the kickoff briefing,
 `docs/transcripts/2026-10-02-hackathon-kickoff.md` — a raw machine transcript, so confirm any
 figure against the official kit (`vendor/bazaar-kit/`, rules in `RULES.md`) before coding against it.
+The mechanics the rules audit corrected on Sat 3 Oct (commit 8dbf50b7) live in `docs/briefing.md`
+(source of truth for the game) and `STRATEGY.md`; this section only summarises them.
 
-## Game & judging (kickoff briefing, 2026-10-02)
-- **Players:** 18 teams, each with its own agent, plus dealer agents hosted by the organizers,
-  each with a personality and its own allowed actions.
-- **Start:** 400 units of in-game currency and a handful of common cards (exact counts unclear
-  in the recording — check the kit).
+## Game & judging (kickoff briefing, 2026-10-02; corrected by the rules audit, 2026-10-03)
+- **Players:** 18 teams signed up (17 played Friday), each with its own agent, plus dealer agents
+  hosted by the organizers, each with a personality and its own allowed actions.
+- **Start:** 400 primas (P), 11 commons, 3 uncommons and 1 rare (`RULES.md`).
 - **Album:** six Madrid neighbourhoods. Four at the start, El Retiro added Saturday, one more on
-  Sunday.
+  Sunday. A page is a set's 5 commons, 3 uncommons and 2 rares; a complete page raises the
+  `your_value` of its cards (it carries the page bonus).
 - **Dealers:** first is Abuela — patient, NOT proactive (we must open the thread), sells packs
   and cards, buys cards nobody else wants. When her patience runs out she gives a final offer
   and walks. She remembers how she was treated and rewards kindness; bad treatment can lock
@@ -65,15 +67,52 @@ figure against the official kit (`vendor/bazaar-kit/`, rules in `RULES.md`) befo
   eventually.
 - **Value is asymmetric:** a duplicate is worth little to us and a lot to a team finishing that
   page — price by the counterpart's need, not by our own.
-- **Heartbeats:** Friday, at most 1 accepted offer per 60 s tick (many threads may be open at
-  once); Saturday, 2 trades per minute; Sunday, a speed run. Friday's results count half;
-  Saturday and Sunday bring rule variants.
+- **Heartbeats:** ticks of 60 s Friday, 30 s Saturday, 15 s Sunday. Per tick: 1 accepted offer,
+  1 message per conversation, 12 new listings (many threads may be open at once). Friday's results
+  count half; Saturday and Sunday bring rule variants.
+- **What scores (rules audit):** holding cards, the album and `collection_value` never score by
+  themselves. A card scores only when it moves: a team trade (price minus our `your_value`, into
+  `neg_points`) or a dealer deal (ladder share of that dealer's own range, buying or selling; the
+  opening price scores 0, the dealer's final scores the whole range; best 3 per level; restarts every
+  round). Per round, market-making is about 22.5 × Market Test `bench_points` + 7.5 × organic, and
+  negotiating is about ladder 7.5 + duels 7.5 + team trades 15, each capped at the top-3 mean. A
+  round starts on the organisers' `round` action (round 2 at tick 160, round 3 observed at tick
+  1446, "Sunday · Chamberí"). The organisers changed Sunday's schedule after the pre-opening read.
+  Use live `/api/clock` and `/api/schedule`, not the obsolete h16.65 opening anchor. The read at
+  `now_hours=14.037` schedules Duels III at h15.367 and scores freeze at h19.367; doors close at
+  15:00 CEST. Source and remaining event windows: `docs/briefing.md`.
+- **Page cards still cost points when sold:** `your_value` is the collection value lost by removing
+  that copy, and on a complete page our only copy of a page card carries the whole page bonus. On
+  Sat 3 Oct (tick 948) selling such a copy dropped `neg_points` 134.7 → 44.6 although "holdings never
+  score": the sale to Pilar at 29 of a copy whose `your_value` was 118.6 scores price − `your_value` =
+  −89.6 `neg_points`, even to a dealer (`.ai/memory.md`, finding at tick 947).
+- **Separate scoring models (Omar, Sat 3 Oct):** RULES.md counts duels inside the Negotiating 30, but each
+  mechanism has its own formula and the agents never mix their numbers or lessons.
+  - Duels: the share of each deal's pie we capture × (1 − decay)^rounds, rounds = min(our priced messages,
+    the rival's). No cash or card moves, so `your_value`, the sell floor, `protect_page_sets` and the album
+    play no part; no ladder, no bench. The duel accept uses the team's accept slot only on the tick it sends one.
+  - Dealer ladder: share of that dealer's own price range, best 3 per level, restarts each round.
+  - Team trades: price − our `your_value` (`neg_points`). Market-making: 22.5 × bench + 7.5 × organic.
+  - A duel result is no evidence about a dealer or a team trade, and an album or floor rule never applies to a
+    duel. The RAG keeps lessons apart by `learnings.scope` (`duel`, `trader`, `card`, `market`, `bench`).
+- **Where points come from (a game founder, via Omar, Sat 3 Oct):** "what matters is trading with teams and
+  making good negotiations". Pages and collection value never score: completing Salamanca by buying SAL-07
+  back from Abuela raised collection value by about 88 and the score did not move. Top lever: team trades at
+  private values (buy missing cards from teams below our `your_value`, sell duplicates to teams above it),
+  then dealer deals near their final, then duels and market.
+- **El Rastro fee:** ceil(5 % × price) + 1 P per card, paid by the side that accepts.
 - **API (Python SDK + starter agent provided):** cash, cards, value, live score, available
   dealers, current tick and time left in it, threads (open / negotiate / accept).
 - **Judging:** negotiation quality, market making, ideas and approach, and the code itself;
   a Sunday presentation (strategy, how we built it, key learnings) is about 40%. Never counts:
-  number of trades, fees, or luck opening packs.
-- **Venue:** open 09:00–23:00, no all-nighter.
+  number of trades, fees, or luck opening packs. Sunday format (organisers, Sun 09:18,
+  `docs/transcripts/2026-10-04-invofox-3.md`): from 15:00 a "Submit your project" link on the Bazaar
+  (team key; code, slides, artifacts, explanation); one hour to prepare; presentations in ranked order,
+  5 minutes for the top three teams and 3 minutes for the rest; winners at 17:30. The judges ask how we
+  approached the challenge, what we built, why that way, and what we learned. Round weights: Friday 20 %,
+  Saturday 40 %, Sunday 40 %. Don Ernesto (`banco`) is open to everyone; Team 12's fix stops a seller's
+  bad trade from destroying a venue's market-making value (how the score changed was not said).
+- **Venue:** Saturday 09:00–23:00; Sunday 09:00–15:00 CEST, no all-nighter.
 
 ## Stack (LOCKED — do not relitigate)
 Python 3.12 · uv · vendored `bazaar_sdk` (SDK first; raw `httpx` only as Plan B, checked against
@@ -92,6 +131,14 @@ errors recorded in `.ai/memory.md` · generated agent docs in sync (`sh scripts/
 enforced by the pre-commit hook) · README status block current (`python3
 scripts/readme_status.py`, run by the pre-commit hook) · each task ships an Honest Implementation
 Report — no ✅ without pasted evidence (see "Honesty protocol" below).
+
+## CI
+Depot runs the PR test workflow in `.depot/workflows/tests.yml` with exactly four checks:
+unit tests (`pytest -m 'not integration'`), integration tests (`pytest -m integration` with an
+isolated Postgres 17 + pgvector service), Black formatter and Ruff linter. GitHub Actions does
+not duplicate the test workflow. Typechecking, coverage and generated-document checks above
+remain local requirements. `scripts/sim_smoke.py` is an optional manual diagnostic, never a CI
+or merge requirement. This supersedes older task entries that require sim smoke.
 
 ## Hard rules
 **Parallel by default (Omar, 2026-10-03, HARD RULE):** every worker splits its task and runs Claude Code
@@ -118,8 +165,13 @@ taker, maker, MCP server, CLI) share the key's 5 req/s (bursts of 20) and its 6 
 a new service must fit inside that budget. Our MCP server and agent endpoints are for Team 1 only:
 never give another team a way to act with our key.
 **Architecture page:** `docs/architecture.html` is generated by `scripts/architecture_page.py` from
-`docs/architecture.status.json` (same hook and CI job as the README); after every merge that changes
-`docs/architecture.html`, republish it to https://claude.ai/artifact/9KKsCg2P2gYqRG8CDpDD39.
+`docs/architecture.status.json` and `scripts/templates/architecture.html.tmpl`. It maps the implemented
+system, with source links rather than a historical task roadmap. The README is a concise setup and
+navigation entry point; its generated block contains project metadata from `pyproject.toml`, while
+operator detail lives in `docs/operations.md`. Both generators run in the hook and documentation job.
+After every merge that changes
+`docs/architecture.html`, republish it to https://claude.ai/artifact/SDYmzHVWNbUpUb6UyGnVkR (the older
+9KKsCg2P2gYqRG8CDpDD39 became public and refuses republish).
 **Album first:** before any buy, sell, listing or negotiation, read `GET /api/me` (album pages,
 missing page cards, duplicates, affinity, cash) — `uv run bazaar status` — and re-read it after
 every deal. Never decide on a stale view of what we hold.
@@ -137,7 +189,20 @@ scheduled event): wait for the next safe tick it prints.
 **Guardrails:** `GUARDRAILS.md` is the runtime rule book. Every write goes through
 `guardrails.check()`; change a limit there (never by hard-coding it), then run `uv run bazaar rules`
 to validate. `touch .local/PAUSE` stops every write of the processes that share that `.local/` (one
-laptop checkout, or one Railway service's volume: pause each, README "Pause writes").
+laptop checkout, or one Railway service's volume: pause each, `docs/operations.md` "Pause writes").
+**Selling (Omar, Sat 3 Oct, HARD RULES; they override every strategy, Jev verdict and manual command):**
+- Never sell or swap away our only copy of a page card. `protect_page_sets` lists every set (LAV, SAL,
+  MAL, RET, LAT, CHA); sell only true duplicates. Selling SAL-07 from a complete Salamanca page cost
+  score 28.25 → 23.98 and rank 5 → 12.
+- Never sell below our floor: `sell_min_value_ratio` × the server's `your_value` of that copy
+  (`GUARDRAILS.md`).
+- **Autonomous trading update (Omar, Sun 4 Oct):** amount-based human approval and the global 250 P
+  hourly purchase ceiling are disabled: `human_approval_above = 0`, `max_spend_per_game_hour = 0`.
+  This explicitly replaces the earlier 60 P approval requirement. Available cash, pending commitments,
+  cash floor, value/impact checks and tick/API limits still govern every trade. Explicit human buy targets
+  and reviewed operator proposals retain their own meaning; disabling an amount gate does not execute them.
+- No override flag, breaker reset or kill-switch bypass may force a sale past last-copy protection
+  or the sell floor (the Sat 3 Oct sale used the coordinator's `--allow-page-card` hand flag after a `dealer_sell` breaker reset, per the coordinator's own report; PR #220 is closed).
 
 ## Task identity & spec source (the pipeline runs PER TASK)
 **This repo (decided 2026-10-03): the backlog is LOCAL.** Tasks live in `.ai/specs/02-plan.md` with a
@@ -194,3 +259,6 @@ Report**; `/build` emits it and `/acceptance` aggregates it. Rules (apply on eve
   - `### [YYYY-MM-DD] finding` — something learned about the game (cite tick + evidence).
 - NEVER write a secret (team key, broker keys, `TYPESAFE_API_KEY`, `.env` values, bearer
   tokens) — this file is public in the repo.
+
+## Sales ownership (2026-10-04)
+The dedicated `bazaar-sales` Railway service owns team negotiation threads using the existing TeamDesk and guarded trade executors. Set `BAZAAR_TEAM_THREADS=0` on taker before enabling sales live. A durable per-tick claim prevents overlapping desk writers. Sales reuses scanner/matrix data and publishes OTel traces; the live UI uses its authenticated feed and existing ElevenLabs provider. Public market announcements use the keeper's existing cadence and configured open zero-fee allies; market names remain unchanged.

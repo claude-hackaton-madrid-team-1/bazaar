@@ -73,7 +73,7 @@ Ackerman's 65/85/95/100 schedule and precise non-round numbers change prices: pr
 ## Non-goals
 No LLM in the executor path (`llm_words` stays false; with it on, a chosen tactic's text wins over the LLM's).
 No change to prices, days, accept rules, Jev questions or guardrail caps. No flags sent. No prompt injection.
-No team-to-team thread wiring (we run none today; the bank supports `team` counterparties for later).
+No team-to-team thread wiring in N16 (team threads run since #188, but N17's desk does not call the bank yet; the bank supports `team` counterparties).
 
 ## Acceptance criteria
 1. The structured fields (price, days, kind, offer id) of every move are identical with and without a tactic

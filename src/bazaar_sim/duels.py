@@ -130,11 +130,20 @@ def on_tick(w: World) -> None:
         del w.state.duels[did]
 
 
-def start_session(w: World) -> int:
+def start_session(
+    w: World,
+    *,
+    two_issues: bool | None = None,
+    decay_per_round: float | None = None,
+    duel_ticks: int | None = None,
+    name: str | None = None,
+) -> int:
+    """Start a duel session. A scenario passes its own issues, decay and clock; the plain simulator passes none."""
     w.state.duel_session += 1
     session = w.state.duel_session
-    per_round = decay()
-    two_issues = session % 2 == 0
+    per_round = decay() if decay_per_round is None else decay_per_round
+    two_issues = session % 2 == 0 if two_issues is None else two_issues
+    length = w.config.duel_ticks if duel_ticks is None else duel_ticks
     issues = ["price", "days"] if two_issues else ["price"]
     rng = w.rng("duels", session)
     players = [t for t in w.state.teams.values() if not t.bot]
@@ -158,10 +167,10 @@ def start_session(w: World) -> int:
                 rival_limit=theirs,
                 your_days_weight=weights[0],
                 rival_days_weight=weights[1],
-                deadline_tick=w.tick + w.config.duel_ticks,
+                deadline_tick=w.tick + length,
                 decay_per_round=per_round,
                 started_tick=w.tick,
-                practice=session == 1,
+                practice=session == 1 and name is None,
             )
             w.state.duels[duel.duel] = duel
             created += 1
@@ -169,10 +178,10 @@ def start_session(w: World) -> int:
         "duels.scheduled",
         {
             "session": session,
-            "name": "Practice duels" if session == 1 else f"Sim duels {session}",
+            "name": name or ("Practice duels" if session == 1 else f"Sim duels {session}"),
             "duels": created,
             "rounds": 1,
-            "duel_ticks": w.config.duel_ticks,
+            "duel_ticks": length,
             "decay": per_round,
             "issues": issues,
         },

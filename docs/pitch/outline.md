@@ -1,7 +1,7 @@
 # Sunday pitch outline (7 minutes, with a 5-minute cut)
 
 Presenter: **Omar**. Backup: **Marius** (takes over the demo laptop and Q&A if Omar's connection or voice fails).
-Draft as of Sat 3 Oct, ~06:00 Madrid; updated ~10:30 with Saturday's first ticks and the morning's merges. Claim ids `[Cn]` point to `claims.md`; nothing is said that is not in that ledger.
+Draft as of Sat 3 Oct, ~06:00 Madrid; updated ~10:30 with Saturday's first ticks and the morning's merges; the rules and venue lines were synced Sat 3 Oct evening with `docs/briefing.md`. Claim ids `[Cn]` point to `claims.md`; nothing is said that is not in that ledger.
 
 **The one story:** our agents *negotiate through language*, *execute verifiable agreements* (structured offers, guardrails, one
 shared ledger), and *learn from outcomes* (evals → lessons → recall → the next negotiation), with **Jev deciding when to act**.
@@ -38,8 +38,8 @@ Hard rule: the demo is 90 s on the clock. If it fails at 20 s, play the backup r
 
 ## Slide 2 · One story, four verbs (0:55)
 
-- **On screen:** the architecture artifact (https://claude.ai/artifact/9KKsCg2P2gYqRG8CDpDD39), with four boxes highlighted in this order:
-  1. **Language**: the LLM writes the words. It decides nothing binding.
+- **On screen:** the architecture artifact (https://claude.ai/artifact/SDYmzHVWNbUpUb6UyGnVkR), with four boxes highlighted in this order:
+  1. **Language**: words only: the LLM may write them (`llm_words` is off in `RUNTIME.md`, so today's live messages are templates). It decides nothing binding.
   2. **Structure**: the structured offer, `GUARDRAILS.md`, the hook, one shared Postgres ledger. [C1][C2][C3]
   3. **Learning**: outcomes are scored (`bazaar evals`), turned into lessons, recalled by hybrid search before the next negotiation. [C38]
   4. **Jev**: decides when to act; below its bar it says "undecided" and the safe default runs. [C4]
@@ -92,10 +92,11 @@ Hard rule: the demo is 90 s on the clock. If it fails at 20 s, play the backup r
   1. **Baseline, REAL:** Friday practice duels, mean 0.279 (20 scored), about 6 rounds per deal. [C30]
   2. **In simulation:** v1 0.27 → v2 0.36–0.40 in our real client against modelled rivals, 0 closes outside the limit. [C31]
   3. **Replay on real inputs:** the 12 Friday duels we never answered: 178 P with v2 vs 122 P with v1 (n = 12). [C33]
-- **The mechanism in one line:** every counter-offer costs 6% of the pie (0.94^rounds), so the best move is often to say less.
-  v1 talked six times a deal; v2 talks about once. The gain is rounds, not more deals. [C6][C32]
+- **The mechanism in one line:** every round of talk (one priced message from each side) shrinks the pie: the practice session kept 0.94
+  per round, Duels II keeps 0.92 and Duels III 0.90, so the best move is often to say less. v1 talked six times a deal; v2 talks about
+  once. The gain is rounds, not more deals. [C6][C32]
 - **Say the limits, unprompted:** simulated rivals, tuned on the same zoo, n = 12 for the replay. v2 went live on Saturday at about 10:00
-  on Omar's decision, not Jev's (Jev was undecided, 0.72 against a 0.90 bar), and its real result is not in until Duels I. [C35][C51]
+  on Omar's decision, not Jev's (Jev was undecided, 0.72 against a 0.90 bar), and whether it beat v1 in real duels is not known: Duels I scored 27 deals, 15.02 points, and Friday's 0.279 is only a practice estimate. [C35][C51]
 - **If asked** "does it beat just accepting the best offer at the end?": "In the zoo it ties (21.93 vs 22.06); it wins where the accept
   cap binds, as in the replay." [C34]
 - **If Saturday's data lets us:** add a fourth bar, REAL, "Saturday duels / ladder vs Friday's 0.279 / 0.464" [C41]. Only the evals
@@ -139,18 +140,24 @@ and any number in an answer must exist in `claims.md`. Add five likely questions
 | "Is v2 what you ran in the tournament?" | "Since Saturday 10:00, yes: Omar switched it on after the simulator proof; Jev was undecided, so that was a human call. Friday ran v1. The numbers on the slide are simulation and replay; the real Duels result is {{C41, or 'not in yet'}}." | C35, C41 |
 | "Is Jev accurate?" | "Jev gives a confidence; we log it with the bar and the outcome. With this few decided outcomes we do not claim accuracy." | C54, C56 |
 | "Does your agent lie?" | "Only in the words, never in the structured offer, and never with our real limit. It is switched on since Saturday morning; we have no live example to show yet." | C64 |
-| "Did you make a market?" | "Our own venue was switched on on Saturday morning; {{it opened at tick N / it has not opened yet}}. At tick 160 our market score was 0." | C70 |
+| "Did you make a market?" | "Yes. Our own board venue opened on Saturday, around game hour 3.6, and replaced the free starter stall. So far it scores what the stall scores, half the Market Test points, and, as of Saturday evening, no other team has traded on it. Friday had no market making for anyone." | C70 |
 
 ## Rehearsal and logistics
 
 - **Rehearsal: Sunday 12:15 Madrid**, in the room if possible, before the 14:00 final (Sunday doors close at 15:00). Omar presents, Marius
   runs the demo laptop and the clock. One full run, then one run of only slides 4 to 6. Total 25 minutes. **Confirm the real slot** with
   the organisers on Saturday; the 14:00 final time is from the schedule, our presentation slot is not yet known.
+- **Answered Sunday 09:18 by the organisers** ([transcript](../transcripts/2026-10-04-invofox-3.md), 05:00–06:57): the market stops
+  at 15:00 and teams get one hour to prepare. Presentations go in ranked order: **5 minutes for the top three teams, 3 minutes for
+  everyone else**, then 30 minutes of judging and the winners at 17:30. From 15:00 a "Submit your project" link on the Bazaar takes
+  the code, slides, artifacts and an explanation (team key to authenticate). The judges want: how we approached the challenge, what
+  we built, why we built it that way (which tools and models), and what we learned. This outline has a 7-minute run and a 5-minute
+  cut; a 3-minute cut is not written yet.
 - **Pre-flight, Sunday 08:30:** `gh pr view` on every PR in `claims.md` §G; refresh C13, C41 from `evidence.md`; log into Phoenix and open
   the chosen trace; open Bazaar Live once and click its sound gate; unmute the laptop; put the backup recordings on the desktop;
   run `bazaar evals report` once to be sure the database answers.
 - **Two laptops:** Omar's is the stage laptop; Marius's mirrors the slide deck and holds the same backup recordings.
 - **Deck tool:** a Slides artifact built from this outline, or Google Slides. The deck is built **after** Saturday's evidence; this file is
   its source of truth.
-- **Open questions for Omar:** (1) the real presentation slot and length; (2) whether to show the explainer site (Marius's
+- **Open questions for Omar:** (1) the real presentation slot and length (answered Sunday 09:18, see above); (2) whether to show the explainer site (Marius's
   `game-explainer-site`, unpushed at 04:30). Answered: Omar switched `duel_policy` to v2 on Saturday at about 10:00 (C35); slide 5 says so.

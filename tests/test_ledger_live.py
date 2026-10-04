@@ -103,7 +103,12 @@ def test_a_live_taker_sends_nothing_while_postgres_is_down_then_resumes_without_
     assert team.sent == [("accept", 1)] and hub.health()["ledger"] == "shared"
     taker.on_tick(team.now)  # the same tick again (a re-read clock): the accept is never repeated
     assert team.sent == [("accept", 1)]
-    assert [(kind, tick) for kind, tick, *_ in pg.rows()] == [("accept", TICK + 1), ("spend", TICK + 1)]
+    assert [(kind, tick) for kind, tick, *_ in pg.rows()] == [
+        (f"operator_say:team_desk:{ledger.world}", TICK + 1),
+        ("accept", TICK + 1),
+        ("publication_pending", TICK + 1),
+        ("spend", TICK + 1),
+    ]
 
 
 def test_a_live_maker_sends_nothing_while_postgres_is_down_then_posts_once_it_is_back(tmp_path):

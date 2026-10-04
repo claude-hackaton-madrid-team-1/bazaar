@@ -270,17 +270,6 @@ def test_jev_reads_an_accept_as_an_accept_even_with_no_fee(tmp_path):
     assert state["swap"]["kind"] == "accept" and state["swap"]["fee"] == 0
 
 
-def test_the_maker_lists_again_when_the_desk_is_killed_by_its_environment(monkeypatch):
-    from bazaar_agent.agents.team_desk import maker_may_list
-    from bazaar_agent.guardrails import Guardrails
-
-    me = {"assets": [{"id": 3, "ref": "LAT-03", "your_value": 1.2}, {"id": 4, "ref": "LAT-03", "your_value": 1.2}]}
-    rules = Guardrails(team_threads_enabled=True)
-    assert not maker_may_list(me, "LAT-03", 4, rules)
-    monkeypatch.setenv("BAZAAR_TEAM_THREADS", "0")
-    assert maker_may_list(me, "LAT-03", 4, rules)
-
-
 def test_a_cancel_answered_settled_posts_no_new_offer_and_nets_nothing(tmp_path):
     # security-auditor #188 r2 P2-1: a settled offer is not seen; netting it let the cap be passed by its cash.
     class Settled(Team):
@@ -312,7 +301,7 @@ def _swap(ref: str, expected_ours: float, team: str = THEM):
     return _replace(t, refs=("LAT-03", ref), want={"cards": [ref]}, ours=expected_ours, p_fill=1.0)
 
 
-def test_the_page_closest_to_complete_is_asked_for_first_whatever_the_gain():
+def test_expected_swap_gain_beats_page_completion_and_affinity():
     from bazaar_agent.agents.team_desk import PageNeed, TeamDesk
 
     pages = {
@@ -322,7 +311,7 @@ def test_the_page_closest_to_complete_is_asked_for_first_whatever_the_gain():
     }
     plan = [_swap("LAT-04", 30.0), _swap("MAL-09", 20.0), _swap("LAV-10", 5.0), _swap("LAV-09", 9.0)]
     ranked = sorted(plan, key=lambda t: TeamDesk._priority(t, pages))
-    assert [t.refs[1] for t in ranked] == ["LAV-09", "LAV-10", "MAL-09", "LAT-04"]
+    assert [t.refs[1] for t in ranked] == ["LAT-04", "MAL-09", "LAV-09", "LAV-10"]
 
 
 def test_page_needs_reads_our_album_from_the_market():
@@ -362,17 +351,6 @@ def test_the_card_scan_places_holders_the_feed_never_shows():
     ]
     copies = scanned_copies(scan, [], {"id": "t01", "assets": []}, "t01")
     assert copies["t05"]["LAV-09"] == 1 and copies["t07"]["LAV-09"] == 1 and "t01" not in copies
-
-
-def test_the_closest_pages_are_the_ones_with_the_fewest_cards_missing():
-    from bazaar_agent.agents.team_desk import PageNeed, closest_pages
-
-    pages = {
-        "LAV": PageNeed("LAV", 8, 10, 1.6, 106.0),
-        "MAL": PageNeed("MAL", 8, 10, 1.1, 72.9),
-        "LAT": PageNeed("LAT", 2, 10, 0.5, 33.1),
-    }
-    assert closest_pages(pages) == {"LAV", "MAL"} and closest_pages({}) == frozenset()
 
 
 def test_the_official_value_is_the_source_of_the_page_bonus_when_the_card_completes_the_page(tmp_path):

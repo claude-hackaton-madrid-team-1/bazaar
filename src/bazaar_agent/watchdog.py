@@ -587,6 +587,15 @@ def evaluate(w: Window, tick: int, rules: Guardrails) -> tuple[list[Finding], li
     return fresh, refusal_storms(w.decisions, refused, rules.watchdog_refusal_storm)
 
 
+def trip_until(f: Finding, tick: int, rules: Guardrails) -> int | None:
+    """When a trip lapses by itself: the finding's own `until_tick`, else a `dealer_sell` trip re-arms after
+    `dealer_sell_breaker_reset_ticks` game ticks (0: only a human resets it). Evidence older than the trip is spent
+    (`evaluate` keeps only findings after the scope's last breaker change), so a new below-value sale trips it again."""
+    if f.until_tick is None and f.scope == "dealer_sell" and rules.dealer_sell_breaker_reset_ticks > 0:
+        return tick + rules.dealer_sell_breaker_reset_ticks
+    return f.until_tick
+
+
 def run(
     conn: psycopg.Connection,
     tick: int,
@@ -605,7 +614,8 @@ def run(
                 log(f"tick {tick} CRITICAL watchdog: {f.reason}")
             elif f.scope is not None and f.scope not in tripped:
                 tripped.add(f.scope)  # one trip per scope per tick (the first reason)
-                if breakers.trip_and_record(conn, f.scope, f.reason, tick, until_tick=f.until_tick, source=SOURCE):
+                until = trip_until(f, tick, rules)
+                if breakers.trip_and_record(conn, f.scope, f.reason, tick, until_tick=until, source=SOURCE):
                     log(f"tick {tick} watchdog: TRIPPED {f.scope}: {f.reason}")
         for s in storms:
             if state.should_warn(s, tick):

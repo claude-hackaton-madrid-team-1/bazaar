@@ -73,7 +73,7 @@ Two panels.
   - Efficiency and session points: `night/w1b-broker-edge:docs/night/w1b-broker-edge.md`, "Evidence: W1a's bench, 1,000 books per row, p50 efficiency" (12 worlds). Greedy and exact rows: same file, under "Evidence: own bench": "Greedy (the starter broker) and exact (#71) equal the stall in every cell of both tables (identical p50 and mean, ±0.001)". They are written as explicit rows equal to the stall.
   - Oracle p50 (default worlds only): `night/w1a-bench-sim:docs/night/w1a-bench-sim.md`, "Evidence" table (normal/hard × quote/limit: 0.91 / 0.93).
   - Saturday points: `night/b2-venue-runbook:docs/night/b2-venue-runbook.md`, "What the venue is worth on Saturday" (jump clock, 8 sessions, 500 simulated Saturdays, two stall-level rivals).
-- **Caveats:** W1b's oracle column is a **mean**, the other policies are **p50**: plot the oracle p50 where it exists (4 default worlds) and label the rest as mean. No real Market Test had been observed; arrivals, shading, relax and the match rule (`quote` vs `limit`) are assumptions, and the headroom moves ~10× across them. The edge loses 5–10 % of sessions to the stall. Session points use W1a's reading of RULES.md (stall 0.5, any edge above a stall-level field 1.0). B2's figures also assume W5's 15/15 bench/venue split. The keeper as #71 ships it (exact) earns exactly the stall's points.
+- **Caveats:** W1b's oracle column is a **mean**, the other policies are **p50**: plot the oracle p50 where it exists (4 default worlds) and label the rest as mean. No real Market Test had been observed; arrivals, shading, relax and the match rule (`quote` vs `limit`) are assumptions, and the headroom moves ~10× across them. The edge loses 5–10 % of sessions to the stall. Session points use W1a's reading of RULES.md (stall 0.5, any edge above a stall-level field 1.0). B2's figures also assume W5's 15/15 bench/venue split. The keeper as #71 ships it (exact) earns exactly the stall's points. *Superseded in part, Sat 3 Oct evening: the real game agrees. Our board venue v19 with the exact broker scored exactly the stall's 0.5 bench in every Market Test so far (efficiency 0.878 to 0.933 all gave 0.5), and no team shows more than 0.5 (`docs/briefing.md`, "Our own market"). Market making per round is about 22.5 x bench points + 7.5 x organic value.*
 
 ## 6. Score model: we can predict the official board
 
@@ -94,14 +94,32 @@ Two panels.
 - **Source:** `night/w5w6-score-redteam-morning:docs/night/w5w6-score-redteam-morning.md`, section 2 "Red team, prompt injection (#24)", the Path / Cases / Result table (`tests/test_redteam_injection.py`).
 - **Caveats:** **the current count is 168, not 129.** 129 was the count at commits 22551c6–34f99b1, before the r1/r2 reviews added the desk tool-call cases, the digit-free payloads and the "settled / are yours" case (152 at a611bd7, 168 at 6ab5b1e, the branch head). Deterministic paths only: whether a live LLM obeys hostile text is not testable offline; what is covered is that the guard hook denies every harmful tool call it would make. One known gap: `sell_cancel` on any offer id passes the hook (moves no value). Planted bugs fail 34 of 48 selected cases (the tests bite).
 
-## 8. The Saturday clock: jump or resume?
+## 8. The Saturday clock: superseded jump-or-resume forecast
 
 - **Claim:** whether the frozen clock jumps to game hour 4 or resumes at 2.65 moves every Saturday event by 1 h 21 min and drops Saturday's Market Tests from 8 to 7.
 - **Type:** dumbbell / two-lane timeline: one row per event, a dot at the jump wall time and one at the resume wall time (bars for the duel sessions' start–end). Colour by action (bench, duels, grant, round).
 - **x:** wall-clock time (Sat 3 Oct 09:00 → Sun 4 Oct 15:00, CEST). **y:** event (ordered by game hour).
-- **Data:** `08_saturday_clock.csv` (events with a slot in at least one column; `status` = scheduled | overdue | never).
+- **Data:** `08_saturday_clock.csv` preserves the original forecast, with later events labeled `[superseded forecast; see charts.md section 8]`. Its game hours and wall times are not the current schedule; the old `status` columns describe only that forecast.
 - **Source:** `night/b6-saturday-playbook:docs/night/saturday-schedule.json`, `events[].slots.jump` / `.resume` (built from the organisers' `/api/schedule` and `/api/clock`; anchors: jump t = 4.0 at 09:00, resume t = 2.65 at 09:00).
-- **Caveats:** these are expected times under each anchor, not observed ones; gate G0 at 08:55 (`bazaar clock`) picks the column, and the live feed wins over both. Under resume: h3's Market Test lands at 09:21 (B2 says it still counts for Friday), h17 falls on Sunday 09:21 (after the 23:00 close), Duels I starts at 12:51, the same time PR #71's venue keeper opens (h6.5), and the Sunday finale events (h22.8–24.0) never happen before the 15:00 close. Game hour 4.0 has 4 rows at the same wall time (round, set release, day opens); collapse them into one label. Sunday Market Tests run at 15 s ticks (16 ticks = 4 min).
+- **Caveats:** historical Saturday planning evidence only, not observed event times or a Sunday timetable. The clock resumed at h2.65 and round 2 started at tick 160, but organisers moved events during Saturday. The venue keeper now opens at `venue_open_after_game_hours` in `GUARDRAILS.md` (3.0), and v19 opened around h3.6.
+- **Sunday correction, 4 Oct:** the live [schedule](https://bazaar.causaprima.ai/api/schedule) anchors "Sunday opens" at h16.65, 09:00 CEST, with 15 s ticks. One game hour equals one real hour on Sunday. The following quoted entries supersede all Sunday predictions in the CSV:
+
+| Game hour | Sunday CEST | Schedule entry |
+|---|---|---|
+| 14.65 | Before open; firing time UNVERIFIED | "The hard Market Test: firmer and more impatient traders" |
+| 15 | Before open; firing time UNVERIFIED | "The Market Test: every venue gets the same synthetic book" |
+| 16.65 | 09:00 | "Sunday opens"; "Chamberí released"; "Round 3 starts" (ladder restarts) |
+| 16.7 | ~09:03 | "The Sunday allowance: 150 primas for everyone" |
+| 17 | ~09:21 | "The Market Test: every venue gets the same synthetic book" |
+| 18.65 | ~11:00 | "Duels III: two issues, shorter clock, harder decay" (12-tick duels, decay 0.10) |
+| 19 | ~11:21 | "The Market Test: every venue gets the same synthetic book" |
+| 21 | ~13:21 | "The Market Test: every venue gets the same synthetic book" |
+| 21.45 | ~13:48 | "finale warning" |
+| 21.65 | ~14:00 | "Finale: stalls close" (all five dealers); "The Grand Final: the last duel wave, on the big screen" |
+| 22.55 | ~14:54 | "freeze warning" |
+| 22.65 | 15:00 | "Scores freeze"; "The Bazaar closes" |
+
+The h14.65 and h15 Market Tests precede the h16.65 opening. Whether they fire at the open or are skipped is **UNVERIFIED**. Sunday's 16-tick Market Tests last four minutes.
 
 ## 9. (Optional) Friday's public market: where trades actually settled
 

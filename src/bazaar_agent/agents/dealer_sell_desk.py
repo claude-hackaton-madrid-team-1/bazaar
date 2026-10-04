@@ -52,7 +52,7 @@ from bazaar_agent.agents.dealer_sell_data import (
     ladder_deals,
     market_from_feed,
 )
-from bazaar_agent.agents.strategy_gate import DEALER_SELL, StrategyGate
+from bazaar_agent.agents.strategy_gate import DEALER_SELL, StrategyGate, holdings_key
 from bazaar_agent.guardrails import Guardrails
 from bazaar_agent.jev.decider import needed_budget_s
 from bazaar_agent.news import EVENTS_FILE, MarketEvent, active_signals, load_market_events
@@ -181,6 +181,17 @@ def candidates(
         return (c.level in full, -(c.level or 0), -gain, c.asset_id)
 
     return sorted(out, key=rank)
+
+
+def ladder_slot_sells(
+    found: Sequence[Candidate], levels: Mapping[str, int | None], deals: Mapping[str, int] | None
+) -> list[Candidate]:
+    """Card hunt: only the candidates that fill an empty ladder slot today (a known level, not full). Unknown
+    deals (None): none, fail closed: a sale to a dealer scores only as a ladder slot."""
+    if deals is None:
+        return []
+    full = full_levels(levels, deals)
+    return [c for c in found if c.level is not None and c.level not in full]
 
 
 def weighted_gain(c: Candidate, weight: float) -> float:
@@ -520,8 +531,13 @@ class SellDesk:
         load: Callable[[Any], SellMarket | None] | None = None,
         gate: StrategyGate | None = None,
         learnings: Any = None,
+        hunt: bool = False,
     ) -> None:
         self.team, self.rules, self.rec, self.live, self.log = team, rules, rec, live, log
+        # Card hunt: a new sell thread only where it fills an empty ladder slot (a known level with fewer than
+        # three scored deals today), opened on the desk's own plan (a spare copy, never an only copy; floor, fills)
+        # without Jev's yes. Still only behind `dealer_sell_enabled`.
+        self.hunt = hunt
         self.learnings = learnings  # a `LearningStore` for the dealers' memory; None: the feed window's words only
         self.hooks, self.load = hooks, load
         self.gate = gate  # Jev `dealer_sell_duplicates_worth_it` (SG1): None = no Jev, no new sell thread
@@ -564,9 +580,10 @@ class SellDesk:
         # (Jev keeps its 3 s budget unchecked here, as before: needed_budget_s(0.0) is 0 for Jev). The live
         # window, not the snapshot's: the maker's own Jev price calls may have used most of the tick.
         now_left = left() if left is not None else float(getattr(snap.clock, "next_tick_in", 0.0) or 0.0)
-        if self.gate.due(DEALER_SELL, tick) and now_left < needed_budget_s(0.0):
+        state_key = holdings_key(getattr(snap, "me", {}) or {})
+        if self.gate.due(DEALER_SELL, tick, state_key=state_key) and now_left < needed_budget_s(0.0):
             return False
-        return self.gate.allows(DEALER_SELL, tick, lambda: self.gate_state(snap))
+        return self.gate.allows(DEALER_SELL, tick, lambda: self.gate_state(snap), state_key=state_key)
 
     def gate_state(self, snap: Any) -> dict[str, Any]:
         """What Jev reads: our spare copies (a page keeps one) with `your_value`, the score guard's estimate of
@@ -663,7 +680,7 @@ class SellDesk:
         self.opened_at = [(h, d) for h, d in self.opened_at if h > clock.t_hours - 1.0]
         if len(self.opened_at) >= self.rules.dealer_sell_max_per_game_hour:
             return
-        if not self.gate_on(snap, left):
+        if not self.hunt and not self.gate_on(snap, left):
             return
         market = self.market_for(snap)
         threads = [t for t in self.team.my_threads("open").get("threads") or [] if isinstance(t, dict)]
@@ -696,6 +713,8 @@ class SellDesk:
             deals=deals,
         )
         found = [c for c in found if self._retry_ok(c, clock)]
+        if self.hunt:
+            found = ladder_slot_sells(found, dealer_levels(market, personas), deals)
         if not found:
             return
         c = found[0]
@@ -768,12 +787,14 @@ def standard_hooks(
             ctx = replace(context(), accepts_this_tick=0)
         except LedgerUnavailable as e:
             raise Hold(f"{e}; no write without the shared ledger (fail closed)") from None
+        copy = ctx.cards.copy(cand.asset_id) if ctx.cards is not None else None
+        value = copy.your_value if copy is not None else cand.your_value
         action = Action(
             action_kind(kind),
             cand.ref,
             cand.rarity,
             price,
-            your_value=cand.your_value,
+            your_value=value,
             scope="dealer_sell",
             asset=cand.asset_id,  # the score impact rule prices this copy, not the worst copy of the card
         )

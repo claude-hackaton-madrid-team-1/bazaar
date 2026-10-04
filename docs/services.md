@@ -1,25 +1,34 @@
 # Live services · integration guide
 
 Every URL a teammate, a dashboard or an agent needs, with the exact contract each one speaks.
-Taker and maker are public and read-only: nothing there can trade, change a setting, or reveal a key or
-one of our private numbers (see "Public by design"). Phoenix is read-only behind its own login.
+The taker and maker status endpoints are public and read-only: they cannot trade or change a setting,
+and filter out private state (see "Public by design"). The agent processes themselves can trade when enabled.
+Phoenix requires its own login.
 `bazaar-mcp` exposes our tools, so every call needs a bearer token (see below).
 
 | Service | URL | What it is |
 |---|---|---|
-| **Taker** | https://bazaar-taker-production.up.railway.app · `wss://bazaar-taker-production.up.railway.app/events` | Autonomous buyer (`bazaar agent taker`): accepts cheap venue asks, negotiates with dealers |
-| **Maker** | https://bazaar-maker-production.up.railway.app · `wss://bazaar-maker-production.up.railway.app/events` | Autonomous market maker (`bazaar agent maker`): posts, reprices and cancels our asks and bids; never accepts |
+| **Taker** | https://bazaar-taker-production.up.railway.app · `wss://bazaar-taker-production.up.railway.app/events` | Autonomous taker (`bazaar agent taker`): buys below value, sells into profitable bids across venues and negotiates with dealers |
+| **Maker** | https://bazaar-maker-production.up.railway.app · `wss://bazaar-maker-production.up.railway.app/events` | Autonomous market maker (`bazaar agent maker`): posts, reprices and cancels asks and bids; runs our venue broker and an optional dealer sell desk |
 | **Phoenix** | https://phoenix-production-6aa3.up.railway.app | Traces UI for every negotiation, duel, monitor tick and CLI line (project `bazaar`) |
-| **bazaar-mcp** | https://bazaar-mcp-production.up.railway.app/mcp (`GET /health` public) | Team 1's runtime tools as a remote MCP server (Streamable HTTP) for teammates' Claude Code: **bearer token required**, writes are a dry run |
+| **bazaar-mcp** | https://bazaar-mcp-production.up.railway.app/mcp (`GET /health` public) | Team 1's runtime tools as a remote MCP server (Streamable HTTP) for teammates' Claude Code: **bearer token required**, writes default to dry run |
 | **Simulator** | https://bazaar-sim-production-1d48.up.railway.app | A simulated Bazaar (`bazaar-sim`): the organiser API's routes and shapes, keys `sim-team1`…`sim-team8`, for testing agents and the dashboard while the game is closed |
 
-Both agents are **LIVE since Sat 2026-10-03 01:45 Madrid**: `BAZAAR_LIVE=1` is set by hand on
-`bazaar-taker` and `bazaar-maker` (they trade from the 09:00 opening), and `GET /health` says
-`"mode": "live"`. Without that variable an agent is a dry run: it logs what it *would* do and publishes
-only its outline (no prices, see "Public by design"). To stop one: first its kill switch, which holds
-at once (`railway ssh --service bazaar-taker -- touch /app/.local/PAUSE`; each service has its own),
-then `railway variable delete BAZAAR_LIVE --service bazaar-taker` (it redeploys in dry run). Neither
-withdraws our open offers: `bazaar sell cancel` does (README, "Production on Railway").
+These are the configured service addresses. Check each agent's
+`GET /health` for its current `mode`, target and clock. `BAZAAR_LIVE=1` enables trading; otherwise an agent
+is a dry run and publishes only tick events. Deployment configuration is in
+[`.railway/railway.py`](../.railway/railway.py).
+
+The maker's dealer sell desk can accept offers when `dealer_sell_enabled` is on; the checked-in
+[guardrails](../GUARDRAILS.md) currently disable it. Those accepts use the same shared quota as duels
+and the taker (`agents/dealer_sell_desk.py`).
+
+Market routing compares usable venues without treating a venue owner as the buyer. The taker checks live books and fees before accepting. The maker prefers observed card-specific demand for public asks, then its activity/fee fallback. Addressed offers minimise the recipient's fee and exclude both parties' own venues. Feed hints choose a posting venue; they never authorise a trade.
+
+Bazaar Live's private decision view carries trade identifiers separately from settlement evidence. A posted offer can have an intended recipient or be public; only an observed settlement establishes its actual buyer and seller. Cash counteroffers record their card, side, price, venue and intended counterparty for that view.
+
+To stop new writes, pause each service separately; pausing does not withdraw existing offers.
+See [pause writes](operations.md#pause-writes) and [Railway operations](operations.md#production-on-railway).
 
 ## One key, staggered ticks (`BAZAAR_TICK_OFFSET_S`)
 
@@ -34,7 +43,7 @@ still keeps 9 s for its work. Not a number ≥ 0: the process stops at start and
 |---|---|---|
 | `bazaar-duels` | 0 | first: duels have deadlines |
 | `bazaar-taker` | 2.5 | after the duels' reads |
-| `bazaar-maker` | 5 | never accepts |
+| `bazaar-maker` | 5 | broker, listings and optional dealer sales |
 | `bazaar-mcp` | 7.5 | request-driven tools; inert unless it runs a tick loop |
 
 Set by hand (`railway variable set BAZAAR_TICK_OFFSET_S --service <svc>`), with the coordinator; the variable is
@@ -61,7 +70,7 @@ Both services serve the same three routes (CORS `*`, `GET` only).
 
 - `mode`: `dry` or `live`.
 - `target`: where the agent's requests go: `{"mode": "real", "url": "https://bazaar.causaprima.ai"}`, or
-  `{"mode": "simulator", ...}` when it runs with `BAZAAR_SIM=1` (README "Simulator").
+  `{"mode": "simulator", ...}` when it runs with `BAZAAR_SIM=1` ([simulator setup](operations.md#simulator)).
 - `ledger`: the guardrail ledger it counts on: `shared` (the team's Postgres), `down` (a live agent sends
   nothing until it answers, then resumes by itself), or `local file` (dry run or simulator only). No host.
 - `tick`, `last_tick_at`: the last game tick the agent handled.
@@ -124,7 +133,7 @@ A decision, as published:
 
 - `kind` is one of `accept_ask`, `accept_bid` (the taker sells a free copy into a standing bid: off by
   default, `--accept-bids`), `team_open` / `team_offer` / `team_walk` / `team_accept` (the taker's swap
-  threads with other teams, N17: off by default, `team_threads_enabled`), `dealer_open`, `dealer_bid`, `dealer_accept`, `dealer_walk`, `post_ask`,
+  threads with other teams, N17: on since Sat 3 Oct by team decision with a Jev gate, `team_threads_enabled` in GUARDRAILS.md), `dealer_open`, `dealer_bid`, `dealer_accept`, `dealer_walk`, `post_ask`,
   `post_bid`, `cancel_ask`, `cancel_bid`, `hold_ask` / `hold_bid` and `reprice_ask` / `reprice_bid` (the
   maker's `reprice_or_hold` verdict), and `broker_match` / `venue_open` from our venue's broker (`agent:
   "broker"`, inside the maker's tick loop): a sent one shows only its kind and status, no inputs or move.
@@ -174,7 +183,7 @@ Open https://phoenix-production-6aa3.up.railway.app and sign in as `admin@localh
 the `PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD` variable of the `phoenix` service in the Railway dashboard
 (project `heartfelt-warmth`). Project **`bazaar`** holds one trace per `monitor tick N`, `duels tick N`,
 a `duel` trace per duel and a `negotiation` trace per dealer conversation. To send a laptop's traces
-there, create your own key in Phoenix (Settings → API Keys) and follow README, "Send your laptop's traces there".
+there, create your own key in Phoenix (Settings → API Keys) and follow the [monitoring setup](operations.md#monitoring-learning-and-evals).
 
 ## bazaar-mcp: the runtime tools over MCP (not read-only: bearer token)
 
@@ -192,25 +201,27 @@ Tools: the 15 reads (`learnings`, `status`, `holdings`, `cards`, `clock`, `strat
 "request", "command", ...}`: `approved` + `sent: false` is a dry run (what WOULD be sent), the default
 unless `BAZAAR_LIVE=1` is set on the service by hand. The guardrails run inside the server for every
 write; every write call is a `decisions` row with agent `mcp`. Answers never carry a key, token,
-password or URL. Add it to Claude Code: README, "The tools as a remote MCP server".
+password or URL. See the [desk and MCP setup](operations.md#models-and-the-desk).
 
 **Human approval tools (HA2), for Omar's chat and the Bazaar Live Approvals screen only.** `approvals`
 (read), `approve` and `revoke` (writes) exist only when the service has `BAZAAR_APPROVER_TOKEN`, and only on a
 request that also sends `X-Approver-Token: <BAZAAR_APPROVER_TOKEN>`. Such a request sees ONLY these three tools (an
 approver connection is its own MCP entry and never reads counterparty text); the bearer alone neither lists nor runs
 them (`unknown tool`); a wrong or empty approver token is `403 {"error": "forbidden"}` and a WARN line, never a
-lockout. No agent tool set has them (`runtime/human_tools.py`). `approve`
+lockout. An approver request has its own rate buckets (5 req/s burst 20, 30 calls/min), so no bearer holder can
+drain the human's budget. No agent tool set has them (`runtime/human_tools.py`). `approve`
 `{card, side: buy|sell, price: 1..1000, ttl_ticks: 1..480 (240), reason?, via?}` answers `{"status": "approved",
 "max_price"|"min_price", "until_tick", "by": "human:<via|mcp>"}` or `{"status": "refused", "reasons": [...]}` when an
 approval could only loosen a hard cap (rarity cap, hourly spend, official value), sell a page's last copy or sell
 below our value. A sell approval also releases a sale `max_score_loss_per_move` holds. `revoke` `{card, side,
-reason?, via?}` answers `revoked`, or `denied` (there was none); either way the request reads denied. Approves and
-revokes run one at a time, so a revoke sent right after an approve lands after it. `approvals` lists the requests of the last 2 game hours (state, why, our and official value, album
+reason?, via?}` answers `revoked`, or `denied` (there was none); either way the request reads denied. A revoke
+never waits for a game read (it works with the clock unreadable, its row then has no tick), and an approve of the
+same card and side still checking when it comes in is refused ("approve again"). `approvals` lists the requests of the last 2 game hours (state, why, our and official value, album
 impact, the cap, who asked) and the active approvals. At most 10 approval writes a minute; each is a `decisions` row
 (agent `guard`, kind `approval_granted|refused|revoked|denied`). Spec: `.ai/specs/HA2-spec.md`.
 
 `status`, `holdings` and `strategy` (and every write's album-first read) answer from the shared Postgres
-snapshot of `/api/me` while it is provably current, else from `/api/me` itself (README, "Holdings"). Each
+snapshot of `/api/me` while it is provably current, else from `/api/me` itself ([shared state](operations.md#shared-database)). Each
 answer carries where it came from:
 
 ```json
@@ -245,7 +256,7 @@ simulator in its own database).
 words (`team_affinity.parse`; confidence 0.5, 0.25 with an injection shape); `quote` is their message, scrubbed and
 cut to 200 characters. Words may lie: nothing reads these rows back into a decision. **inferred**: one consistent
 assignment per team from the rival affinity map, with each set's probability, every 10 ticks (teams with no signal
-have no rows). The taker's team desk writes both off the tick, and asks each team once per game day (`round`) in its
+have no rows). The taker's team desk writes both off the tick, and asks each team once per round (`/api/clock` `round`) in its
 first message of a team thread: "Por cierto, ¿qué barrio es vuestro ×1,6? / By the way, which set is your ×1.6?".
 `team_affinity_board` puts said beside inferred per team and set (DataGrip; bazaar-live's game screens read it
 through a `show.game_*` view behind `GAME_VIEW_TOKEN`). CLI, read-only: `uv run bazaar affinity --teams [--json]`.
@@ -267,7 +278,7 @@ and a failure only logs `schema: rival_board vN not applied (...)`. Any function
 
 ## Evals scorecard (Postgres)
 
-The evals (README "Evals") write one `outcomes` row per settled duel, dealer thread, team trade or
+The [evals](operations.md#monitoring-learning-and-evals) write one `outcomes` row per settled duel, dealer thread, team trade or
 Market Test and keep three views current. They run inside the agents, every 6 ticks: the duel player
 scores duels, the taker the ladder and trades, the maker the Market Test. A dashboard reads them with
 plain SQL, or runs `uv run bazaar evals report --json`. Scores are 0..1; labels `good` (≥ 0.6) · `ok` (≥ 0.3) · `bad`.
@@ -324,15 +335,15 @@ https://bazaar-sim-production-1d48.up.railway.app serves the same routes as the 
 to type: the targets are hardcoded in `src/bazaar_agent/config.py`), e.g. `BAZAAR_SIM=1 uv run bazaar
 status`. A dashboard can point its base URL there to develop against live-looking data; team routes
 take `X-Team-Key: sim-team1` (a simulator key, not a secret, refused by the real game). The taker's,
-maker's and MCP server's `/health` carry `target: {mode: real|simulator, url}`. README, "Simulator".
+maker's and MCP server's `/health` carry `target: {mode: real|simulator, url}`. See [simulator setup](operations.md#simulator).
 
-## Bazaar Live (the show)
+## Bazaar Live (separate repository)
 
 `bazaar-live` (repo [bazaar-live](https://github.com/claude-hackaton-madrid-team-1/bazaar-live)): the
 buyer and the seller at a Rastro stall, acting out and voicing every public move. Its public URL is the
 Railway-generated domain of service `bazaar-live` (generated once by hand; listed in its README).
 
-- The page reads only the taker's and maker's public `/health`, `/state` and `WS /events` above, from
+- The public show reads the taker's and maker's public `/health`, `/state` and `WS /events` above, from
   the browser, and keeps only the public fields; it sends nothing to the agents or the game and holds no
   team key. `?mock=1` plays recorded fixtures when the doors are closed.
 - Its own server answers `GET /health` (`{ok, service, tts}`), `GET /api/tts/providers` and
@@ -340,14 +351,18 @@ Railway-generated domain of service `bazaar-live` (generated once by hand; liste
   `GEMINI_API_KEY`, both optional). It speaks only the show's own template lines, for its own page
   (`Origin`), under per-address and global rate limits and a daily character budget.
 
-## Our venue: opened by the maker at game hour 6.5 (OFF for now)
+The same service also hosts private game screens and a human approvals screen. Its server keeps the
+team key and MCP credentials out of the browser: game views use `GAME_VIEW_TOKEN`, and approvals use a
+separate login plus the MCP approver credentials. See the
+[bazaar-live repository](https://github.com/claude-hackaton-madrid-team-1/bazaar-live) for that application's
+routes and access controls. The environment contract is declared in `.railway/railway.py`.
 
-**Switched off by team decision (Sat 06:08):** `allow_venue_open = false` in `GUARDRAILS.md`. Opening our
-venue replaces the free stall on the spot (RULES.md), and a broker that only matches as well as the stall
-earns the same half of the bench points; ours equals the stall in every simulation and cannot be verified
-live before opening. While off: nothing below opens or matches, and NO bond reserve is held (the floor is
-`cash_floor` alone). Turning it on is a closed-door decision with Omar once the broker has an edge or
-organic trades to serve. What follows is what happens when it is on.
+## Our venue and broker
+
+The checked-in `allow_venue_open` policy enables venue management. The maker uses exact matching
+by default; `BAZAAR_BENCH_POLICY=edge` selects the optional edge broker. Check the current venue and
+scores with `bazaar venue status` and `bazaar evals report`.
+See [the scoring model](briefing.md) for how market-making contributes to the game.
 
 Our board venue runs inside the **maker** on Railway (`bazaar-maker`, no new service). Every maker tick,
 before its own offers, `agents/venue_keeper.py`:
@@ -355,9 +370,9 @@ before its own offers, `agents/venue_keeper.py`:
 1. **Finds the venue we run**: `/api/me` `venue` and the public `/api/venues` (owner `t01`, not the house,
    not a starter stall, `open` or `closing`).
 2. **Opens it once** when we run none, `allow_venue_open = true` and `/api/clock` `t_hours` has reached
-   `venue_open_after_game_hours` (6.5, about 11:30 Madrid, before the h7.0 Market Test at 12:00): a
+   `venue_open_after_game_hours` (GUARDRAILS.md; the hour team venues start trading): a
    `board` venue, 0 bps + 0 P per card, named "Team 1 market". It is tick-driven: no wall clock. The opening
-   goes through `guardrails.check()`: cash must stay at or above `cash_floor` (100) after the 250 P bond +
+   goes through `guardrails.check()`: cash must stay at or above `cash_floor` after the 250 P bond +
    20 P fee (on the cash our open offers do not already promise), never a second venue, never before that
    game hour. Before the request goes out, the shared Postgres must be able to hold the broker key, must
    show that no venue was ever opened on this target (a venue closed or suspended since is never reopened
@@ -374,9 +389,11 @@ before its own offers, `agents/venue_keeper.py`:
    first, ties in book order like the stall, never two offers of one maker, never ours, never an order
    already matched), at most 15 sends a tick paced at 5 per second, each inside the maker's tick window.
 
-**The bond reserve.** Until we run a venue, every purchase by every writer (taker, maker, duels, dealer,
-MCP/runtime: all through `guardrails.check()`) keeps `cash_floor + venue_bond_reserve` = 370 P in cash;
-once `/api/me` shows our venue the floor is 100.
+**The bond reserve.** While `allow_venue_open` is true and we run no venue yet, every purchase by every writer
+(taker, maker, duels, dealer, MCP/runtime: all through `guardrails.check()`) keeps `cash_floor +
+venue_bond_reserve` (GUARDRAILS.md; bond 250 + opening fee 20) in cash. Once our venue is open, the floor is
+`cash_floor` alone; the other limits still bind every buy (`max_spend_per_game_hour`, the official-value cap
+`official_value_margin`, human approval above `human_approval_above`).
 
 **The broker key** comes back once, in the opening's answer. It is saved at once to the shared Postgres
 table `venue_broker_keys` (a redeploy or restart finds it there) and to `<data_dir>/broker.env` (0600), removed
@@ -391,11 +408,14 @@ later (by hand, by the organisers, or between days) is reopened only by hand (`b
 The once-only claim lives in the database the maker writes to, so run the LIVE maker only on Railway (a
 laptop maker on the local default database does not share it). If the maker logs "we run a venue but
 /api/me does not show it as ours", `/me` still carries `starter_broker_key` after our opening: set
-`venue_bond_reserve = 0` so purchases stop keeping the 270 P reserve.
+`venue_bond_reserve = 0` so purchases stop keeping the reserve.
 
 **Turn it off**: `allow_venue_open = false` in `GUARDRAILS.md` (redeploy) stops the opening and every
 broker match; `uv run bazaar venue close <id> --live` closes it (the bond comes back after a cooldown; a
-Market Test session counts the best venue open during it). The kill switch stops all of it.
+Market Test session counts the best venue open during it, and a session with no venue open counts 0, per
+RULES.md). The kill switch stops all of it.
+
+The automatic venue notice waits at least 20 game ticks between announcements and honors the server's next-tick cooldown hint. Feed history restores this cadence after a restart.
 
 **By hand** (laptop, dry run unless `--live`): `uv run bazaar venue status | open | close | fee | announce`
 and `uv run bazaar broker run`. **Prove it on the simulator**: `uv run python scripts/sim_market_test.py`

@@ -19,6 +19,31 @@ def test_the_committed_file_parses_and_every_rule_is_enforced_somewhere():
     assert REAL.principles  # principles are shown even though code does not enforce them
 
 
+def test_deployment_keeps_every_last_copy_and_the_sal07_incident_fails_closed():
+    rules = REAL.rules
+    assert rules.human_approval_above == 0
+    assert rules.protect_page_exceptions == "none"
+    assert all(rules.protects(f"{page}-07", "uncommon", 1) for page in ("LAV", "SAL", "MAL", "RET", "LAT", "CHA"))
+    action = gr.Action("accept_sell", "SAL-07", "uncommon", 29, your_value=118.6, asset=438)
+    verdict = gr.check(action, ctx(held={"SAL-07": 1}), rules)
+    assert not verdict.allowed
+    assert "protect_page_sets" in str(verdict) and "your_value" in str(verdict)
+
+
+@pytest.mark.human_approval
+def test_a_60_prima_standing_bid_needs_approval_even_when_fees_reduce_proceeds(monkeypatch):
+    from types import SimpleNamespace
+
+    from bazaar_agent import approvals
+    from bazaar_agent.approvals import ApprovalBook
+
+    monkeypatch.setattr(approvals, "board", lambda timeout: SimpleNamespace(needed=lambda *args: None))
+    action = gr.Action("accept_sell", "LAT-03", "common", 56, your_value=1.2, volume=60)
+    context = ctx(held={"LAT-03": 2}, approvals=ApprovalBook({}), breakers=frozenset())
+    verdict = gr.check(action, context, gr.Guardrails(human_approval_above=60))
+    assert verdict.violations == ("needs human approval: LAT-03 sell 60",)
+
+
 def test_unknown_rule_bad_value_and_duplicates_fail_fast():
     with pytest.raises(gr.GuardrailsError, match="typo_rule"):
         gr.parse_guardrails("- `typo_rule` = 1 — oops")
@@ -36,7 +61,7 @@ def test_values_are_typed():
 
 
 def test_price_caps_cash_floor_spend_cap_and_album():
-    rules = REAL.rules
+    rules = REAL.rules.model_copy(update={"max_spend_per_game_hour": 250})
     assert gr.check(gr.Action("bid", "LAV-03", "common", 9), ctx(), rules).allowed
     assert "max_price_common" in str(gr.check(gr.Action("bid", "LAV-03", "common", 13), ctx(), rules))
     assert "cash_floor" in str(gr.check(gr.Action("buy", "LAV-09", "rare", 60), ctx(cash=150), rules))
@@ -50,12 +75,12 @@ def test_kill_switch_accept_quota_sells_and_flags():
     off = gr.parse_guardrails("- `trading_enabled` = false — x").rules
     assert not gr.check(gr.Action("bid", "LAV-03", "common", 9), ctx(), off).allowed
     assert "accept(s) already" in str(gr.check(gr.Action("duel_accept", "7"), ctx(accepts_this_tick=1), rules))
-    assert "your_value" in str(gr.check(gr.Action("sell", "LAT-09", "rare", 30, your_value=35.0), ctx(), rules))
-    assert gr.check(gr.Action("sell", "LAT-09", "rare", 40, your_value=35.0), ctx(held={"LAT-09": 2}), rules).allowed
-    last_lat09 = gr.check(gr.Action("sell", "LAT-09", "rare", 40, your_value=35.0), ctx(held={"LAT-09": 1}), rules)
-    assert "protect_page_sets" in str(last_lat09)  # La Latina stays protected...
+    assert "your_value" in str(gr.check(gr.Action("sell", "LAT-08", "rare", 30, your_value=35.0), ctx(), rules))
+    assert gr.check(gr.Action("sell", "LAT-08", "rare", 40, your_value=35.0), ctx(held={"LAT-08": 2}), rules).allowed
+    last_lat08 = gr.check(gr.Action("sell", "LAT-08", "rare", 40, your_value=35.0), ctx(held={"LAT-08": 1}), rules)
+    assert "protect_page_sets" in str(last_lat08)  # La Latina stays protected...
     lat10 = gr.Action("sell", "LAT-10", "rare", 200, your_value=35.0)  # ...but for its one card (SX1)
-    assert gr.check(lat10, ctx(held={"LAT-10": 1}), rules).allowed
+    assert "protect_page_sets" in str(gr.check(lat10, ctx(held={"LAT-10": 1}), rules))
     assert "allow_flags" in str(gr.check(gr.Action("flag", "m1"), ctx(), rules))
 
 
@@ -72,7 +97,7 @@ def test_ledger_counts_spend_per_game_hour_and_accepts_per_tick(tmp_path: Path):
 
 
 def test_pack_buys_stop_at_max_packs_per_game_hour():
-    rules = REAL.rules
+    rules = REAL.rules.model_copy(update={"max_packs_per_game_hour": 3})
     assert rules.max_packs_per_game_hour == 3
     for kind in ("buy", "bid", "accept_buy"):
         action = gr.Action(kind, "sobre_barrio", "pack", 17)
@@ -96,8 +121,15 @@ def test_the_ledger_counts_pack_spends_by_pack_id_in_the_last_game_hour(tmp_path
 
 def test_a_buy_with_no_price_cap_for_its_rarity_is_refused():
     rules = REAL.rules
-    assert "no max_price for rarity 'epic'" in str(gr.check(gr.Action("bid", "LAV-11", "epic", 150), ctx(), rules))
+    legendary = gr.check(gr.Action("bid", "LAV-12", "legendary", 150), ctx(), rules)
+    assert "no max_price for rarity 'legendary'" in str(legendary)
     assert not gr.check(gr.Action("buy", "XYZ-01", None, 5), ctx(), rules).allowed
+    # An epic has a hard cap since buy targets (GUARDRAILS.md `max_price_epic`); without the file, none.
+    epic = gr.check(gr.Action("bid", "LAV-11", "epic", rules.max_price_epic + 1), ctx(), rules)
+    assert f"max_price_epic {rules.max_price_epic}" in str(epic)
+    assert "no max_price for rarity 'epic'" in str(
+        gr.check(gr.Action("bid", "LAV-11", "epic", 5), ctx(), gr.Guardrails())
+    )
 
 
 # ---------------------------------------------------------------- our venue (build only)
@@ -114,7 +146,7 @@ def test_the_committed_file_runs_our_venue_with_a_5_floor_and_holds_no_reserve_o
     rules = REAL.rules
     assert rules.allow_venue_open is True
     assert (rules.cash_floor, rules.venue_bond_reserve, rules.venue_open_after_game_hours) == (5, 270, 3.0)
-    assert rules.max_spend_per_game_hour == 250
+    assert rules.max_spend_per_game_hour == 0
     opened = ctx(cash=119, has_venue=True)
     assert gr.effective_cash_floor(rules, opened) == 5 and gr.floor_text(rules, opened) == "cash_floor 5"
     buy = gr.Action("buy", "LAV-09", "rare", 92)
@@ -234,8 +266,8 @@ def test_dealer_final_lift_off_keeps_every_cap_as_today():
     rules = REAL.rules
     assert rules.dealer_final_lift == 0
     assert rules.final_cap_for("uncommon") == rules.max_price_uncommon
-    final = gr.check(gr.Action("accept_buy", "LAV-08", "uncommon", 27, final=True), ctx(), rules)
-    assert str(final) == "denied: price 27 > max_price_uncommon 26"
+    final = gr.check(gr.Action("accept_buy", "LAV-08", "uncommon", 31, final=True), ctx(), rules)
+    assert str(final) == "denied: price 31 > max_price_uncommon 30"
 
 
 def test_dealer_final_lift_lets_only_a_final_pass_the_card_cap():
@@ -265,7 +297,10 @@ def test_dealer_final_lift_still_meets_cash_floor_and_hourly_spend():
         gr.parse_guardrails("- `dealer_final_lift` = 0.9 — too much")
 
 
-def duel_check(kind="duel_offer", price=105, limit=100, role="seller", days=None, weight=None, rules=REAL.rules):
+WORST = REAL.rules.model_copy(update={"duel_days_signed_roles": "none"})  # the worst case, whatever GUARDRAILS.md sets
+
+
+def duel_check(kind="duel_offer", price=105, limit=100, role="seller", days=None, weight=None, rules=WORST):
     action = gr.Action(kind, "9", None, price, limit=limit, role=role, days=days, days_weight=weight)
     return gr.check(action, ctx(), rules)
 
@@ -293,7 +328,7 @@ def test_a_duel_move_outside_our_limit_is_denied():
 
 def test_under_v2_a_duel_move_outside_our_limit_is_still_denied():
     """v2 lets 0 days through without a weight (they cost nothing under either sign, B2c); everything else holds."""
-    v2 = REAL.rules.model_copy(update={"duel_policy": "v2"})
+    v2 = WORST.model_copy(update={"duel_policy": "v2"})
     assert duel_check(rules=v2).allowed and duel_check(role="buyer", price=95, rules=v2).allowed
     for kind in ("duel_offer", "duel_accept"):
         assert "duel_inside_limit" in str(duel_check(kind, price=100, rules=v2))  # on the limit: no surplus
@@ -314,3 +349,57 @@ def test_under_v2_a_duel_move_outside_our_limit_is_still_denied():
 def test_a_bad_trusted_dealer_list_fails_fast(value):
     with pytest.raises(gr.GuardrailsError, match="flag_trusted_dealers"):
         gr.parse_guardrails(f"- `flag_trusted_dealers` = {value} — x")
+
+
+def test_a_second_venue_needs_max_venues_2():
+    ctx_one = ctx(has_venue=True)
+    one = gr.check(
+        gr.Action("venue_open", "venue", None, 270),
+        ctx_one,
+        gr.Guardrails(allow_venue_open=True, venue_open_after_game_hours=0),
+    )
+    assert not one.allowed and "never open a second one" in str(one)
+    two = gr.check(
+        gr.Action("venue_open", "venue", None, 270),
+        ctx_one,
+        gr.Guardrails(allow_venue_open=True, venue_open_after_game_hours=0, max_venues=2),
+    )
+    assert "never open a second one" not in str(two)
+
+
+@pytest.mark.human_approval
+def test_zero_hourly_cap_and_approval_threshold_leave_cash_and_card_protections():
+    rules = gr.Guardrails(
+        cash_floor=5, venue_bond_reserve=0, max_spend_per_game_hour=0, human_approval_above=0, protect_page_sets="SAL"
+    )
+    buying = gr.Action("accept_buy", "SAL-09", "rare", 70)
+    assert gr.check(buying, ctx(cash=100, spent_last_hour=10_000, approvals=None), rules).allowed
+    assert "cash_floor" in str(gr.check(buying, ctx(cash=74, spent_last_hour=10_000), rules))
+    selling = gr.Action("accept_sell", "SAL-09", "rare", 70, your_value=35)
+    assert gr.check(selling, ctx(held={"SAL-09": 2}, approvals=None), rules).allowed
+    assert "protect_page_sets" in str(gr.check(selling, ctx(held={"SAL-09": 1}), rules))
+    low = gr.Action("accept_sell", "SAL-09", "rare", 20, your_value=35)
+    assert "your_value" in str(gr.check(low, ctx(held={"SAL-09": 2}), rules))
+    capped = rules.model_copy(update={"max_spend_per_game_hour": 250})
+    assert "max_spend_per_game_hour" in str(gr.check(buying, ctx(spent_last_hour=232), capped))
+
+
+def test_spend_room_zero_cap_uses_only_available_cash():
+    off = gr.Guardrails(max_spend_per_game_hour=0)
+    assert off.spend_room(65, 10_000) == 65
+    assert off.spend_room(-5, 10_000) == 0
+    on = gr.Guardrails(max_spend_per_game_hour=250)
+    assert on.spend_room(65, 232) == 18
+    assert on.spend_room(65, 251) == 0
+    with pytest.raises(ValueError):
+        gr.Guardrails(max_spend_per_game_hour=-1)
+
+
+@pytest.mark.parametrize("kind", ["buy", "bid", "accept_buy"])
+@pytest.mark.parametrize("bought", [0, 3])
+def test_deployed_zero_pack_quota_blocks_all_purchase_paths_without_stopping_cards(kind, bought):
+    rules = gr.load_guardrails().rules
+    assert rules.max_packs_per_game_hour == 0 and not rules.pack_restock_enabled
+    verdict = gr.check(gr.Action(kind, "sobre_barrio", "pack", 17), ctx(packs_last_hour=bought), rules)
+    assert not verdict.allowed and "max_packs_per_game_hour 0" in str(verdict)
+    assert gr.check(gr.Action(kind, "LAV-03", "common", 9), ctx(packs_last_hour=bought), rules).allowed

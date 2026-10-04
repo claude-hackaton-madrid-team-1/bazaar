@@ -362,9 +362,14 @@ def bench_preset(w: World, run_id: int) -> bench.BenchPreset:
     return (bench.HARD if hard else bench.preset(cfg.bench_preset)).with_ticks(cfg.bench_ticks)
 
 
-def _start_bench(w: World) -> None:
+def start_bench(w: World, preset: bench.BenchPreset | None = None) -> None:
+    """Start a Market Test now: the configured preset, or `preset` (a scenario's own session)."""
+    _start_bench(w, preset)
+
+
+def _start_bench(w: World, preset: bench.BenchPreset | None = None) -> None:
     run_id = w.next_id("bench")
-    p = bench_preset(w, run_id)
+    p = preset if preset is not None else bench_preset(w, run_id)
     traders = bench.make_traders(w.rng("bench"), p, run_id)
     w.state.bench.append(
         BenchRun(

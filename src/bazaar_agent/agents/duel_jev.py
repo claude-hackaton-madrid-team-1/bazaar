@@ -184,7 +184,7 @@ def legal_moves(
         return {"accept": accept}
     moves: dict[str, DuelMove] = {} if accept is None else {"accept": accept}
     offer = default if default.kind == "offer" else counter
-    signed = v2 is not None and v2.days_signed
+    signed = v2 is not None and v2.signed_for(duel)
     price, days = offer.price, offer.days
     worth = value_of(duel, price, days, signed, v2 is not None) if offer.kind == "offer" and price is not None else None
     priced = worth is not None and inside_limit(worth, *limit_role)  # after the cost of our days
@@ -461,7 +461,7 @@ class DuelJev:
         for did, (d, default, legal, state) in plans.items():
             advice, days = answers.get((did, MOVE_QUESTION)), answers.get((did, DAYS_QUESTION))
             move, why = choose(default, legal, advice, self.can_accept_early)
-            move, days_why = with_rival_days(move, d, days, signed=v2 is not None and v2.days_signed)
+            move, days_why = with_rival_days(move, d, days, signed=v2 is not None and v2.signed_for(d))
             picks[did] = DuelPick(default, move, tuple(legal), why + days_why, advice, days, state)
             self.outcomes.decided(did, d, picks[did])
         return picks

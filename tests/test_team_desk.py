@@ -45,7 +45,20 @@ def trade(team: str = THEM, theirs_raw: float = 6.0) -> Trade:
 class Team(FakeTeam):
     def say(self, tid, text="", price=None, offer=None, topic=None):
         self.sent.append(("say", tid, offer))
-        return {"ok": True, "message": 1, "offer": 700 + len(self.sent)}
+        oid = 700 + len(self.sent)
+        if offer is not None:
+            self.offers.append(
+                {
+                    "id": oid,
+                    "maker": US,
+                    "to": THEM,
+                    "thread": tid,
+                    "status": "open",
+                    "created_tick": self.now.tick,
+                    **offer,
+                }
+            )
+        return {"ok": True, "message": 1, "offer": oid}
 
     def open_thread(self, with_, topic=None, venue=None):
         self.sent.append(("open_thread", with_, topic, venue))
@@ -1052,3 +1065,53 @@ def test_a_refused_read_while_checking_a_refund_never_counts_as_seeing_the_threa
     d.proposals(view([bare], tick=TICK + 5))
     d.converse(view([bare], tick=TICK + 5), set())
     assert team.sent == [("thread", 42)]  # one refused read, no second one, and nothing sent unseen
+
+
+def test_a_cancel_answered_offer_not_open_frees_the_thread_instead_of_repeating_every_tick(tmp_path):
+    from bazaar_agent.sdk import BazaarError
+
+    class Lapsed(Team):
+        def cancel(self, offer_id):
+            self.sent.append(("cancel", offer_id))
+            raise BazaarError("offer_not_open", "offer is expired", 400)
+
+    team = Lapsed()
+    d, _ = desk(tmp_path, team)
+    d.converse(view(), set())
+    first = d.talks[42].offer_id
+    reply = thread(messages=[{"sender": US, "tick": TICK}, {"sender": THEM, "tick": TICK + 1, "text": "más"}])
+    team.sent.clear()
+    for tick in (TICK + 1, TICK + 2):  # the lapsed offer is in no read: the old code cancelled it on both ticks
+        d.proposals(view([reply], tick=tick))
+        d.converse(view([reply], tick=tick), set())
+    assert [s[0] for s in team.sent] == ["cancel", "say"]  # one refused cancel, then the next proposal goes out
+    assert first in d.to_check  # its spend stays booked until a thread read says it is dead
+
+
+def test_inbound_activity_extends_idle_but_message_budget_ends_chatter(tmp_path):
+    d, _ = desk(tmp_path, Team(), team_thread_max_messages=4)
+    d._plan = _Plan(TICK, (), {})
+    first = thread(tid=50, team="t09", opened_by="t09")
+    d.proposals(view([first]))
+    for offset in (2, 4, 6):
+        active = {**first, "messages": [{"sender": "t09", "tick": TICK + n} for n in range(2, offset + 1, 2)]}
+        v = view([active], tick=TICK + offset, in_use=6)
+        d.proposals(v)
+        d.converse(v, set())
+        assert ("close_thread", 50) not in d.team.sent
+    active["messages"].append({"sender": "t09", "tick": TICK + 8})
+    v = view([active], tick=TICK + 8, in_use=6)
+    d.proposals(v)
+    d.converse(v, set())
+    assert ("close_thread", 50) in d.team.sent
+
+
+def test_three_active_dealers_satisfy_the_dealer_reserve(tmp_path):
+    from dataclasses import replace
+
+    d, _ = desk(tmp_path, Team())
+    d.converse(replace(view(in_use=3), dealer_in_use=3), set())
+    assert d.team.sent[0][0] == "open_thread"
+    full, _ = desk(tmp_path / "full", Team())
+    full.converse(replace(view(in_use=6), dealer_in_use=3), set())
+    assert full.team.sent == []

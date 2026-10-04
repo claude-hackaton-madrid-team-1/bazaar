@@ -1,0 +1,43 @@
+{
+  "about": "Market Test broker policy (Sat 3 Oct ~21:00, branch feat/bench-beat-stall, _night/BENCH_BEAT_STALL.md): which BAZAAR_BENCH_POLICY the maker runs on Sunday's Market Tests, and when the default-off code merges. Asked with the evidence in questions/bench.state.json (bench quotes are synthetic; no values of ours). Only a decided verdict is acted on, and every Railway or main change still needs Marius. Reproduce: set -a; . ./.env; set +a; uv run python -m bazaar_agent.jev judge --state questions/bench.state.json --questions questions/bench.json --log",
+  "questions": {
+    "bench_policy_choice": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state`, which bench policy should the maker's broker run from the h14.65 hard Market Test on: exact, probe_g10 or probe_g20?",
+        "note": "exact is today's broker and ties the free stall (bench_points 0.5 in all 5 sessions so far). probe sends the exact plan first, unchanged, then a few pairs whose quotes do not cross (gap at most 10 or 20 P), priced between the quotes; at most 6 per session. Nobody knows whether the server accepts such a pair when both hidden limits allow the price (`state.unknown`). Bench points are worked out from the round-average efficiency, so a small margin above the stall over the remaining sessions may lift the whole round; a margin below costs little (`state.scoring`). Switching is one maker-only Railway variable."
+      },
+      "criteria": {
+        "exact": "The probe's risks (`state.risks`) outweigh its expected gain, or the evidence that the server checks hidden limits is too weak to spend a session on.",
+        "probe_g10": "Probing is worth it, and the smaller gap's half as many refused calls matters more than its slightly lower gain on books with heavy shading.",
+        "probe_g20": "Probing is worth it, and the wider gap's extra gain on books with heavy shading matters more than its extra refused calls."
+      }
+    },
+    "merge_window_choice": {
+      "type": "choice",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state`, when should the default-off probe code merge to main: tonight_after_duels, overnight_doors_closed or sunday_0900?",
+        "note": "A merge redeploys maker, taker, duels and mcp together; with the policy variable at exact it changes no behaviour. The flip itself is a later maker-only variable change that must land before the h14.65 bench. The game is paused at tick 1201 (`state.clock`)."
+      },
+      "criteria": {
+        "tonight_after_duels": "Merging after h13 and Duels II end, before the 23:00 close, is safe enough and leaves the most time to verify before Sunday.",
+        "overnight_doors_closed": "Merging while the doors are closed risks no tick of any agent, and leaves time to check the deploy before 09:00.",
+        "sunday_0900": "Merging at the Sunday opening is enough, and nothing needs to change before then."
+      }
+    },
+    "bench_probe_enabled": {
+      "type": "noul",
+      "stakes": "design",
+      "instructions": {
+        "question": "Reading `state`, should the maker's broker probe (the exact plan first, unchanged, then at most 6 non-crossing pairs a session priced between their quotes) from the h14.65 hard Market Test on, instead of running exact only?",
+        "note": "Asked on its own because bench_policy_choice split the probe vote over two gap settings (21:05 run: probe_g10 0.40, probe_g20 0.26, exact 0.34). The gap setting is a separate, smaller choice (`state.simulation`)."
+      },
+      "criteria": {
+        "true": "The chance that the server checks hidden limits, times the round-level gain, outweighs the probe's risks (`state.risks`).",
+        "false": "The risks outweigh the expected gain, or the evidence for limit checking is too weak to spend a session on."
+      }
+    }
+  }
+}

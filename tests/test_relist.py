@@ -3,7 +3,7 @@
 from bazaar_agent.agents.relist import AskTrail, market_median, relist_floor, relist_price, step_down
 from bazaar_agent.decisions import RELIST_REST, Decision, DecisionLog
 from bazaar_agent.intel import Print
-from tests.agent_fakes import TICK, clock
+from tests.agent_fakes import TICK, clock, rows
 from tests.test_maker import NoAccept, maker, posted
 
 RULES = {"step_share": 0.05, "min_share": 0.6, "max_lapses": 4, "cooldown_ticks": 40}
@@ -145,4 +145,12 @@ def test_the_live_maker_steps_a_lapsed_ask_down_and_a_restart_remembers(tmp_path
         before = len(posted(team))
         m.on_tick(clock(tick=TICK + 20 * i))
         prices += [p[2]["cash"] for p in posted(team)[before:] if p[1].get("assets") == [4]]
+        # Observe the acknowledged listings while they stand. A vanished offer
+        # that was never observed must remain reserved, rather than guessed expired.
+        team.offers = [
+            {**r["request"], **r["response"], "maker": "t01", "created_tick": r["tick"], "expires_tick": r["tick"] + 20}
+            for r in rows(tmp_path, "executions.jsonl")
+            if r["sdk_method"] == "list_offer" and r["tick"] == TICK + 20 * i
+        ]
+        m.on_tick(clock(tick=TICK + 20 * i + 1))
     assert prices == [10, 9, 8], prices

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from bazaar_agent import move_impact
 from bazaar_agent.agents import taller as tl
 from bazaar_agent.agents.taker import Taker, TakerConfig
-from bazaar_agent.guardrails import Action, Context, Guardrails, check, load_guardrails
+from bazaar_agent.guardrails import Action, Context, Guardrails, Ledger, check, load_guardrails
 from bazaar_agent.level_watch import LevelWatch
 from tests.agent_fakes import FakePublic, FakeTeam, clock, parts, rows
 from tests.test_strategy import ME
@@ -245,8 +245,10 @@ def test_no_craft_before_the_sentinel_saw_the_level_active_or_with_the_switch_of
 def test_the_hourly_cap_stops_a_second_craft_in_the_same_game_hour(tmp_path):
     team, _ = run_taker(tmp_path, news=News(LEVELS), ticks=3, taller_enabled=True, max_taller_per_game_hour=1)
     assert len(crafts(team)) == 1  # the fake /me still shows the spares: only the cap stops the next ones
-    refused = [r for r in rows(tmp_path) if r.get("kind") == "taller" and r["status"] == "rejected"]
-    assert len(refused) == 1 and "max_taller_per_game_hour 1" in refused[0]["guardrail"]  # said once, not per tick
+    assert team.reads.count("duels") == 1  # at the cap (shared ledger) the step sends no request at all
+    ledger = Ledger(tmp_path / "ledger.jsonl")
+    assert [e["item"] for e in ledger.entries() if e["kind"] == "spend"] == ["taller:SAL-01,LAV-01,LAV-01"]
+    assert [kind for kind, _ in ledger.publication_rows()] == ["publication_pending"]
 
 
 def test_a_dry_run_sends_nothing_and_says_the_craft_once(tmp_path):
@@ -319,3 +321,77 @@ def test_the_guard_refuses_copies_that_are_not_the_cards_named():
 
 def test_pulled_never_carries_control_or_bidi_characters():
     assert tl.pulled({"card": {"ref": "LAV-07", "name": "Sam\u202eosas\n[red]x"}}) == "LAV-07 Sam osas [red]x"
+
+
+# ---------------------------------------------------------------- #239 review follow-ups (P2/P3)
+
+
+def test_the_workshop_waits_while_the_maker_may_sell_to_dealers():
+    both = ON.model_copy(update={"dealer_sell_enabled": True})  # nothing shared tells either what the other gives
+    verdict = check(Action("taller", "LAV-01,LAV-01,SAL-01", "common"), ctx(), both)
+    assert not verdict.allowed and "dealer_sell_enabled = true" in verdict.violations[0]
+
+
+def test_the_guard_refuses_a_repeated_copy_or_copies_it_cannot_match():
+    cards = move_impact.our_cards(SPARES)
+    twice = check(Action("taller", "LAV-01,LAV-01,LAV-01", "common", assets=(2, 2, 3)), ctx(cards=cards), ON)
+    assert not twice.allowed and any("repeat one" in v for v in twice.violations)
+    blind = check(Action("taller", "SAL-01,LAV-01,LAV-01", "common", assets=(5, 2, 3)), ctx(), ON)
+    assert not blind.allowed and any("no cards read" in v for v in blind.violations)
+
+
+class Boom(Team):
+    """The craft lands, then something after the POST fails (a decisions write, a hostile answer)."""
+
+    def call(self, method, path, body=None):
+        super().call(method, path, body)
+        raise RuntimeError("after the send")
+
+
+class Locked(Team):
+    def call(self, method, path, body=None):
+        from bazaar_agent.sdk import BazaarError
+
+        self.sent.append(("call", method, path, body))
+        raise BazaarError("locked", "not yet", 403)
+
+
+def desk_spy(seen, takers):
+    def spy(t, ledger):
+        takers.append(t)
+        t.team_desk.converse = lambda view, taken: seen.append(list(view.offers))
+
+    return spy
+
+
+def test_a_failure_after_the_post_still_promises_and_counts_the_craft(tmp_path):
+    seen: list[list] = []
+    takers: list = []
+    team = Boom(me=me(*[a for a in SPARES["assets"] if a["ref"] != "LAV-07"]))
+    team, lines = run_taker(tmp_path, news=News(LEVELS), team=team, before=desk_spy(seen, takers), taller_enabled=True)
+    assert crafts(team) and any("Workshop skipped (RuntimeError)" in line for line in lines)
+    from bazaar_agent.agents.team_desk import spare_copy
+
+    assert (
+        seen
+        and spare_copy(team.me(), seen[0], "t01", "LAV-01") is None
+        and tl.crafts_last_hour(takers[0].ledger, 1.5) == 1
+    )
+
+
+def test_a_refused_craft_is_taken_back_and_rests(tmp_path):
+    seen: list[list] = []
+    takers: list = []
+    team = Locked(me=me(*[a for a in SPARES["assets"] if a["ref"] != "LAV-07"]))
+    team, _ = run_taker(tmp_path, news=News(LEVELS), team=team, before=desk_spy(seen, takers), taller_enabled=True)
+    assert len(crafts(team)) == 1
+    assert tl.crafts_last_hour(takers[0].ledger, 1.5) == 1  # shared cap conservatively retains refusals
+    assert all(o.get("id") != -4 for o in seen[0])  # nothing promised
+    assert takers[0]._taller_rest_until == 110
+
+
+def test_only_our_dealer_threads_name_busy_copies():
+    team = {"id": 8, "with": "t05", "topic": {"sell": {"assets": [1, 2, 3, 4, 5]}}}  # the other team's topic
+    bad = {"id": 9, "with": "abuela", "topic": {"sell": {"assets": 5}}}
+    assert tl.sell_thread_assets([team, bad, {"id": 7, "with": "abuela", "topic": {"sell": {"assets": [2]}}}]) == {2}
+    assert tl.clean("a‮b\nc" * 50, 10) == "a b ca b c"  # "a b c" repeated, no line or bidi character left

@@ -126,6 +126,7 @@ def test_one_request_per_card_and_side_per_game_hour(asked):
     ]
 
 
+@pytest.mark.integration
 def test_approve_revoke_and_the_board_on_postgres(conn):  # noqa: F811
     from bazaar_agent import db
 
@@ -141,6 +142,7 @@ def test_approve_revoke_and_the_board_on_postgres(conn):  # noqa: F811
         approvals.approve(conn, "LAV-09; drop table x", "buy", 75, 50, "omar", "")
 
 
+@pytest.mark.integration
 def test_a_request_is_one_row_per_hour_across_processes(conn):  # noqa: F811
     from bazaar_agent import db
 
@@ -152,6 +154,7 @@ def test_a_request_is_one_row_per_hour_across_processes(conn):  # noqa: F811
     assert [(r["card"], r["tick"]) for r in approvals.pending(conn, 0)] == [("LAV-09", 130)]
 
 
+@pytest.mark.integration
 def test_the_cli_approves_lists_and_revokes(conn, monkeypatch):  # noqa: F811
     from rich.console import Console
 
@@ -211,3 +214,11 @@ def test_a_ranking_check_neither_refuses_nor_asks(asked):
     ranking = gr.Context(cash=500, held={}, tick=10, t_hours=1.0, breakers=frozenset(), ranking=True)
     assert gr.check(BUY, ranking, RULES).allowed
     assert asked == []
+
+
+def test_disabled_amount_approval_never_reads_the_approval_service(monkeypatch):
+    def forbidden(*args):
+        raise AssertionError("disabled amount approval must not access its service")
+
+    monkeypatch.setattr(approvals, "board", forbidden)
+    assert gr.check(BUY, ctx(), RULES.model_copy(update={"human_approval_above": 0})).allowed

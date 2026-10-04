@@ -19,6 +19,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from bazaar_agent.intel import TEAM_ID
+
 TALLER_PATH = "/api/taller"
 LEVEL_ID = "taller"
 INPUTS = 3
@@ -127,9 +129,12 @@ def sell_thread_assets(threads: Iterable[Any]) -> set[int]:
     may take our ask with words only, so such a copy is never free."""
     out: set[int] = set()
     for t in threads:
-        topic = t.get("topic") if isinstance(t, Mapping) else None
+        if not isinstance(t, Mapping) or TEAM_ID.match(str(t.get("with") or "")):
+            continue  # a team thread's topic is the other team's choice (#239 review): only our dealer threads
+        topic = t.get("topic")
         sell = topic.get("sell") if isinstance(topic, Mapping) else None
-        for a in (sell.get("assets") if isinstance(sell, Mapping) else None) or []:
+        assets = sell.get("assets") if isinstance(sell, Mapping) else None
+        for a in assets if isinstance(assets, list) else []:
             aid = a.get("id") if isinstance(a, Mapping) else a
             if isinstance(aid, int) and not isinstance(aid, bool):
                 out.add(aid)
@@ -202,9 +207,13 @@ def craft(client: Any, asset_ids: Sequence[int]) -> Any:
 def pulled(answer: Any) -> str:
     """What the answer says we pulled (its shape is not documented: a card object or ref, top level or nested), as
     one printable line: the game's text never reorders or breaks a log line."""
-    raw = _pulled(answer)
-    return " ".join("".join(ch if ch.isprintable() and not unicodedata.category(ch).startswith("C") else " "
-                            for ch in raw).split()) or "?"  # fmt: skip
+    return clean(_pulled(answer)) or "?"
+
+
+def clean(text: str, cap: int = 80) -> str:
+    """One printable line, capped: no control, format (bidi) or line characters from the game's text."""
+    kept = "".join(ch if ch.isprintable() and not unicodedata.category(ch).startswith("C") else " " for ch in text)
+    return " ".join(kept.split())[:cap]
 
 
 def _pulled(answer: Any) -> str:
@@ -221,3 +230,52 @@ def _pulled(answer: Any) -> str:
     if isinstance(cards, list) and cards and isinstance(cards[0], Mapping):
         return str(cards[0].get("ref") or cards[0].get("name") or "?")[:40]
     return "?"
+
+
+# ---------------------------------------------------------------- shared by the taker's step and `bazaar taller`
+
+# A craft in the shared ledger: kind `spend` at price 0 (the table only takes spend, accept and listing), item
+# `taller:<refs>`. It adds nothing to a spend or pack count; every process counts it by this prefix (the hourly cap).
+TALLER_ITEM = "taller:"
+SETTLING_TICKS = 2  # `seller.UNSETTLED_TICKS`: an accept settles on the next tick, /me may lag one more
+
+
+def crafts_last_hour(ledger: Any, t_hours: float) -> int:
+    """Crafts any process booked in the last game hour (`max_taller_per_game_hour`)."""
+    return int(ledger.count_since("spend", t_hours - 1.0, TALLER_ITEM))
+
+
+def book_craft(ledger: Any, tick: int, t_hours: float, refs: Sequence[str]) -> None:
+    """Book a craft BEFORE its send: a refusal over-counts the hourly cap (fail safe), never under-counts it."""
+    ledger.record("spend", tick, t_hours, 0, TALLER_ITEM + ",".join(refs))
+
+
+def unnamed_settling(ledger: Any, tick: int) -> str | None:
+    """Why no craft may go this tick: an accept of this or the last SETTLING_TICKS ticks that cannot name the copy
+    it hands over (a team swap's `team:<thread>`). `sell:<asset>` names its copy, a plain card ref names its card
+    (the step marks those busy), a `duel:` moves no card. Fail closed: any other `<kind>:<id>` holds."""
+    items = {item for t in range(tick - SETTLING_TICKS, tick + 1) for item in ledger.accept_items(t)}
+    unnamed = sorted(i for i in items if ":" in i and i.split(":", 1)[0] not in ("sell", "duel"))
+    return f"accept {', '.join(unnamed)} still settling may hand over a copy we cannot name" if unnamed else None
+
+
+def busy_copies(
+    me: Mapping[str, Any],
+    offers: Iterable[Mapping[str, Any]],
+    threads: Iterable[Any],
+    ledger: Any,
+    tick: int,
+    talk_refs: Iterable[str] = (),
+) -> set[int]:
+    """Copies never crafted, for the taker and `bazaar taller` alike: in an open (or accepted, settling) offer of
+    ours (board, thread), in a sell thread of ours, in a `sell:` accept of this or the last tick, and every copy of a
+    card an accept of those ticks (a card ref: a dealer sell) or a live team-desk talk (`talk_refs`) may move."""
+    from bazaar_agent.agents.seller import open_commitments
+
+    items = [item for t in (tick - 1, tick) for item in ledger.accept_items(t)]
+    sold = {int(item[5:]) for item in items if item.startswith("sell:") and item[5:].isdigit()}
+    refs = {item for item in items if ":" not in item and "-" in item} | set(talk_refs)
+    held = [a for a in me.get("assets") or [] if isinstance(a, Mapping) and isinstance(a.get("id"), int)]
+    busy = set(open_commitments([dict(o) for o in offers], str(me.get("id") or "")).listed)
+    busy |= sold | sell_thread_assets(threads)
+    return busy | {int(a["id"]) for a in held if str(a.get("ref")) in refs}

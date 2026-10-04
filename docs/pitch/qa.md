@@ -5,17 +5,19 @@ and the PRs named.
 
 **1. What stops another team's agent from talking yours into a bad deal?**
 Its words can't reach the binding path. Prices, accepts and limits are computed by code inside `GUARDRAILS.md`;
-the LLM only drafts our text. We ran 129 hostile cases through every path that reads counterparty words: 0 binding
+the LLM only drafts our text. We ran 168 hostile cases through every path that reads counterparty words: 0 binding
 fields changed. A deliberately planted bug fails 34 of 48 of those cases, so the tests catch real mistakes (W5 #78).
 
 **2. Did you use an LLM to negotiate at all?**
-For words and for advice, yes. For anything binding, no. In duels, v2 turns LLM words off, because silence is
-free under the decay rule. The dealers are LLM personas, but RULES.md says their prices come from their own rules, and
+For advice and operator requests, yes. The LLM can write our words, but that switch (`llm_words`) is off, so our live
+dealer and duel messages come from templates. For anything binding, no. In duels, v2 uses the plain templates and talks little, because
+silence is free under the decay rule. The dealers are LLM personas, but RULES.md says their prices come from their own rules, and
 prompt injection changes what they say, never their prices. So our dealer bids follow a floor table, not a conversation.
 
 **3. How do you know the duel rule? It isn't in the docs.**
-We fitted it on our own deals. `result = |price − limit| × 0.94^rounds` matches 8 of 8 practice deals exactly, and
-`rounds = min(our priced messages, theirs)` matches 26 of 26 payloads (W2a #80).
+We fitted it on our own deals. `result = |price − limit| × 0.94^rounds` matches 8 of 8 practice deals exactly (0.94 is
+the practice session's decay; Duels II uses 0.92 and Duels III 0.90), and `rounds = min(our priced messages, theirs)`
+matches 26 of 26 payloads (W2a #80). A round is one priced message from each side.
 
 **4. Isn't a model trained on its own simulator just fooling itself?**
 That's why we have three independent checks:
@@ -33,10 +35,12 @@ cheapest points on the board, at about 54 P (W5 #78, B6 #102).
 
 **6. Why didn't you open a venue on day one?**
 Two reasons, and the second is measured:
-- Under our own cash floor the bond didn't fit: 540 P needed, 503 P held (W7 #87).
-- A clever broker beats the free auto stall by only +0.03–0.06 efficiency (W1a #77, W1b #84). Being open every
-  session matters more than matching well, and the stall question (does it score for us?) is a gate we check on
-  the first Market Test.
+- On Friday our own cash floor plus the venue bond did not fit our cash (W7 #87).
+- A clever broker beats the free auto stall by only +0.03–0.06 efficiency in simulation (W1a #77, W1b #84). Being
+  open every session matters more than matching well.
+We opened it on Saturday: board venue v19, around game hour 3.6, replacing the free stall. So far it scores what the
+stall scores (half the Market Test bench points), and as of Saturday evening no other team has traded on it. Our edge
+broker (BE1 #218) is merged behind a switch (`BAZAAR_BENCH_POLICY`) whose default is the exact broker.
 
 **7. How do you avoid breaking the rules on rate limits and fair play?**
 - **Requests:** a per-tick budget for every loop, tested, with stagger offsets that keep the tick-edge burst under
@@ -85,5 +89,5 @@ price, which is what the rules reward ("small steps earn small steps").
 
 **14. How much of this is the model versus your code?**
 The model decides nothing binding. Everything that moves cash or cards is deterministic and tested: about 850
-tests on main's branch line, 2,746 in the full integration. The model writes words, summarises and advises; a
+tests on main's branch line, 2,746 in the full integration. The model can write words (that switch is off today), summarises and advises; a
 decided "no" from the advisor can veto, but never adds risk.

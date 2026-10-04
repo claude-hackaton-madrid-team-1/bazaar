@@ -12,7 +12,7 @@ on a board is skipped, never guessed at. Words persuade, structure binds.
 from __future__ import annotations
 
 import math
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -216,15 +216,42 @@ def our_open_offers(response: dict[str, Any], us: str) -> tuple[list[OpenOffer],
     return mine, total
 
 
+def addressed_to_us(response: dict[str, Any], us: str) -> list[dict[str, Any]]:
+    """The open board offers another team addressed to us, as `/api/me/offers` returns them ("your open and queued
+    offers, and open offers addressed to you", the kit SDK). A keyless board never shows them (Sat 3 Oct: 127
+    arrived, 0 were read). An offer inside a thread is the team desk's, never one of these."""
+    out = []
+    for rows in response.values():
+        for o in rows if isinstance(rows, list) else []:
+            if not isinstance(o, dict) or not us or o.get("to") != us or o.get("maker") in (us, None, ""):
+                continue
+            if o.get("status") in (None, "open") and o.get("thread") is None and isinstance(o.get("id"), int):
+                out.append(o)
+    return out
+
+
 def best_venue(
-    venues: Iterable[Venue], us: str, price: int, avoid: Collection[str] = frozenset(), team_penalty: float = 0.0
+    venues: Iterable[Venue],
+    us: str,
+    price: int,
+    *,
+    to: str | None = None,
+    demand: Mapping[str, int] | None = None,
+    preferred_owners: Iterable[str] = (),
+    spread_key: int = 0,
+    avoid: Collection[str] = frozenset(),
+    team_penalty: float = 0.0,
 ) -> Venue | None:
-    """Where an offer is likeliest to fill: the venue's trades so far (activity), discounted by the fee
-    share its taker pays. El Rastro wins until a team venue trades as much at a lower fee. `avoid`: teams whose
-    venue we never list on (`venue_avoid_rivals`: a trade on a team's venue scores market points for its owner);
-    the house venue has no team owner, so it is never avoided. `team_penalty` (`venue_team_penalty`): a team venue's
-    score is cut by this share, as a trade there scores market points for its owner and one on the house venue for
-    nobody; 0 weighs every venue alike (activity and fee only)."""
+    """Route public asks toward crossing net bids, then configured free markets, else activity.
+
+    An addressed offer already has a counterparty: minimise their acceptance fee, and
+    never choose their own venue (they cannot accept there). Demand is a hint, not a fill.
+    `avoid`: teams whose venue we never list on (`venue_avoid_rivals`: a trade on a team's venue scores market
+    points for its owner); the house venue and a `preferred_owners` venue (an explicit team choice) are never
+    avoided. `team_penalty` (`venue_team_penalty`): in the activity fallback, a team venue's score is cut by this
+    share, as a trade there scores market points for its owner and one on the house venue for nobody.
+    """
+    preferred_owners = frozenset(preferred_owners)
 
     def score(v: Venue) -> float:
         fee_share = min(1.0, v.fee(price) / max(1, price))
@@ -234,6 +261,17 @@ def best_venue(
     candidates = [
         v
         for v in tradable_venues(venues, us)
-        if v.mechanism in ("board", "auto", "") and (v.house or v.owner not in avoid)
+        if v.mechanism in ("board", "auto", "")
+        and (to is None or v.owner != to)
+        and (v.house or v.owner not in avoid or v.owner in preferred_owners)
     ]
+    if to is not None:
+        return max(candidates, key=lambda v: (-v.fee(price), score(v), v.house, v.id), default=None)
+    liquid = [v for v in candidates if demand and demand.get(v.id, 0) >= price]
+    if liquid and demand is not None:
+        return max(liquid, key=lambda v: (demand[v.id], -v.fee(price), score(v), v.id))
+    preferred = sorted((v for v in candidates if v.owner in preferred_owners and v.fee(price) == 0), key=lambda v: v.id)
+    if preferred:
+        # ponytail: stable copy-based distribution; no mutable rotation state or extra reads.
+        return preferred[spread_key % len(preferred)]
     return max(candidates, key=lambda v: (score(v), v.house, v.id), default=None)

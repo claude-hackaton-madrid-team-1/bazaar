@@ -11,6 +11,8 @@ from bazaar_agent.agents.dealer import Move, Outcome
 from bazaar_agent.config import Settings
 from bazaar_agent.guardrails import GUARDRAILS_FILE, Ledger, parse_guardrails
 
+ABUELA_LISTED = [{"id": "abuela", "kind": "dealer", "level": 1, "status": "active"}]  # /api/dealers
+
 OWN = 85  # the thread `dealer buy` opens
 ACCEPT_20 = ((Move("accept", 20, 7), OWN),)
 
@@ -45,7 +47,7 @@ class Client:
 def dealer_buy(monkeypatch, tmp_path):
     seen: dict[str, object] = {}
 
-    def run(client, ledger_spent=0, moves=ACCEPT_20):
+    def run(client, ledger_spent=0, moves=ACCEPT_20, pack_quota=3):
         ledger = Ledger(tmp_path / "ledger.jsonl")
         if ledger_spent:
             ledger.record("spend", 90, 1.4, ledger_spent, "LAV-02")
@@ -69,10 +71,11 @@ def dealer_buy(monkeypatch, tmp_path):
                 ),
             ),
         )
+        venue_off = re.sub(r"`max_packs_per_game_hour` = \d+", f"`max_packs_per_game_hour` = {pack_quota}", venue_off)
         monkeypatch.setattr(cli, "_rules", lambda: parse_guardrails(venue_off, GUARDRAILS_FILE))
         monkeypatch.setattr(cli, "team_client", lambda settings: client)
         monkeypatch.setattr(cli, "_ledger", lambda source, live=False: ledger)
-        monkeypatch.setattr(cli, "_dealer_personas", lambda settings: [])  # no /api/dealers read: today's plan
+        monkeypatch.setattr(cli, "_dealer_personas", lambda settings: ABUELA_LISTED)  # listed, not forgiving
         monkeypatch.setattr("bazaar_agent.agents.dealer.negotiate", fake_negotiate)
         result = CliRunner().invoke(cli.app, ["dealer", "buy", "sobre_barrio", "--start", "6", "--max", "20", "--live"])
         return result, seen.get("verdicts")
@@ -109,3 +112,10 @@ def test_it_refuses_to_open_when_our_open_offers_already_hold_the_cash(dealer_bu
     result, verdicts = dealer_buy(client)
     assert result.exit_code == 1 and verdicts is None  # 380 - 110 - 6 < cash_floor 270: no thread opened
     assert "guardrails refuse to open this thread" in result.output
+
+
+def test_zero_pack_quota_refuses_manual_dealer_buy_before_opening(dealer_buy):
+    client = Client(400, [])
+    result, verdicts = dealer_buy(client, pack_quota=0)
+    assert result.exit_code == 1 and verdicts is None and not client.opened
+    assert "max_packs_per_game_hour 0" in result.output
