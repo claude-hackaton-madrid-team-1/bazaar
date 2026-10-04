@@ -1056,6 +1056,8 @@ claude mcp add --transport http bazaar https://bazaar-mcp-production.up.railway.
 ```
 
 Locally: `BAZAAR_MCP_TOKEN=... uv run bazaar mcp serve` (127.0.0.1:8765, DNS-rebinding protection on).
+How a teammate's Claude Code should use it (tool table, dry run vs live, errors, approvals, CLI-only goals):
+`.ai/skills/bazaar-mcp/SKILL.md`.
 ## Evals (how well each settled decision scored)
 
 Jev chose the design (`questions/evals.json`, verdicts logged): **online outcomes**, scored after each
